@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""General-purpose GraphRAG: DBpedia entity linking + Wikipedia text + LLM.
+"""General-purpose GraphRAG: DBpedia Spotlight + KG exploration + Wikipedia text + LLM.
 
 Pipeline:
-  1. Extract entities from question (pattern-based)
-  2. Link entities to DBpedia URIs (verify existence)
-  3. Retrieve Wikipedia full text for each entity + search for extras
+  1. Link entities via DBpedia Spotlight (spaCy fallback)
+  2. Explore KG: follow 1-hop relations to discover related entities
+  3. Retrieve Wikipedia text for all entities (URI-based + web search)
   4. Extract relevant sections using question keywords
   5. LLM reasoning over assembled context (Groq)
 
@@ -16,21 +16,30 @@ Usage:
 import os
 import re
 import sys
+import logging
 import argparse
+from pathlib import Path
 
 from urllib.parse import unquote
 
+# Ensure parent directory is on sys.path for dbpedia_qa package imports
+_parent = str(Path(__file__).resolve().parent.parent)
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
+
 from groq import Groq
 from ddgs import DDGS
-from SPARQLWrapper import SPARQLWrapper, JSON
 
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient
+from dbpedia_qa.models import Entity
 from ablation_study_v3.wiki_utils import (
-    entity_to_uri,
     get_wikipedia_text_by_title,
     llm_call_with_retry,
+    uri_to_wiki_title,
 )
 
-DBPEDIA_ENDPOINT = "https://dbpedia.org/sparql"
+logger = logging.getLogger(__name__)
+
 MAX_CONTEXT_CHARS = 12_000
 MAX_CHARS_PER_PAGE = 3_000
 
@@ -110,6 +119,108 @@ def extract_entities(question: str) -> list[str]:
             final.append(name)
 
     return final
+
+
+# ---------------------------------------------------------------------------
+# 1b. DBpedia Spotlight linking (primary) + spaCy fallback
+# ---------------------------------------------------------------------------
+
+def link_entities_to_dbpedia(question: str,
+                             linker: DBpediaEntityLinker) -> list[Entity]:
+    """Link question entities to DBpedia URIs using Spotlight.
+
+    Primary: DBpedia Spotlight API (disambiguation + linking).
+    Fallback: spaCy extraction → Entity objects without URIs.
+    """
+    try:
+        entities = linker.link_entities(question)
+        if entities:
+            return entities
+    except Exception as e:
+        logger.warning(f"Spotlight failed: {e}")
+
+    # Fallback: spaCy extraction → Entity objects without URIs
+    mentions = extract_entities(question)
+    return [Entity(uri="", label=name, source="spacy", confidence=0.0) for name in mentions]
+
+
+# ---------------------------------------------------------------------------
+# 1c. KG exploration: follow 1-hop relations to discover related entities
+# ---------------------------------------------------------------------------
+
+# Only follow structured DBpedia ontology/property relations
+_USEFUL_RELATION_PREFIXES = (
+    "http://dbpedia.org/ontology/",
+    "http://dbpedia.org/property/",
+)
+
+# Skip these even within the ontology namespace (noisy/meta)
+_SKIP_RELATIONS = {
+    "http://dbpedia.org/ontology/wikiPageWikiLink",
+    "http://dbpedia.org/ontology/wikiPageExternalLink",
+    "http://dbpedia.org/ontology/wikiPageRedirects",
+    "http://dbpedia.org/ontology/wikiPageDisambiguates",
+    "http://dbpedia.org/ontology/wikiPageID",
+    "http://dbpedia.org/ontology/wikiPageRevisionID",
+    "http://dbpedia.org/ontology/wikiPageLength",
+    "http://dbpedia.org/ontology/thumbnail",
+    "http://dbpedia.org/ontology/abstract",
+}
+
+
+def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
+               limit_per_entity: int = 50,
+               verbose: bool = False) -> list[Entity]:
+    """Use DBpedia KG to discover related entities via structured properties.
+
+    Only follows dbo:/dbp: ontology relations (director, birthPlace, etc.).
+    Skips noisy wikiPageWikiLink edges — web search handles those.
+    """
+    all_entities = list(entities)
+    seen_uris = {e.uri for e in entities if e.uri}
+
+    if not seen_uris:
+        if verbose:
+            print("  (no entities with URIs, skipping KG exploration)")
+        return all_entities
+
+    for entity in entities:
+        if not entity.uri:
+            continue
+        try:
+            neighbors = client.get_neighbors(
+                entity.uri, direction="out", limit=limit_per_entity,
+            )
+        except Exception as e:
+            logger.warning(f"KG exploration failed for {entity.label}: {e}")
+            continue
+
+        for relation_uri, neighbor_uri, conf in neighbors:
+            # Only follow structured ontology/property relations
+            if not any(relation_uri.startswith(p) for p in _USEFUL_RELATION_PREFIXES):
+                continue
+            if relation_uri in _SKIP_RELATIONS:
+                continue
+            if neighbor_uri in seen_uris:
+                continue
+            if "/resource/" not in neighbor_uri:
+                continue
+            # Skip categories, templates, files
+            local = neighbor_uri.split("/resource/")[-1]
+            if any(local.startswith(p) for p in ("Category:", "Template:", "File:")):
+                continue
+
+            label = uri_to_wiki_title(neighbor_uri)
+            all_entities.append(Entity(
+                uri=neighbor_uri, label=label, source="kg_explore",
+            ))
+            seen_uris.add(neighbor_uri)
+
+            if verbose:
+                rel_name = relation_uri.split("/")[-1] if "/" in relation_uri else relation_uri
+                print(f"      {entity.label} --{rel_name}--> {label}")
+
+    return all_entities
 
 
 # ---------------------------------------------------------------------------
@@ -206,31 +317,40 @@ def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
 # 4. Wikipedia retrieval
 # ---------------------------------------------------------------------------
 
-def retrieve_wikipedia(entities: list[str], question: str,
+def retrieve_wikipedia(entities: list[Entity], question: str,
                        verbose: bool = False) -> dict[str, str]:
-    """Retrieve Wikipedia text for entities + web-search-expanded pages."""
+    """Retrieve Wikipedia text for entities + web-search-expanded pages.
+
+    Entities WITH URIs: derive Wikipedia title from DBpedia URI (exact match).
+    Entities WITHOUT URIs (spaCy fallback): name-based lookup + DuckDuckGo.
+    """
     raw_texts: dict[str, str] = {}
     seen_titles: set[str] = set()
 
-    # Fetch pages for each entity (direct Wikipedia lookup)
-    for name in entities:
-        title = name.replace("_", " ")
+    for entity in entities:
+        # Derive title from URI (exact) or fall back to entity label
+        if entity.uri and "/resource/" in entity.uri:
+            title = uri_to_wiki_title(entity.uri)
+        else:
+            title = entity.label.replace("_", " ")
+
         if title.lower() in seen_titles:
             continue
 
         if verbose:
-            print(f"    Fetching page: '{title}'")
+            src = entity.source or "unknown"
+            print(f"    Fetching: '{title}' (source={src})")
         text = get_wikipedia_text_by_title(title, max_chars=50_000)
         if text:
             raw_texts[title] = text
             seen_titles.add(title.lower())
             if verbose:
-                print(f"      -> {len(text)} chars (direct)")
+                print(f"      -> {len(text)} chars")
         else:
-            # Search fallback via DuckDuckGo
+            # DuckDuckGo fallback for pages not found by exact title
             if verbose:
-                print(f"      -> not found, web searching: '{name}'")
-            results = web_search_wikipedia(name, limit=2)
+                print(f"      -> not found, web searching: '{entity.label}'")
+            results = web_search_wikipedia(entity.label, limit=2)
             if verbose:
                 print(f"      -> web results: {results}")
             for st in results:
@@ -287,41 +407,42 @@ def retrieve_wikipedia(entities: list[str], question: str,
 
 def answer_question(question: str, api_key: str,
                     verbose: bool = False) -> str:
-    """Answer any question using DBpedia entity linking + Wikipedia + LLM."""
-    client = Groq(api_key=api_key)
-    sparql = SPARQLWrapper(DBPEDIA_ENDPOINT)
-    sparql.setReturnFormat(JSON)
+    """Answer any question using DBpedia Spotlight + KG exploration + Wikipedia + LLM."""
+    llm_client = Groq(api_key=api_key)
+    linker = DBpediaEntityLinker(min_confidence=0.5)
+    kg_client = DBpediaSPARQLClient()
 
-    # Step 1: Extract entities
-    entities = extract_entities(question)
+    # Step 1: Entity linking (Spotlight primary, spaCy fallback)
+    entities = link_entities_to_dbpedia(question, linker)
     if verbose:
         print(f"\n{'=' * 70}")
-        print("STEP 1: Entity extraction")
+        print("STEP 1: Entity linking (Spotlight + spaCy fallback)")
         print(f"{'=' * 70}")
         for e in entities:
-            print(f"  - {e}")
+            src = e.source or "unknown"
+            print(f"  - {e.label}  [{src}]")
+            if e.uri:
+                print(f"    URI: {e.uri}")
         if not entities:
             print("  (none found, will use question-based search)")
 
-    # Step 2: Link to DBpedia
-    linked = {}
-    for name in entities:
-        uri = entity_to_uri(name, sparql)
-        linked[name] = uri
+    # Step 2: KG exploration (follow 1-hop relations)
     if verbose:
         print(f"\n{'=' * 70}")
-        print("STEP 2: DBpedia entity linking")
+        print("STEP 2: KG exploration (1-hop neighbors)")
         print(f"{'=' * 70}")
-        for name, uri in linked.items():
-            print(f"  {name}")
-            print(f"    URI: {uri}")
+    seed_count = len(entities)
+    all_entities = explore_kg(entities, kg_client, verbose=verbose)
+    if verbose:
+        discovered = len(all_entities) - seed_count
+        print(f"  Seed: {seed_count}, Discovered: {discovered}, Total: {len(all_entities)}")
 
     # Step 3: Retrieve Wikipedia text
     if verbose:
         print(f"\n{'=' * 70}")
         print("STEP 3: Wikipedia text retrieval")
         print(f"{'=' * 70}")
-    raw_texts = retrieve_wikipedia(entities, question, verbose=verbose)
+    raw_texts = retrieve_wikipedia(all_entities, question, verbose=verbose)
 
     if not raw_texts:
         print("\nFailed: no Wikipedia text retrieved.")
@@ -369,7 +490,7 @@ Instructions:
         print(f"  Context: {len(context)} chars from {len(filtered_texts)} pages")
         print("  Sending to LLM...")
 
-    response = llm_call_with_retry(client, prompt, max_tokens=500)
+    response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
 
     if verbose and response:
         print(f"\n  LLM Response:\n")
@@ -388,7 +509,7 @@ Instructions:
     print(f"  Question: {question}")
     print(f"  Answer:   {answer}")
     print(f"  Pages:    {len(filtered_texts)} ({', '.join(filtered_texts.keys())})")
-    print(f"  Method:   DBpedia entity linking -> Wikipedia text -> LLM")
+    print(f"  Method:   Spotlight -> KG explore -> Wikipedia text -> LLM")
     print()
 
     return answer

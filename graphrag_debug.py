@@ -10,18 +10,26 @@ import os
 import re
 import sys
 import argparse
+from pathlib import Path
+
+# Ensure parent directory is on sys.path for dbpedia_qa package imports
+_parent = str(Path(__file__).resolve().parent.parent)
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
 
 from groq import Groq
-from SPARQLWrapper import SPARQLWrapper, JSON
 
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient
 from graphrag_wiki import (
-    extract_entities,
+    link_entities_to_dbpedia,
+    explore_kg,
     retrieve_wikipedia,
     extract_relevant_sections,
     STOPWORDS,
     MAX_CONTEXT_CHARS,
+    MAX_CHARS_PER_PAGE,
 )
-from ablation_study_v3.wiki_utils import entity_to_uri, llm_call_with_retry
+from ablation_study_v3.wiki_utils import llm_call_with_retry
 
 
 def wiki_url(title: str) -> str:
@@ -47,49 +55,52 @@ def main():
 
     question = args.question
     sep = "=" * 80
+    linker = DBpediaEntityLinker(min_confidence=0.5)
+    kg_client = DBpediaSPARQLClient()
 
-    # Step 1: Entity extraction
-    entities = extract_entities(question)
+    # Step 1: Entity linking (Spotlight + spaCy fallback)
+    entities = link_entities_to_dbpedia(question, linker)
     print(sep)
-    print("STEP 1: EXTRACTED ENTITIES")
+    print("STEP 1: ENTITY LINKING (Spotlight primary, spaCy fallback)")
     print(sep)
     if entities:
         for e in entities:
-            print(f"  - {e}")
+            src = e.source or "unknown"
+            print(f"  - {e.label}  [{src}, conf={e.confidence:.2f}]")
+            if e.uri:
+                print(f"    DBpedia: {e.uri}")
+                print(f"    Wikipedia: {wiki_url(e.label)}")
     else:
         print("  (none found, will use question-based search)")
 
-    # Step 2: DBpedia linking
-    sparql = SPARQLWrapper("https://dbpedia.org/sparql")
-    sparql.setReturnFormat(JSON)
-    linked = {name: entity_to_uri(name, sparql) for name in entities}
+    # Step 2: KG exploration (1-hop neighbors)
     print(f"\n{sep}")
-    print("STEP 2: DBPEDIA LINKING")
+    print("STEP 2: KG EXPLORATION (1-hop neighbors)")
     print(sep)
-    if linked:
-        for name, uri in linked.items():
-            print(f"  {name}")
-            print(f"    DBpedia: {uri}")
-            print(f"    Wikipedia: {wiki_url(name)}")
-    else:
-        print("  (none)")
+    seed_count = len(entities)
+    all_entities = explore_kg(entities, kg_client, verbose=True)
+    discovered = len(all_entities) - seed_count
+    print(f"\n  Seed: {seed_count}, Discovered: {discovered}, Total: {len(all_entities)}")
+    if discovered > 0:
+        print("  Discovered entities:")
+        for e in all_entities[seed_count:]:
+            print(f"    - {e.label} ({e.uri})")
 
     # Step 3: Wikipedia retrieval
     print(f"\n{sep}")
     print("STEP 3: WIKIPEDIA PAGES RETRIEVED")
     print(sep)
-    raw_texts = retrieve_wikipedia(entities, question, verbose=True)
+    raw_texts = retrieve_wikipedia(all_entities, question, verbose=True)
     for title, text in raw_texts.items():
         print(f"\n  [{title}]")
         print(f"    URL:   {wiki_url(title)}")
         print(f"    Size:  {len(text)} chars")
 
-    # Step 3b: Section extraction with dynamic per-page budget
+    # Step 4: Section extraction with dynamic per-page budget
     q_keywords = [
         w for w in question.lower().split()
         if w.strip("?.,!") not in STOPWORDS and len(w) > 2
     ]
-    from graphrag_wiki import MAX_CHARS_PER_PAGE
     per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
     print(f"\n{sep}")
     print(f"STEP 4: PARAGRAPH FILTERING (keywords: {q_keywords}, budget={per_page}/page)")
@@ -105,7 +116,6 @@ def main():
         print(f"\n  [{title}] {len(full_text)} -> {len(relevant)} chars, {len(paras)} paragraphs")
         print(f"    URL: {wiki_url(title)}")
         for i, para in enumerate(paras, 1):
-            # Show first 120 chars of each paragraph
             preview = para[:120].replace('\n', ' ')
             if len(para) > 120:
                 preview += "..."
@@ -140,8 +150,8 @@ Instructions:
     print(f"\n{sep}")
     print("STEP 6: LLM RESPONSE")
     print(sep)
-    client = Groq(api_key=args.api_key)
-    response = llm_call_with_retry(client, prompt, max_tokens=500)
+    llm_client = Groq(api_key=args.api_key)
+    response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
     print(response)
 
     if response and "FINAL ANSWER:" in response:
