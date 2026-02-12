@@ -1,74 +1,91 @@
 # DBpedia GraphRAG for 2WikiMultiHopQA
 
-A GraphRAG system using DBpedia knowledge graph to answer multi-hop questions from the 2WikiMultiHopQA benchmark (192K questions, 4 types).
+A GraphRAG system that combines the DBpedia knowledge graph with Wikipedia text retrieval and LLM reasoning to answer multi-hop questions from the [2WikiMultiHopQA](https://github.com/Alab-NII/2wikimultihop) benchmark (192K questions, 4 types).
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Question                                                        │
-│  "Who is the paternal grandfather of Eadred?"                   │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 1: Generate SPARQL Query                                   │
-│                                                                  │
-│  • LLM/template generates multi-hop SPARQL from question         │
-│  • Handles all question types with single code path              │
-│                                                                  │
-│  SELECT ?answer WHERE {                                          │
-│    dbr:Eadred dbo:father ?father .                              │
-│    ?father dbo:father ?answer .                                 │
-│  }                                                               │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 2: Execute SPARQL → Get Triples                            │
-│                                                                  │
-│  • Query DBpedia endpoint                                        │
-│  • Extract entities and relationships                            │
-│  • Caching + Rate Limiting                                       │
-│                                                                  │
-│  (Eadred, father, Edward_the_Elder)                              │
-│  (Edward_the_Elder, father, Alfred_the_Great)                    │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 3: Get Wikipedia Sentences                                 │
-│                                                                  │
-│  • Fetch Wikipedia pages for entities in triples                 │
-│  • Find sentences containing entity names/relations              │
-│                                                                  │
-│  [Eadred] "He was the son of Edward the Elder."                  │
-│  [Edward] "He was the son of Alfred the Great."                  │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: Assemble Context                                        │
-│                                                                  │
-│  Knowledge Graph Facts:                                          │
-│    - Eadred → father → Edward the Elder                          │
-│    - Edward the Elder → father → Alfred the Great                │
-│                                                                  │
-│  Wikipedia Evidence:                                             │
-│    [Eadred:0] "He was the son of Edward the Elder."              │
-│    [Edward:0] "He was the son of Alfred the Great."              │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 5: LLM Generates Answer                                    │
-│                                                                  │
-│  • Question + Context → LLM                                      │
-│  • Structured output parsing                                     │
-│                                                                  │
-│  ANSWER: Alfred the Great                                        │
-│  SUPPORTING_FACTS: [Eadred:0], [Edward the Elder:0]              │
-└─────────────────────────────────────────────────────────────────┘
+                          Question
+                             |
+              +--------------+--------------+
+              |                             |
+     SPARQL-based Pipeline         Wikipedia-based Pipeline
+     (graphrag_wiki.py /            (graphrag_wiki.py)
+      dbpedia_qa package)
+              |                             |
+   +----------+----------+      +----------+----------+
+   | 1. Extract entities  |      | 1. Extract entities  |
+   |    (spaCy NER +      |      |    (spaCy NER +      |
+   |     pattern-based)   |      |     pattern-based)   |
+   +----------+----------+      +----------+----------+
+              |                             |
+   +----------+----------+      +----------+----------+
+   | 2. Link to DBpedia   |      | 2. Link to DBpedia   |
+   |    (URI resolution +  |      |    (URI verification) |
+   |     schema discovery) |      +----------+----------+
+   +----------+----------+               |
+              |                  +-------+--------+
+   +----------+----------+      | 3. Retrieve     |
+   | 3. Generate SPARQL   |      |    Wikipedia    |
+   |    (LLM or template) |      |    full text    |
+   +----------+----------+      +-------+--------+
+              |                          |
+   +----------+----------+      +-------+--------+
+   | 4. Execute SPARQL    |      | 4. Extract      |
+   |    against DBpedia   |      |    relevant     |
+   +----------+----------+      |    sections     |
+              |                  +-------+--------+
+   +----------+----------+               |
+   | 5. Get Wikipedia      |              |
+   |    sentences          |              |
+   +----------+----------+               |
+              |                          |
+              +-----------+--------------+
+                          |
+               +----------+----------+
+               | LLM Reasoning       |
+               | (Groq / OpenAI /    |
+               |  Ollama)            |
+               +----------+----------+
+                          |
+                       Answer
+```
+
+### Detailed SPARQL Pipeline
+
+```
+Question: "Who is the paternal grandfather of Eadred?"
+     |
+     v
+STEP 1: Generate SPARQL Query
+  SELECT ?answer WHERE {
+    dbr:Eadred dbo:father ?father .
+    ?father dbo:father ?answer .
+  }
+     |
+     v
+STEP 2: Execute SPARQL -> Get Triples
+  (Eadred, father, Edward_the_Elder)
+  (Edward_the_Elder, father, Alfred_the_Great)
+     |
+     v
+STEP 3: Get Wikipedia Sentences
+  [Eadred] "He was the son of Edward the Elder."
+  [Edward] "He was the son of Alfred the Great."
+     |
+     v
+STEP 4: Assemble Context
+  Knowledge Graph Facts:
+    - Eadred -> father -> Edward the Elder
+    - Edward the Elder -> father -> Alfred the Great
+  Wikipedia Evidence:
+    [Eadred:0] "He was the son of Edward the Elder."
+    [Edward:0] "He was the son of Alfred the Great."
+     |
+     v
+STEP 5: LLM Generates Answer
+  ANSWER: Alfred the Great
+  SUPPORTING_FACTS: [Eadred:0], [Edward the Elder:0]
 ```
 
 ## Question Types
@@ -76,31 +93,68 @@ A GraphRAG system using DBpedia knowledge graph to answer multi-hop questions fr
 | Type | Strategy | Hops | Example |
 |------|----------|------|---------|
 | **Comparison** | Get same property for 2 entities, compare | 0-1 | "Who was born first, Einstein or Newton?" |
-| **Inference** | Follow logical chain (e.g., grandfather = father→father) | 2 | "Who is the paternal grandfather of X?" |
+| **Inference** | Follow logical chain (e.g., grandfather = father->father) | 2 | "Who is the paternal grandfather of X?" |
 | **Compositional** | Find bridge entity, then target property | 2 | "Who founded the company that distributed La La Land?" |
 | **Bridge-Comparison** | Find bridges for 2 entities, then compare | 2-3 | "Which film has the director born first?" |
+
+## DBpedia Answerability
+
+Based on analysis of the full 2WikiMultiHopQA dev set (12,576 questions):
+
+| Metric | Value |
+|--------|-------|
+| Entity Coverage | 92.5% |
+| Property Coverage (per pair) | 60.1% |
+| **Full Answerability (SPARQL only)** | **31.1%** |
+
+Property coverage is the bottleneck. The Wikipedia text fallback (GraphRAG) covers the remaining ~69% of questions. See [docs/wikimultihop-dbpedia-answerability.md](docs/wikimultihop-dbpedia-answerability.md) for the full analysis.
 
 ## Installation
 
 ```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
+
 # Install package in development mode
 pip install -e ".[dev]"
 
 # Install with LLM support (Ollama/OpenAI)
 pip install -e ".[dev,llm]"
+
+# Download spaCy model
+python -m spacy download en_core_web_sm
+
+# Additional dependencies for Wikipedia pipeline
+pip install groq ddgs
 ```
+
+**Requirements:** Python 3.10+
 
 ## Quick Start
 
-### Python API
+### Standalone Wikipedia Pipeline (graphrag_wiki.py)
+
+Answers any question using DBpedia entity linking + Wikipedia full text + Groq LLM:
+
+```bash
+# Set your Groq API key
+export GROQ_API_KEY="your-key-here"
+
+# Answer a question
+python graphrag_wiki.py "Who is the paternal grandfather of Eadred?" --verbose
+
+# Simple query
+python graphrag_wiki.py "Who directed Inception?"
+```
+
+### Python API (dbpedia_qa package)
 
 ```python
 from dbpedia_qa import create_system
 
-# Create the system
 system = create_system()
 
-# Answer a question
 answer, supporting_facts, evidence = system.answer_question(
     "Who was born first, Einstein or Lincoln?"
 )
@@ -108,6 +162,18 @@ answer, supporting_facts, evidence = system.answer_question(
 print(f"Answer: {answer.text}")
 print(f"Confidence: {answer.confidence:.2%}")
 print(f"Supporting facts: {supporting_facts}")
+```
+
+### SPARQL Generation
+
+```python
+from dbpedia_qa import SPARQLGenerator
+
+generator = SPARQLGenerator()
+
+# Template-based (no LLM needed)
+query = generator.generate("Who is the paternal grandfather of Eadred?")
+print(query)
 ```
 
 ### Command-Line Interface
@@ -124,6 +190,14 @@ python cli.py answer "Who was born first, Einstein or Newton?"
 
 # Run benchmark evaluation
 python cli.py benchmark path/to/2wikimultihopqa.json --limit 100 -o results.json
+```
+
+### Benchmark Runner
+
+Run the 10-question benchmark with schema discovery and LLM-generated SPARQL:
+
+```bash
+python benchmark_runner.py --limit 10 --output results.json
 ```
 
 ## Configuration
@@ -143,6 +217,9 @@ export REDIS_PORT="6379"
 export LLM_PROVIDER="ollama"  # or "openai"
 export LLM_MODEL="llama3.1:70b"
 export OPENAI_API_KEY="sk-..."  # if using OpenAI
+
+# Groq (for graphrag_wiki.py and benchmark_runner.py)
+export GROQ_API_KEY="your-key-here"
 ```
 
 Or in Python:
@@ -170,81 +247,95 @@ pytest tests/ -v --cov=dbpedia_qa
 
 # Run specific test file
 pytest tests/test_basic.py -v
+
+# Run SPARQL generator tests
+pytest tests/test_sparql_generator.py -v
 ```
 
-## Evaluation
+## Ablation Study
 
-### Run Benchmark
+The `ablation_study_v3/` module evaluates 5 levels of KG detail to measure the impact of structured knowledge on answer quality:
 
-```python
-from dbpedia_qa.evaluation.runner import BenchmarkRunner
-from dbpedia_qa import create_system
+| Level | Description | Context Provided |
+|-------|-------------|-----------------|
+| 0 | No KG (Entity Names Only) | Just entity names from the question |
+| 1 | Entity-Only KG | Verified DBpedia entity URIs |
+| 2 | Entity + Important Relations | Key properties from schema discovery |
+| 3 | Full KG + Wikipedia Fallback | Complete KG triples + Wikipedia text |
+| 4 | Oracle KG | Ground truth evidence triples |
 
-system = create_system()
-runner = BenchmarkRunner(system, dataset_path="2wikimultihopqa_dev.json")
-
-# Run evaluation
-results = runner.run(limit=100, verbose=True)
-
-# Print report
-print(runner.report())
-
-# Save results
-runner.save_results("evaluation_results.json")
-```
-
-### Target Metrics
-
-| Metric | LLM-only Baseline | GraphRAG Target |
-|--------|-------------------|-----------------|
-| Answer F1 | ~42% | 55-60% |
-| Supporting Facts F1 | ~65% | 70-75% |
-| Evidence F1 | ~15% | 25-35% |
-| Joint F1 | ~5% | 15-20% |
+Uses stratified sampling across question types with LLM-as-judge evaluation.
 
 ## Project Structure
 
 ```
 dbpedia_qa/
-├── __init__.py              # Package exports
-├── config.py                # Configuration settings
-├── models.py                # Data models (Entity, Triple, etc.)
-├── system.py                # Main GraphRAG system
-├── cli.py                   # Command-line interface
-├── dbpedia/
-│   ├── client.py            # SPARQL client + caching
-│   ├── property_mapper.py   # Wikidata → DBpedia mapping
-│   ├── entity_linker.py     # Spotlight integration
-│   └── cache.py             # Redis/in-memory cache
-├── question_processing/
-│   ├── classifier.py        # Type classification
-│   ├── decomposer.py        # Question decomposition
-│   └── entity_extractor.py  # Entity extraction
-├── traversal/
-│   ├── ranked_bfs.py        # Core traversal algorithm
-│   ├── relevance_scorer.py  # Scoring functions
-│   └── strategies.py        # Type-specific strategies
-├── wikipedia/
-│   ├── client.py            # Wikipedia API
-│   └── supporting_facts.py  # Evidence extraction
-├── context/
-│   ├── textualizer.py       # Triple → text
-│   └── assembler.py         # Context assembly
-├── llm/
-│   ├── prompts.py           # Prompt templates
-│   ├── generator.py         # Answer generation
-│   └── parser.py            # Response parsing
-├── evaluation/
-│   ├── metrics.py           # EM/F1 computation
-│   └── runner.py            # Benchmark runner
-└── tests/
-    ├── test_basic.py        # Unit tests
-    └── test_integration.py  # Integration tests
++-- __init__.py              # Package exports
++-- config.py                # Configuration settings
++-- models.py                # Data models (Entity, Triple, etc.)
++-- system.py                # Main GraphRAG system
++-- cli.py                   # Command-line interface
++-- sparql_generator.py      # LLM/template SPARQL generation
++-- graphrag_wiki.py         # Standalone Wikipedia pipeline
++-- benchmark_runner.py      # Benchmark with schema discovery
++-- graphrag_debug.py        # Debug utilities
++-- dbpedia/
+|   +-- client.py            # SPARQL client + caching
+|   +-- property_mapper.py   # Wikidata -> DBpedia mapping
+|   +-- entity_linker.py     # Spotlight integration
+|   +-- cache.py             # Redis/in-memory cache
+|   +-- schema_discovery.py  # Hybrid schema discovery for entities
+|   +-- schema_explorer.py   # Interactive schema exploration
+|   +-- ontology_manager.py  # DBpedia ontology management
++-- question_processing/
+|   +-- classifier.py        # Type classification
+|   +-- decomposer.py        # Question decomposition
+|   +-- entity_extractor.py  # Entity extraction
++-- traversal/
+|   +-- ranked_bfs.py        # Core traversal algorithm
+|   +-- relevance_scorer.py  # Scoring functions
+|   +-- strategies.py        # Type-specific strategies
++-- wikipedia/
+|   +-- client.py            # Wikipedia API
+|   +-- supporting_facts.py  # Evidence extraction
+|   +-- section_retriever.py # Section-level retrieval
++-- context/
+|   +-- textualizer.py       # Triple -> text
+|   +-- assembler.py         # Context assembly
++-- llm/
+|   +-- prompts.py           # Prompt templates
+|   +-- generator.py         # Answer generation
+|   +-- parser.py            # Response parsing
++-- evaluation/
+|   +-- metrics.py           # EM/F1 computation
+|   +-- runner.py            # Benchmark runner
++-- ablation_study_v3/
+|   +-- runner.py            # Ablation study runner
+|   +-- sampling.py          # Stratified sampling
+|   +-- levels_base.py       # Levels 0, 1, 4
+|   +-- levels_kg.py         # Levels 2, 3 (KG-based)
+|   +-- llm_judge.py         # LLM-as-judge evaluation
+|   +-- wiki_utils.py        # Wikipedia text utilities
+|   +-- reporting.py         # Report generation
++-- tests/
+|   +-- test_basic.py        # Unit tests
+|   +-- test_integration.py  # Integration tests
+|   +-- test_sparql_generator.py  # SPARQL generation tests
+|   +-- test_llm_sparql_with_schema.py  # Schema-aware tests
++-- docs/
+|   +-- wikimultihop-dbpedia-answerability.md  # Coverage analysis
 ```
 
 ## Key Technical Decisions
 
-### Wikidata → DBpedia Property Mapping (~85% coverage)
+### Hybrid Schema Discovery
+
+The SPARQL generator uses a hybrid approach:
+1. **Cached class schemas** for common DBpedia classes (Person, Film, Place, etc.)
+2. **Dynamic property discovery** via SPARQL queries for unknown entities
+3. **LLM-based generation** when an LLM client is available, falling back to template patterns
+
+### Wikidata -> DBpedia Property Mapping (~85% coverage)
 
 | Wikidata | DBpedia | Usage |
 |----------|---------|-------|
@@ -263,27 +354,27 @@ dbpedia_qa/
 
 ## Dependencies
 
-```
-# Core
-sparqlwrapper>=2.0
-requests>=2.28
-redis>=4.0 (optional)
+### Core
+- `sparqlwrapper` - SPARQL query execution
+- `requests` / `httpx` - HTTP clients
+- `spacy` (en_core_web_sm) - NLP entity extraction
+- `pydantic` - Data models and validation
+- `redis` - Optional caching backend
+- `tenacity` - Retry logic
 
-# NLP
-spacy>=3.5
+### LLM Providers
+- `groq` - Groq API (used by graphrag_wiki.py and benchmark_runner.py)
+- `openai` - OpenAI-compatible APIs
+- `ollama` - Local LLM inference (optional)
 
-# LLM (Open-source)
-ollama>=0.1
-openai>=1.0 (optional)
+### Search & Retrieval
+- `ddgs` - DuckDuckGo search for Wikipedia page discovery
+- `rdflib` - RDF/OWL ontology parsing
 
-# Tokenization
-tiktoken>=0.5
-
-# Evaluation
-numpy>=1.24
-tqdm>=4.65
-pytest>=7.0
-```
+### Evaluation
+- `numpy` - Numerical computation
+- `tqdm` - Progress bars
+- `pytest` - Testing framework
 
 ## License
 
