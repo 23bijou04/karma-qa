@@ -1,0 +1,322 @@
+"""DBpedia SPARQL client with caching and rate limiting."""
+
+import time
+import logging
+from typing import Any, Optional
+from SPARQLWrapper import SPARQLWrapper, JSON
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from ..models import Entity, Triple
+from .cache import CacheManager
+
+logger = logging.getLogger(__name__)
+
+
+class RateLimiter:
+    """Simple token bucket rate limiter."""
+
+    def __init__(self, rate: float = 10.0):
+        self.rate = rate
+        self.tokens = rate
+        self.last_update = time.time()
+
+    def acquire(self) -> None:
+        """Wait until a token is available."""
+        now = time.time()
+        elapsed = now - self.last_update
+        self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
+        self.last_update = now
+
+        if self.tokens < 1:
+            wait_time = (1 - self.tokens) / self.rate
+            time.sleep(wait_time)
+            self.tokens = 0
+        else:
+            self.tokens -= 1
+
+
+class DBpediaSPARQLClient:
+    """SPARQL client for querying DBpedia with caching and rate limiting."""
+
+    PREFIXES = """
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX dbo: <http://dbpedia.org/ontology/>
+        PREFIX dbp: <http://dbpedia.org/property/>
+        PREFIX dbr: <http://dbpedia.org/resource/>
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+    """
+
+    def __init__(
+        self,
+        endpoint: str = "https://dbpedia.org/sparql",
+        timeout: int = 30,
+        rate_limit: float = 10.0,
+        cache_manager: Optional[CacheManager] = None,
+    ):
+        self.endpoint = endpoint
+        self.timeout = timeout
+        self.sparql = SPARQLWrapper(endpoint)
+        self.sparql.setReturnFormat(JSON)
+        self.sparql.setTimeout(timeout)
+        self.rate_limiter = RateLimiter(rate_limit)
+        self.cache = cache_manager or CacheManager()
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, max=10))
+    def _execute_query(self, query: str) -> dict[str, Any]:
+        """Execute SPARQL query with retry logic."""
+        self.rate_limiter.acquire()
+        full_query = f"{self.PREFIXES}\n{query}"
+        self.sparql.setQuery(full_query)
+
+        try:
+            results = self.sparql.query().convert()
+            return results
+        except Exception as e:
+            logger.error(f"SPARQL query failed: {e}")
+            raise
+
+    def query(self, query: str, use_cache: bool = True) -> dict[str, Any]:
+        """Execute SPARQL query with optional caching."""
+        if use_cache:
+            cache_key = f"sparql:{query}"
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        results = self._execute_query(query)
+
+        if use_cache:
+            self.cache.set(cache_key, results)
+
+        return results
+
+    def get_entity_by_label(self, label: str, lang: str = "en") -> Optional[Entity]:
+        """Find entity by exact label match."""
+        query = f"""
+        SELECT ?uri ?abstract
+        WHERE {{
+            ?uri rdfs:label "{label}"@{lang} .
+            OPTIONAL {{ ?uri dbo:abstract ?abstract . FILTER(LANG(?abstract) = "{lang}") }}
+        }}
+        LIMIT 1
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        if bindings:
+            binding = bindings[0]
+            return Entity(
+                uri=binding["uri"]["value"],
+                label=label,
+                abstract=binding.get("abstract", {}).get("value"),
+                source="sparql",
+            )
+        return None
+
+    def get_entity_by_uri(self, uri: str) -> Optional[Entity]:
+        """Get entity details by URI."""
+        # Normalize URI
+        if not uri.startswith("http"):
+            uri = f"http://dbpedia.org/resource/{uri.replace(' ', '_')}"
+
+        query = f"""
+        SELECT ?label ?abstract ?type
+        WHERE {{
+            <{uri}> rdfs:label ?label .
+            FILTER(LANG(?label) = "en")
+            OPTIONAL {{ <{uri}> dbo:abstract ?abstract . FILTER(LANG(?abstract) = "en") }}
+            OPTIONAL {{ <{uri}> rdf:type ?type . }}
+        }}
+        LIMIT 10
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        if bindings:
+            types = list(
+                set(b.get("type", {}).get("value", "") for b in bindings if "type" in b)
+            )
+            return Entity(
+                uri=uri,
+                label=bindings[0].get("label", {}).get("value", ""),
+                abstract=bindings[0].get("abstract", {}).get("value"),
+                types=types,
+                source="sparql",
+            )
+        return None
+
+    def get_entity_properties(
+        self, entity_uri: str, properties: Optional[list[str]] = None
+    ) -> list[Triple]:
+        """Get all or specific properties of an entity."""
+        if not entity_uri.startswith("http"):
+            entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
+
+        if properties:
+            prop_filter = " || ".join(f"?p = {p}" for p in properties)
+            filter_clause = f"FILTER({prop_filter})"
+        else:
+            filter_clause = ""
+
+        query = f"""
+        SELECT ?p ?o ?pLabel ?oLabel
+        WHERE {{
+            <{entity_uri}> ?p ?o .
+            {filter_clause}
+            OPTIONAL {{ ?p rdfs:label ?pLabel . FILTER(LANG(?pLabel) = "en") }}
+            OPTIONAL {{ ?o rdfs:label ?oLabel . FILTER(LANG(?oLabel) = "en") }}
+        }}
+        LIMIT 100
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        triples = []
+        for binding in bindings:
+            triple = Triple(
+                subject=entity_uri,
+                predicate=binding["p"]["value"],
+                obj=binding["o"]["value"],
+                predicate_label=binding.get("pLabel", {}).get("value"),
+                obj_label=binding.get("oLabel", {}).get("value"),
+                source="dbpedia",
+            )
+            triples.append(triple)
+
+        return triples
+
+    def get_neighbors(
+        self,
+        entity_uri: str,
+        relation_types: Optional[set[str]] = None,
+        direction: str = "both",
+        limit: int = 50,
+    ) -> list[tuple[str, str, float]]:
+        """Get neighboring entities connected by relations.
+
+        Returns: List of (relation, neighbor_uri, confidence) tuples.
+        """
+        if not entity_uri.startswith("http"):
+            entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
+
+        results = []
+
+        # Outgoing relations
+        if direction in ("out", "both"):
+            query = f"""
+            SELECT DISTINCT ?p ?neighbor ?neighborLabel
+            WHERE {{
+                <{entity_uri}> ?p ?neighbor .
+                FILTER(isIRI(?neighbor))
+                FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
+                OPTIONAL {{ ?neighbor rdfs:label ?neighborLabel . FILTER(LANG(?neighborLabel) = "en") }}
+            }}
+            LIMIT {limit}
+            """
+            query_results = self.query(query)
+            for binding in query_results.get("results", {}).get("bindings", []):
+                pred = binding["p"]["value"]
+                if relation_types is None or any(rt in pred for rt in relation_types):
+                    results.append(
+                        (pred, binding["neighbor"]["value"], 1.0)
+                    )
+
+        # Incoming relations
+        if direction in ("in", "both"):
+            query = f"""
+            SELECT DISTINCT ?p ?neighbor ?neighborLabel
+            WHERE {{
+                ?neighbor ?p <{entity_uri}> .
+                FILTER(isIRI(?neighbor))
+                FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
+                OPTIONAL {{ ?neighbor rdfs:label ?neighborLabel . FILTER(LANG(?neighborLabel) = "en") }}
+            }}
+            LIMIT {limit}
+            """
+            query_results = self.query(query)
+            for binding in query_results.get("results", {}).get("bindings", []):
+                pred = binding["p"]["value"]
+                if relation_types is None or any(rt in pred for rt in relation_types):
+                    results.append(
+                        (pred, binding["neighbor"]["value"], 1.0)
+                    )
+
+        return results
+
+    def get_property_value(
+        self, entity_uri: str, property_uri: str
+    ) -> Optional[str]:
+        """Get a specific property value for an entity."""
+        if not entity_uri.startswith("http"):
+            entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
+
+        query = f"""
+        SELECT ?value ?valueLabel
+        WHERE {{
+            <{entity_uri}> <{property_uri}> ?value .
+            OPTIONAL {{ ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = "en") }}
+        }}
+        LIMIT 1
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        if bindings:
+            if "valueLabel" in bindings[0]:
+                return bindings[0]["valueLabel"]["value"]
+            return bindings[0]["value"]["value"]
+        return None
+
+    def search_entities(
+        self, search_term: str, entity_type: Optional[str] = None, limit: int = 10
+    ) -> list[Entity]:
+        """Search for entities by name using fuzzy matching."""
+        type_filter = f"?uri rdf:type {entity_type} ." if entity_type else ""
+
+        query = f"""
+        SELECT DISTINCT ?uri ?label ?abstract
+        WHERE {{
+            ?uri rdfs:label ?label .
+            {type_filter}
+            FILTER(LANG(?label) = "en")
+            FILTER(CONTAINS(LCASE(STR(?label)), LCASE("{search_term}")))
+            OPTIONAL {{ ?uri dbo:abstract ?abstract . FILTER(LANG(?abstract) = "en") }}
+        }}
+        LIMIT {limit}
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        entities = []
+        for binding in bindings:
+            entity = Entity(
+                uri=binding["uri"]["value"],
+                label=binding["label"]["value"],
+                abstract=binding.get("abstract", {}).get("value"),
+                source="sparql",
+            )
+            entities.append(entity)
+
+        return entities
+
+    def get_wikipedia_page_id(self, entity_uri: str) -> Optional[str]:
+        """Get Wikipedia page ID for a DBpedia entity."""
+        if not entity_uri.startswith("http"):
+            entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
+
+        query = f"""
+        SELECT ?wikiPageID
+        WHERE {{
+            <{entity_uri}> dbo:wikiPageID ?wikiPageID .
+        }}
+        LIMIT 1
+        """
+        results = self.query(query)
+        bindings = results.get("results", {}).get("bindings", [])
+
+        if bindings:
+            return bindings[0]["wikiPageID"]["value"]
+        return None
