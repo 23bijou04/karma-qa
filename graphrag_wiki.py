@@ -41,14 +41,20 @@ STOPWORDS = {
     "of", "in", "on", "at", "to", "for", "with", "from", "by",
     "and", "or", "not", "that", "this", "it", "its",
     "first", "last", "same", "both", "more", "most",
+    "after", "before", "between", "about", "into", "through",
 }
 
 
 # ---------------------------------------------------------------------------
-# 1. Entity extraction
+# 1. Entity extraction (spaCy NLP)
 # ---------------------------------------------------------------------------
 
-QUESTION_WORDS = {
+import spacy
+
+_nlp = spacy.load("en_core_web_sm")
+
+# Words to strip from the front of noun chunks (determiners, question words)
+_STRIP_WORDS = STOPWORDS | {
     "who", "what", "when", "where", "which", "how", "why",
     "did", "does", "do", "are", "is", "was", "were",
     "has", "have", "had", "both", "either",
@@ -56,57 +62,45 @@ QUESTION_WORDS = {
 
 
 def extract_entities(question: str) -> list[str]:
-    """Extract entity mentions from a question using patterns."""
+    """Extract entity mentions using spaCy noun chunks + NER.
+
+    Handles both proper nouns (Albert Einstein) and lowercase domain
+    terms (angiogenesis, genomic variants) that are valid Wikipedia entities.
+    """
+    doc = _nlp(question)
     mentions = []
 
-    # Quoted strings
+    # Quoted strings (spaCy may miss these)
     mentions.extend(re.findall(r'"([^"]+)"', question))
 
-    # Capitalized phrases: "Albert Einstein", "The Dark Knight", "Napoleon"
-    # Supports: uppercase words, hyphenated (Hewlett-Packard), Roman numerals (II, III)
-    # Connectors: "the", "de", "von", "van" (name particles only, NOT "and"/"of")
-    cap_pattern = r'\b([A-Z][a-z]+(?:[-\s]+(?:[A-Z][a-z]+|[A-Z]{2,3}|the|de|von|van))*)\b'
-    for m in re.findall(cap_pattern, question):
-        mentions.append(m)
+    # spaCy noun chunks: the core extraction
+    for chunk in doc.noun_chunks:
+        # Strip leading determiners/stopwords: "the last Horcrux" -> "Horcrux"
+        words = chunk.text.split()
+        while words and words[0].lower() in _STRIP_WORDS:
+            words.pop(0)
+        text = " ".join(words).strip()
+        if text:
+            mentions.append(text)
 
-    # "X or/and Y" — only capture capitalized name portions
-    m = re.search(
-        r'([A-Z][a-z]+(?:[\s-]+[A-Z][a-z]+)*)\s+(?:or|and)\s+'
-        r'([A-Z][a-z]+(?:[\s-]+[A-Z][a-z]+)*)',
-        question,
-    )
-    if m:
-        mentions.extend([m.group(1).strip(), m.group(2).strip()])
+    # spaCy NER: catch entities that noun chunks might miss
+    for ent in doc.ents:
+        if ent.label_ not in ("CARDINAL", "ORDINAL", "QUANTITY", "PERCENT"):
+            mentions.append(ent.text)
 
-    # "of [Entity]" — capture until next preposition, punctuation, or lowercase word
-    for m in re.findall(
-        r'of\s+((?:[A-Z][a-z]+(?:[-\s]+(?:[A-Z][a-z]+|[A-Z]{2,3}))*))(?:\?|,|\.|$|\s+(?:go|from|who|that|which|born))',
-        question,
-    ):
-        mentions.append(m.strip())
+    # Title-case for Wikipedia/DBpedia lookup (preserves already-capped names)
+    mentions = [m.title() if m[0].islower() else m for m in mentions if m]
 
-    # Lowercase fallback: known patterns like "the capital of france"
-    for m in re.findall(r'of\s+(?:the\s+)?([a-z]{3,}(?:\s+[a-z]+)*?)(?:\?|$)', question):
-        # Only keep if it looks like a proper noun used lowercase
-        mentions.append(m.strip().title())
-
-    # Deduplicate: case-insensitive, remove question words, remove substrings
+    # Deduplicate: case-insensitive
     seen = set()
     unique = []
     for name in mentions:
-        # Strip leading question words: "Did Albert Einstein" -> "Albert Einstein"
-        words = name.split()
-        while words and words[0].lower() in QUESTION_WORDS:
-            words.pop(0)
-        name = " ".join(words).strip()
-
-        key = name.lower()
+        key = name.lower().strip()
         if key not in seen and key not in STOPWORDS and len(key) > 1:
             seen.add(key)
             unique.append(name)
 
     # Remove entries that are substrings of longer entries
-    # e.g. "Queen Elizabeth" is substring of "Queen Elizabeth II"
     final = []
     for name in unique:
         if not any(
