@@ -1,91 +1,79 @@
-# DBpedia GraphRAG for 2WikiMultiHopQA
+# DBpedia Hybrid QA for 2WikiMultiHopQA
 
-A GraphRAG system that combines the DBpedia knowledge graph with Wikipedia text retrieval and LLM reasoning to answer multi-hop questions from the [2WikiMultiHopQA](https://github.com/Alab-NII/2wikimultihop) benchmark (192K questions, 4 types).
+A hybrid question-answering system that combines DBpedia knowledge graph with Wikipedia text retrieval and LLM reasoning to answer multi-hop questions from the [2WikiMultiHopQA](https://github.com/Alab-NII/2wikimultihop) benchmark (12,576 dev questions, 4 types).
+
+**Thesis:** Entity-only KG + Wikipedia text can answer multi-hop QA without full relation coverage.
 
 ## Architecture
+
+The system implements three evaluation pipelines and a hybrid router:
 
 ```
                           Question
                              |
               +--------------+--------------+
-              |                             |
-     SPARQL-based Pipeline         Wikipedia-based Pipeline
-     (graphrag_wiki.py /            (graphrag_wiki.py)
-      dbpedia_qa package)
-              |                             |
-   +----------+----------+      +----------+----------+
-   | 1. Extract entities  |      | 1. Extract entities  |
-   |    (spaCy NER +      |      |    (spaCy NER +      |
-   |     pattern-based)   |      |     pattern-based)   |
-   +----------+----------+      +----------+----------+
-              |                             |
-   +----------+----------+      +----------+----------+
-   | 2. Link to DBpedia   |      | 2. Link to DBpedia   |
-   |    (URI resolution +  |      |    (URI verification) |
-   |     schema discovery) |      +----------+----------+
-   +----------+----------+               |
-              |                  +-------+--------+
-   +----------+----------+      | 3. Retrieve     |
-   | 3. Generate SPARQL   |      |    Wikipedia    |
-   |    (LLM or template) |      |    full text    |
-   +----------+----------+      +-------+--------+
-              |                          |
-   +----------+----------+      +-------+--------+
-   | 4. Execute SPARQL    |      | 4. Extract      |
-   |    against DBpedia   |      |    relevant     |
-   +----------+----------+      |    sections     |
-              |                  +-------+--------+
-   +----------+----------+               |
-   | 5. Get Wikipedia      |              |
-   |    sentences          |              |
-   +----------+----------+               |
-              |                          |
-              +-----------+--------------+
-                          |
-               +----------+----------+
-               | LLM Reasoning       |
-               | (Groq / OpenAI /    |
-               |  Ollama)            |
-               +----------+----------+
-                          |
-                       Answer
+              |              |              |
+         GRASP (KG)    LLM-SPARQL     GraphRAG (Text)
+              |              |              |
+              |     Entity Linking          |
+              |     (Spotlight +            |
+              |      spaCy NER)            |
+              |         |                   |
+              |     Schema Discovery        |
+              |     (ontology classes +     |
+              |      property sampling)    |
+              |         |                   |
+              |     Generate SPARQL         |
+              |     (LLM + retry)          |
+              |         |                   |
+              |     Execute against         |
+              |     DBpedia endpoint        |
+              |              |              |
+              +--------------+--------------+
+                             |
+                   Hybrid Router (hybrid_qa.py)
+                   SPARQL-first, text fallback
+                             |
+                          Answer
 ```
 
-### Detailed SPARQL Pipeline
+### GraphRAG Pipeline (graphrag_wiki.py)
 
 ```
-Question: "Who is the paternal grandfather of Eadred?"
-     |
-     v
-STEP 1: Generate SPARQL Query
-  SELECT ?answer WHERE {
-    dbr:Eadred dbo:father ?father .
-    ?father dbo:father ?answer .
-  }
-     |
-     v
-STEP 2: Execute SPARQL -> Get Triples
-  (Eadred, father, Edward_the_Elder)
-  (Edward_the_Elder, father, Alfred_the_Great)
-     |
-     v
-STEP 3: Get Wikipedia Sentences
-  [Eadred] "He was the son of Edward the Elder."
-  [Edward] "He was the son of Alfred the Great."
-     |
-     v
-STEP 4: Assemble Context
-  Knowledge Graph Facts:
-    - Eadred -> father -> Edward the Elder
-    - Edward the Elder -> father -> Alfred the Great
-  Wikipedia Evidence:
-    [Eadred:0] "He was the son of Edward the Elder."
-    [Edward:0] "He was the son of Alfred the Great."
-     |
-     v
-STEP 5: LLM Generates Answer
-  ANSWER: Alfred the Great
-  SUPPORTING_FACTS: [Eadred:0], [Edward the Elder:0]
+Question
+   |
+1. Entity Linking (DBpedia Spotlight, min_confidence=0.5)
+   |
+2. KG Exploration (1-hop neighbors, dbo:/dbp: predicates only)
+   |
+3. Wikipedia Retrieval (URI-based + DuckDuckGo fallback)
+   |
+4. Section Extraction (keyword-based relevance)
+   |
+5. LLM Reasoning (Groq llama-3.3-70b-versatile)
+   |
+Answer
+```
+
+### Hybrid Pipeline (hybrid_qa.py)
+
+```
+Question
+   |
+1. Entity Linking (Spotlight + spaCy fallback)
+   |
+2. Schema Discovery (ontology classes, properties, sample values)
+   |
+3. LLM generates SPARQL query
+   |
+4. Execute with retry (revise query on failure)
+   |
+5. Result found? -> Answer from structured data
+   |  else -> Text fallback:
+   |    a) "explore"        — schema-guided KG exploration
+   |    b) "sparql_context" — LLM generates context SPARQL
+   |
+Answer
 ```
 
 ## Question Types
@@ -96,6 +84,25 @@ STEP 5: LLM Generates Answer
 | **Inference** | Follow logical chain (e.g., grandfather = father->father) | 2 | "Who is the paternal grandfather of X?" |
 | **Compositional** | Find bridge entity, then target property | 2 | "Who founded the company that distributed La La Land?" |
 | **Bridge-Comparison** | Find bridges for 2 entities, then compare | 2-3 | "Which film has the director born first?" |
+
+## Evaluation Results
+
+Evaluated on 276 answerable questions from 2WikiMultiHopQA dev set:
+
+| System | EM | F1 | Judge EM | Best At |
+|--------|-----|------|----------|---------|
+| **LLM-SPARQL** | **67.8%** | **76.9%** | **82.6%** | comparison (89.8%), bridge_comparison (82.9%) |
+| GRASP | 33.7% | 51.9% | 75.7% | bridge_comparison (65.8%) |
+| GraphRAG | -- | -- | -- | text-heavy questions |
+
+### Per Question Type (LLM-SPARQL)
+
+| Type | n | EM | F1 | Judge EM |
+|------|---|-----|------|----------|
+| Comparison | 49 | 89.8% | 90.5% | 93.9% |
+| Bridge-Comparison | 111 | 82.9% | 82.9% | 82.9% |
+| Inference | 63 | 63.5% | 80.6% | 84.1% |
+| Compositional | 53 | 20.8% | 47.2% | 69.8% |
 
 ## DBpedia Answerability
 
@@ -119,13 +126,10 @@ source venv/bin/activate
 # Install package in development mode
 pip install -e ".[dev]"
 
-# Install with LLM support (Ollama/OpenAI)
-pip install -e ".[dev,llm]"
-
 # Download spaCy model
 python -m spacy download en_core_web_sm
 
-# Additional dependencies for Wikipedia pipeline
+# Additional dependencies
 pip install groq ddgs
 ```
 
@@ -133,123 +137,110 @@ pip install groq ddgs
 
 ## Quick Start
 
-### Standalone Wikipedia Pipeline (graphrag_wiki.py)
+### GraphRAG Pipeline
 
 Answers any question using DBpedia entity linking + Wikipedia full text + Groq LLM:
 
 ```bash
-# Set your Groq API key
 export GROQ_API_KEY="your-key-here"
 
-# Answer a question
+# Answer a question (verbose shows pipeline steps)
+python graphrag_wiki.py "Who directed Inception?" --verbose
+
+# Multi-hop question
 python graphrag_wiki.py "Who is the paternal grandfather of Eadred?" --verbose
-
-# Simple query
-python graphrag_wiki.py "Who directed Inception?"
 ```
 
-### Python API (dbpedia_qa package)
+### Hybrid Pipeline (SPARQL-first)
 
-```python
-from dbpedia_qa import create_system
-
-system = create_system()
-
-answer, supporting_facts, evidence = system.answer_question(
-    "Who was born first, Einstein or Lincoln?"
-)
-
-print(f"Answer: {answer.text}")
-print(f"Confidence: {answer.confidence:.2%}")
-print(f"Supporting facts: {supporting_facts}")
-```
-
-### SPARQL Generation
-
-```python
-from dbpedia_qa import SPARQLGenerator
-
-generator = SPARQLGenerator()
-
-# Template-based (no LLM needed)
-query = generator.generate("Who is the paternal grandfather of Eadred?")
-print(query)
-```
-
-### Command-Line Interface
+Tries structured SPARQL first, falls back to text retrieval:
 
 ```bash
-# Run component tests
-python cli.py test --dry-run
+python hybrid_qa.py "Who directed Inception?" --verbose
 
-# Interactive demo mode
-python cli.py demo
-
-# Answer a single question
-python cli.py answer "Who was born first, Einstein or Newton?"
-
-# Run benchmark evaluation
-python cli.py benchmark path/to/2wikimultihopqa.json --limit 100 -o results.json
+# With explicit fallback mode
+python hybrid_qa.py "Who destroys the last Horcrux?" --fallback sparql_context --verbose
 ```
 
-### Benchmark Runner
+### Debug Mode
 
-Run the 10-question benchmark with schema discovery and LLM-generated SPARQL:
+Shows all intermediate pipeline results (entities, KG triples, Wikipedia text):
 
 ```bash
-python benchmark_runner.py --limit 10 --output results.json
+python graphrag_debug.py "Who directed Inception?" --api-key $GROQ_API_KEY
+```
+
+### Evaluation Pipelines
+
+```bash
+# GRASP evaluation (WebSocket-based, ~1.3 min/question)
+python grasp_evaluation.py --limit 5
+
+# LLM-SPARQL evaluation
+python sparql_evaluation.py --limit 5
+
+# Offline re-evaluation of GRASP results
+python grasp_evaluate_results.py data/grasp_eval_dbpedia.jsonl
+
+# Failure analysis (questions where both systems fail)
+python graphrag_eval_failures.py
+```
+
+### Ablation Study
+
+```bash
+python -m ablation_study_v3.runner --api-key $GROQ_API_KEY --n-per-type 5 --levels 0 1 4
 ```
 
 ## Configuration
 
-The system can be configured via environment variables or programmatically:
-
 ```bash
-# DBpedia settings
+# DBpedia endpoints
 export DBPEDIA_SPARQL_ENDPOINT="https://dbpedia.org/sparql"
 export DBPEDIA_SPOTLIGHT_ENDPOINT="https://api.dbpedia-spotlight.org/en/annotate"
 
-# Redis caching (optional)
-export REDIS_HOST="localhost"
-export REDIS_PORT="6379"
-
-# LLM settings
-export LLM_PROVIDER="ollama"  # or "openai"
-export LLM_MODEL="llama3.1:70b"
-export OPENAI_API_KEY="sk-..."  # if using OpenAI
-
-# Groq (for graphrag_wiki.py and benchmark_runner.py)
+# LLM (Groq)
 export GROQ_API_KEY="your-key-here"
 ```
 
-Or in Python:
+## Project Structure
 
-```python
-from dbpedia_qa import Config, create_system
-
-config = Config()
-config.llm.provider = "ollama"
-config.llm.model = "llama3.1:8b"
-config.traversal.max_hops = 3
-config.traversal.beam_width = 10
-
-system = create_system(config)
 ```
-
-## Run Tests
-
-```bash
-# Run all tests
-pytest tests/ -v
-
-# Run with coverage
-pytest tests/ -v --cov=dbpedia_qa
-
-# Run specific test file
-pytest tests/test_basic.py -v
-
-# Run SPARQL generator tests
-pytest tests/test_sparql_generator.py -v
+dbpedia_qa/
++-- __init__.py              # Package exports (Entity, Triple)
++-- models.py                # Data models (Entity, Triple)
++-- graphrag_wiki.py         # GraphRAG pipeline: Spotlight -> KG -> Wikipedia -> LLM
++-- graphrag_debug.py        # Debug script showing all intermediate results
++-- hybrid_qa.py             # Hybrid QA: SPARQL-first with text fallback
++-- sparql_evaluation.py     # LLM-SPARQL evaluation pipeline
++-- grasp_evaluation.py      # GRASP WebSocket evaluation client
++-- grasp_evaluate_results.py# Offline re-evaluation of GRASP results
++-- graphrag_eval_failures.py# Failure analysis across systems
++-- dbpedia/
+|   +-- client.py            # SPARQL client (queries, neighbors, type-aware)
+|   +-- entity_linker.py     # DBpedia Spotlight integration + fallback
+|   +-- schema_discovery.py  # Hybrid schema discovery (cached + dynamic)
+|   +-- cache.py             # In-memory cache manager
++-- evaluation/
+|   +-- metrics.py           # Official EM/F1 computation
++-- ablation_study_v3/
+|   +-- runner.py            # Ablation study runner
+|   +-- sampling.py          # Stratified sampling (50/type, seed=42)
+|   +-- levels_base.py       # Levels 0, 1, 4
+|   +-- levels_kg.py         # Levels 2, 3 (KG-based)
+|   +-- llm_judge.py         # LLM-as-judge evaluation
+|   +-- wiki_utils.py        # Wikipedia text utilities
+|   +-- reporting.py         # Report generation
++-- data/
+|   +-- coverage_analysis_800.json   # 276 answerable questions
+|   +-- grasp_eval_dbpedia*.jsonl    # GRASP evaluation results
+|   +-- sparql_eval*.jsonl           # SPARQL evaluation results
+|   +-- graphrag_eval_failures*.jsonl# Failure analysis data
+|   +-- both_systems_failures.json   # Cross-system failure comparison
++-- docs/
+    +-- wikimultihop-dbpedia-answerability.md  # Coverage analysis
+    +-- evaluation-section.md                  # Comparative evaluation
+    +-- hybrid-pipeline-report.md              # Hybrid pipeline design
 ```
 
 ## Ablation Study
@@ -264,117 +255,39 @@ The `ablation_study_v3/` module evaluates 5 levels of KG detail to measure the i
 | 3 | Full KG + Wikipedia Fallback | Complete KG triples + Wikipedia text |
 | 4 | Oracle KG | Ground truth evidence triples |
 
-Uses stratified sampling across question types with LLM-as-judge evaluation.
-
-## Project Structure
-
-```
-dbpedia_qa/
-+-- __init__.py              # Package exports
-+-- config.py                # Configuration settings
-+-- models.py                # Data models (Entity, Triple, etc.)
-+-- system.py                # Main GraphRAG system
-+-- cli.py                   # Command-line interface
-+-- sparql_generator.py      # LLM/template SPARQL generation
-+-- graphrag_wiki.py         # Standalone Wikipedia pipeline
-+-- benchmark_runner.py      # Benchmark with schema discovery
-+-- graphrag_debug.py        # Debug utilities
-+-- dbpedia/
-|   +-- client.py            # SPARQL client + caching
-|   +-- property_mapper.py   # Wikidata -> DBpedia mapping
-|   +-- entity_linker.py     # Spotlight integration
-|   +-- cache.py             # Redis/in-memory cache
-|   +-- schema_discovery.py  # Hybrid schema discovery for entities
-|   +-- schema_explorer.py   # Interactive schema exploration
-|   +-- ontology_manager.py  # DBpedia ontology management
-+-- question_processing/
-|   +-- classifier.py        # Type classification
-|   +-- decomposer.py        # Question decomposition
-|   +-- entity_extractor.py  # Entity extraction
-+-- traversal/
-|   +-- ranked_bfs.py        # Core traversal algorithm
-|   +-- relevance_scorer.py  # Scoring functions
-|   +-- strategies.py        # Type-specific strategies
-+-- wikipedia/
-|   +-- client.py            # Wikipedia API
-|   +-- supporting_facts.py  # Evidence extraction
-|   +-- section_retriever.py # Section-level retrieval
-+-- context/
-|   +-- textualizer.py       # Triple -> text
-|   +-- assembler.py         # Context assembly
-+-- llm/
-|   +-- prompts.py           # Prompt templates
-|   +-- generator.py         # Answer generation
-|   +-- parser.py            # Response parsing
-+-- evaluation/
-|   +-- metrics.py           # EM/F1 computation
-|   +-- runner.py            # Benchmark runner
-+-- ablation_study_v3/
-|   +-- runner.py            # Ablation study runner
-|   +-- sampling.py          # Stratified sampling
-|   +-- levels_base.py       # Levels 0, 1, 4
-|   +-- levels_kg.py         # Levels 2, 3 (KG-based)
-|   +-- llm_judge.py         # LLM-as-judge evaluation
-|   +-- wiki_utils.py        # Wikipedia text utilities
-|   +-- reporting.py         # Report generation
-+-- tests/
-|   +-- test_basic.py        # Unit tests
-|   +-- test_integration.py  # Integration tests
-|   +-- test_sparql_generator.py  # SPARQL generation tests
-|   +-- test_llm_sparql_with_schema.py  # Schema-aware tests
-+-- docs/
-|   +-- wikimultihop-dbpedia-answerability.md  # Coverage analysis
-```
-
 ## Key Technical Decisions
 
-### Hybrid Schema Discovery
+### DBpedia Spotlight Entity Linking
+- `min_confidence=0.5` filters noise (e.g., "Albert" -> Uncle Albert at 0.40)
+- Built-in fallback to SPARQL label search when Spotlight fails
+- Retries via tenacity (3 attempts, exponential backoff)
 
-The SPARQL generator uses a hybrid approach:
+### KG Exploration
+- Filters to `dbo:`/`dbp:` predicates only, skips `wikiPageWikiLink`
+- Type-aware neighbor retrieval via `get_neighbors_with_types()`
+- KG exploration adds value ~60% of the time (property coverage)
+
+### Hybrid Schema Discovery
 1. **Cached class schemas** for common DBpedia classes (Person, Film, Place, etc.)
 2. **Dynamic property discovery** via SPARQL queries for unknown entities
-3. **LLM-based generation** when an LLM client is available, falling back to template patterns
-
-### Wikidata -> DBpedia Property Mapping (~85% coverage)
-
-| Wikidata | DBpedia | Usage |
-|----------|---------|-------|
-| P569 | dbo:birthDate | date of birth |
-| P570 | dbo:deathDate | date of death |
-| P22 | dbo:father | father |
-| P25 | dbo:mother | mother |
-| P57 | dbo:director | film director |
-| P577 | dbo:releaseDate | publication date |
-
-### Graph Traversal Parameters
-
-- **Beam width:** 10 neighbors per hop
-- **Max hops:** 2-3 (question-type dependent)
-- **Relevance scoring:** Keyword matching + optional embeddings
+3. **LLM-based SPARQL generation** with retry on execution failure
 
 ## Dependencies
 
 ### Core
 - `sparqlwrapper` - SPARQL query execution
-- `requests` / `httpx` - HTTP clients
+- `httpx` - HTTP client
 - `spacy` (en_core_web_sm) - NLP entity extraction
-- `pydantic` - Data models and validation
-- `redis` - Optional caching backend
 - `tenacity` - Retry logic
 
-### LLM Providers
-- `groq` - Groq API (used by graphrag_wiki.py and benchmark_runner.py)
-- `openai` - OpenAI-compatible APIs
-- `ollama` - Local LLM inference (optional)
-
-### Search & Retrieval
+### LLM & Search
+- `groq` - Groq API (llama-3.3-70b-versatile)
 - `ddgs` - DuckDuckGo search for Wikipedia page discovery
-- `rdflib` - RDF/OWL ontology parsing
 
 ### Evaluation
 - `numpy` - Numerical computation
 - `tqdm` - Progress bars
-- `pytest` - Testing framework
+- `websockets` - GRASP WebSocket client
 
 ## License
 
