@@ -2,7 +2,12 @@
 
 from .client import DBpediaSPARQLClient
 from .entity_linker import DBpediaEntityLinker
-from .property_mapper import PropertyMapper
 from .cache import CacheManager
+from .schema_discovery import SchemaDiscovery
 
-__all__ = ["DBpediaSPARQLClient", "DBpediaEntityLinker", "PropertyMapper", "CacheManager"]
+__all__ = [
+    "DBpediaSPARQLClient",
+    "DBpediaEntityLinker",
+    "CacheManager",
+    "SchemaDiscovery",
+]

@@ -246,6 +246,86 @@ class DBpediaSPARQLClient:
 
         return results
 
+    def get_neighbors_with_types(
+        self,
+        entity_uri: str,
+        direction: str = "out",
+        limit: int = 50,
+    ) -> list[tuple[str, str, set[str]]]:
+        """Get neighboring entities with their ontology types.
+
+        Uses GROUP_CONCAT to aggregate multiple rdf:type values per neighbor
+        into a single row, avoiding row explosion from the OPTIONAL join.
+
+        Returns: List of (relation_uri, neighbor_uri, neighbor_types) tuples
+                 where neighbor_types is a set of dbo: class local names.
+        """
+        if not entity_uri.startswith("http"):
+            entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
+
+        results = []
+
+        if direction in ("out", "both"):
+            query = f"""
+            SELECT ?p ?neighbor
+                   (GROUP_CONCAT(DISTINCT STR(?nt); separator=",") AS ?neighborTypes)
+            WHERE {{
+                <{entity_uri}> ?p ?neighbor .
+                FILTER(isIRI(?neighbor))
+                FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
+                OPTIONAL {{
+                    ?neighbor a ?nt .
+                    FILTER(STRSTARTS(STR(?nt), "http://dbpedia.org/ontology/"))
+                }}
+            }}
+            GROUP BY ?p ?neighbor
+            LIMIT {limit}
+            """
+            query_results = self.query(query)
+            for binding in query_results.get("results", {}).get("bindings", []):
+                pred = binding["p"]["value"]
+                neighbor = binding["neighbor"]["value"]
+                types_str = binding.get("neighborTypes", {}).get("value", "")
+                types = set()
+                if types_str:
+                    for t in types_str.split(","):
+                        # Extract local name from full URI
+                        local = t.split("/")[-1] if "/" in t else t
+                        if local:
+                            types.add(local)
+                results.append((pred, neighbor, types))
+
+        if direction in ("in", "both"):
+            query = f"""
+            SELECT ?p ?neighbor
+                   (GROUP_CONCAT(DISTINCT STR(?nt); separator=",") AS ?neighborTypes)
+            WHERE {{
+                ?neighbor ?p <{entity_uri}> .
+                FILTER(isIRI(?neighbor))
+                FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
+                OPTIONAL {{
+                    ?neighbor a ?nt .
+                    FILTER(STRSTARTS(STR(?nt), "http://dbpedia.org/ontology/"))
+                }}
+            }}
+            GROUP BY ?p ?neighbor
+            LIMIT {limit}
+            """
+            query_results = self.query(query)
+            for binding in query_results.get("results", {}).get("bindings", []):
+                pred = binding["p"]["value"]
+                neighbor = binding["neighbor"]["value"]
+                types_str = binding.get("neighborTypes", {}).get("value", "")
+                types = set()
+                if types_str:
+                    for t in types_str.split(","):
+                        local = t.split("/")[-1] if "/" in t else t
+                        if local:
+                            types.add(local)
+                results.append((pred, neighbor, types))
+
+        return results
+
     def get_property_value(
         self, entity_uri: str, property_uri: str
     ) -> Optional[str]:

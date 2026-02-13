@@ -19,7 +19,7 @@ if _parent not in sys.path:
 
 from groq import Groq
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from graphrag_wiki import (
     link_entities_to_dbpedia,
     explore_kg,
@@ -57,6 +57,7 @@ def main():
     sep = "=" * 80
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
+    schema = SchemaDiscovery()
 
     # Step 1: Entity linking (Spotlight + spaCy fallback)
     entities = link_entities_to_dbpedia(question, linker)
@@ -78,7 +79,7 @@ def main():
     print("STEP 2: KG EXPLORATION (1-hop neighbors)")
     print(sep)
     seed_count = len(entities)
-    all_entities = explore_kg(entities, kg_client, verbose=True)
+    all_entities = explore_kg(entities, kg_client, schema, verbose=True)
     discovered = len(all_entities) - seed_count
     print(f"\n  Seed: {seed_count}, Discovered: {discovered}, Total: {len(all_entities)}")
     if discovered > 0:

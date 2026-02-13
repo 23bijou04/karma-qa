@@ -30,7 +30,8 @@ if _parent not in sys.path:
 from groq import Groq
 from ddgs import DDGS
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
 from dbpedia_qa.models import Entity
 from ablation_study_v3.wiki_utils import (
     get_wikipedia_text_by_title,
@@ -145,16 +146,33 @@ def link_entities_to_dbpedia(question: str,
 
 
 # ---------------------------------------------------------------------------
-# 1c. KG exploration: follow 1-hop relations to discover related entities
+# 1c. Schema-guided KG exploration
 # ---------------------------------------------------------------------------
 
-# Only follow structured DBpedia ontology/property relations
+# Subclass → cached parent schema mapping
+_CLASS_TO_SCHEMA = {
+    "Scientist": "Person", "Monarch": "Person", "Politician": "Person",
+    "Athlete": "Person", "MilitaryPerson": "Person", "SportsPlayer": "Person",
+    "Royalty": "Person", "FictionalCharacter": "Person", "Artist": "Person",
+    "Cleric": "Person", "Noble": "Person", "OfficeHolder": "Person",
+    "Country": "Place", "City": "Place", "Settlement": "Place",
+    "PopulatedPlace": "Place", "NaturalPlace": "Place", "River": "Place",
+    "Mountain": "Place", "AdministrativeRegion": "Place",
+    "Band": "MusicalArtist", "Singer": "MusicalArtist",
+    "WrittenWork": "Book", "Novel": "Book", "Comic": "Book",
+}
+
+# Noise classes: neighbors typed ONLY as these are dropped (blocklist approach)
+_NOISE_CLASSES = {
+    "Genre", "Language", "TopicalConcept", "TimePeriod", "Award",
+    "EthnicGroup", "Currency", "Colour", "OlympicResult",
+}
+
+# Fallback: old prefix+blocklist filter when schema lookup returns empty
 _USEFUL_RELATION_PREFIXES = (
     "http://dbpedia.org/ontology/",
     "http://dbpedia.org/property/",
 )
-
-# Skip these even within the ontology namespace (noisy/meta)
 _SKIP_RELATIONS = {
     "http://dbpedia.org/ontology/wikiPageWikiLink",
     "http://dbpedia.org/ontology/wikiPageExternalLink",
@@ -168,13 +186,61 @@ _SKIP_RELATIONS = {
 }
 
 
+def _get_allowed_relations(entity_uri: str,
+                           schema_discovery: SchemaDiscovery,
+                           verbose: bool = False) -> tuple[set[str] | None, str | None]:
+    """Determine allowed relations for an entity using its ontology class.
+
+    Returns (allowed_set, class_name). allowed_set is None if fallback mode.
+    """
+    try:
+        class_name = schema_discovery.get_entity_class(entity_uri)
+    except Exception as e:
+        logger.warning(f"Schema class lookup failed for {entity_uri}: {e}")
+        return None, None
+
+    if not class_name:
+        return None, None
+
+    # Resolve subclass to parent schema
+    schema_key = class_name
+    if class_name not in CACHED_CLASS_SCHEMAS:
+        schema_key = _CLASS_TO_SCHEMA.get(class_name)
+
+    if schema_key and schema_key in CACHED_CLASS_SCHEMAS:
+        schema = CACHED_CLASS_SCHEMAS[schema_key]
+        allowed = set(schema["dbo"] + schema["dbp"])
+        if verbose:
+            print(f"    [class: {class_name} → schema: {schema_key}]"
+                  f" allowed: {{{', '.join(sorted(allowed)[:8])}...}}")
+        return allowed, class_name
+
+    # Dynamic fallback: query actual properties
+    try:
+        actual = schema_discovery.get_actual_properties(entity_uri)
+        allowed = set(actual["dbo"] + actual["dbp"])
+        if allowed:
+            if verbose:
+                print(f"    [class: {class_name} → dynamic]"
+                      f" allowed: {{{', '.join(sorted(allowed)[:8])}...}}")
+            return allowed, class_name
+    except Exception as e:
+        logger.warning(f"Dynamic schema fallback failed for {entity_uri}: {e}")
+
+    return None, class_name
+
+
 def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
+               schema_discovery: SchemaDiscovery,
                limit_per_entity: int = 50,
                verbose: bool = False) -> list[Entity]:
-    """Use DBpedia KG to discover related entities via structured properties.
+    """Schema-guided KG exploration: discover related entities via ontology.
 
-    Only follows dbo:/dbp: ontology relations (director, birthPlace, etc.).
-    Skips noisy wikiPageWikiLink edges — web search handles those.
+    Two-layer filtering:
+      Layer 1: Only follow relations defined in the entity's class schema
+      Layer 2: Drop neighbors whose types are all noise classes (blocklist)
+
+    Falls back to prefix+blocklist filter when schema lookup returns empty.
     """
     all_entities = list(entities)
     seen_uris = {e.uri for e in entities if e.uri}
@@ -187,27 +253,55 @@ def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
     for entity in entities:
         if not entity.uri:
             continue
+
+        if verbose:
+            print(f"  Exploring: {entity.label}")
+
+        # Layer 1: Determine allowed relations from ontology class
+        allowed, class_name = _get_allowed_relations(
+            entity.uri, schema_discovery, verbose=verbose,
+        )
+
         try:
-            neighbors = client.get_neighbors(
+            neighbors = client.get_neighbors_with_types(
                 entity.uri, direction="out", limit=limit_per_entity,
             )
         except Exception as e:
             logger.warning(f"KG exploration failed for {entity.label}: {e}")
             continue
 
-        for relation_uri, neighbor_uri, conf in neighbors:
-            # Only follow structured ontology/property relations
-            if not any(relation_uri.startswith(p) for p in _USEFUL_RELATION_PREFIXES):
+        for relation_uri, neighbor_uri, neighbor_types in neighbors:
+            relation_name = relation_uri.split("/")[-1]
+
+            # Layer 1: Schema-guided relation filter
+            if allowed is not None:
+                if relation_name not in allowed:
+                    continue
+            else:
+                # Fallback: old prefix+blocklist filter
+                if not any(relation_uri.startswith(p)
+                           for p in _USEFUL_RELATION_PREFIXES):
+                    continue
+                if relation_uri in _SKIP_RELATIONS:
+                    continue
+
+            # Layer 2: Neighbor class blocklist
+            # Drop only if ALL types are noise; untyped neighbors pass through
+            if neighbor_types and neighbor_types.issubset(_NOISE_CLASSES):
+                if verbose:
+                    label = uri_to_wiki_title(neighbor_uri)
+                    print(f"      {entity.label} --{relation_name}"
+                          f"--> {label} [SKIP: {neighbor_types}]")
                 continue
-            if relation_uri in _SKIP_RELATIONS:
-                continue
+
+            # Structural safeguards
             if neighbor_uri in seen_uris:
                 continue
             if "/resource/" not in neighbor_uri:
                 continue
-            # Skip categories, templates, files
             local = neighbor_uri.split("/resource/")[-1]
-            if any(local.startswith(p) for p in ("Category:", "Template:", "File:")):
+            if any(local.startswith(p)
+                   for p in ("Category:", "Template:", "File:")):
                 continue
 
             label = uri_to_wiki_title(neighbor_uri)
@@ -217,8 +311,8 @@ def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
             seen_uris.add(neighbor_uri)
 
             if verbose:
-                rel_name = relation_uri.split("/")[-1] if "/" in relation_uri else relation_uri
-                print(f"      {entity.label} --{rel_name}--> {label}")
+                type_info = f" [{', '.join(sorted(neighbor_types))}]" if neighbor_types else ""
+                print(f"      {entity.label} --{relation_name}--> {label}{type_info}")
 
     return all_entities
 
@@ -227,16 +321,45 @@ def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
 # 2. Section extraction (from demo_graphrag_horcrux.py)
 # ---------------------------------------------------------------------------
 
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences, preserving section headers."""
+    chunks = []
+    for part in re.split(r'(^==+\s.*?\s==+$)', text, flags=re.MULTILINE):
+        part = part.strip()
+        if not part:
+            continue
+        if re.match(r'^==+\s', part):
+            chunks.append(part)
+        else:
+            # Split on sentence boundaries (period/!/? followed by space+uppercase)
+            sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', part)
+            chunks.extend(s.strip() for s in sentences if s.strip())
+    return chunks
+
+
+def _score_chunk(chunk: str, keywords: list[str],
+                 rare_keywords: set[str]) -> int:
+    """Score a text chunk by keyword hits (rare keywords count double)."""
+    chunk_lower = chunk.lower()
+    hits = [kw for kw in keywords if kw in chunk_lower]
+    return sum(2 if kw in rare_keywords else 1 for kw in hits)
+
+
 def extract_relevant_sections(text: str, keywords: list[str],
                               char_budget: int = MAX_CHARS_PER_PAGE) -> str:
-    """Extract paragraphs ranked by keyword density.
+    """Extract text ranked by keyword density, sentence-level for long blocks.
 
-    Keeps paragraphs with 2+ distinct keyword hits, or 1 hit if the keyword
-    is rare across the full text (appears in <10% of paragraphs).
-    Falls back to any-keyword-match if density filter returns nothing.
+    1. Split into paragraphs (double-newline boundaries).
+    2. Score paragraphs by keyword hits (rare keywords = 2x weight).
+    3. If a paragraph exceeds the budget, break it into sentences and
+       keep the highest-scoring sentences within the budget.
     """
     if not text:
         return ""
+
+    # Normalize keywords (strip trailing punctuation)
+    keywords = [kw.strip("?.,!:;\"'") for kw in keywords]
+    keywords = [kw for kw in keywords if kw]
 
     paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
     if not paragraphs:
@@ -280,13 +403,32 @@ def extract_relevant_sections(text: str, keywords: list[str],
     result = []
     total = 0
     for _, para in scored:
-        if total + len(para) > char_budget:
-            # Always include at least the first paragraph (truncated if needed)
-            if not result:
-                result.append(para[:char_budget])
-            break
-        result.append(para)
-        total += len(para)
+        if total + len(para) <= char_budget:
+            result.append(para)
+            total += len(para)
+        else:
+            # Paragraph too large for remaining budget — extract best sentences
+            remaining = char_budget - total
+            if remaining < 100:
+                break
+            sentences = _split_sentences(para)
+            sent_scored = [
+                (_score_chunk(s, keywords, rare_keywords), s)
+                for s in sentences
+            ]
+            sent_scored.sort(key=lambda x: x[0], reverse=True)
+            # Collect top sentences, then re-order by original position
+            picked = []
+            budget_left = remaining
+            for sc, sent in sent_scored:
+                if len(sent) <= budget_left:
+                    picked.append((sentences.index(sent), sent))
+                    budget_left -= len(sent)
+            # Re-order by original position to maintain narrative flow
+            picked.sort(key=lambda x: x[0])
+            if picked:
+                result.append(" ".join(s for _, s in picked))
+                total += sum(len(s) for _, s in picked)
 
     return "\n\n".join(result)
 
@@ -411,6 +553,7 @@ def answer_question(question: str, api_key: str,
     llm_client = Groq(api_key=api_key)
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
+    schema = SchemaDiscovery()
 
     # Step 1: Entity linking (Spotlight primary, spaCy fallback)
     entities = link_entities_to_dbpedia(question, linker)
@@ -426,13 +569,13 @@ def answer_question(question: str, api_key: str,
         if not entities:
             print("  (none found, will use question-based search)")
 
-    # Step 2: KG exploration (follow 1-hop relations)
+    # Step 2: Schema-guided KG exploration
     if verbose:
         print(f"\n{'=' * 70}")
-        print("STEP 2: KG exploration (1-hop neighbors)")
+        print("STEP 2: Schema-guided KG exploration")
         print(f"{'=' * 70}")
     seed_count = len(entities)
-    all_entities = explore_kg(entities, kg_client, verbose=verbose)
+    all_entities = explore_kg(entities, kg_client, schema, verbose=verbose)
     if verbose:
         discovered = len(all_entities) - seed_count
         print(f"  Seed: {seed_count}, Discovered: {discovered}, Total: {len(all_entities)}")
@@ -449,8 +592,9 @@ def answer_question(question: str, api_key: str,
         return "Could not find answer"
 
     # Extract relevant sections with dynamic per-page budget
-    q_keywords = [w for w in question.lower().split()
-                  if w.strip("?.,!") not in STOPWORDS and len(w) > 2]
+    q_keywords = [w.strip("?.,!:;\"'") for w in question.lower().split()
+                  if w.strip("?.,!:;\"'") not in STOPWORDS
+                  and len(w.strip("?.,!:;\"'")) > 2]
     per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
     filtered_texts = {}
     for title, full_text in raw_texts.items():
@@ -463,12 +607,28 @@ def answer_question(question: str, api_key: str,
     if verbose:
         print(f"\n  Total pages: {len(filtered_texts)}")
 
-    # Step 4: LLM reasoning
-    context = "\n\n".join(
-        f"=== {title} ===\n{text}" for title, text in filtered_texts.items()
+    # Step 4: LLM reasoning — rank pages by keyword density, include best first
+    def _page_kw_score(text: str) -> int:
+        t_lower = text.lower()
+        return sum(t_lower.count(kw) for kw in q_keywords)
+
+    ranked_pages = sorted(
+        filtered_texts.items(),
+        key=lambda item: _page_kw_score(item[1]),
+        reverse=True,
     )
-    if len(context) > MAX_CONTEXT_CHARS:
-        context = context[:MAX_CONTEXT_CHARS] + "\n... [truncated]"
+    context_parts = []
+    total_chars = 0
+    for title, text in ranked_pages:
+        entry = f"=== {title} ===\n{text}"
+        if total_chars + len(entry) > MAX_CONTEXT_CHARS:
+            remaining = MAX_CONTEXT_CHARS - total_chars
+            if remaining > 200:
+                context_parts.append(entry[:remaining])
+            break
+        context_parts.append(entry)
+        total_chars += len(entry)
+    context = "\n\n".join(context_parts)
 
     prompt = f"""Answer this question using ONLY the Wikipedia text below.
 
