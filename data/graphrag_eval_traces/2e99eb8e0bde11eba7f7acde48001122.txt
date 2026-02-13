@@ -1,0 +1,104 @@
+
+======================================================================
+STEP 1: Entity Linking (Spotlight + spaCy fallback)
+======================================================================
+  - Visions Of Light  [spotlight]
+    URI: http://dbpedia.org/resource/Visions_of_Light
+
+======================================================================
+STEP 2: Schema Discovery
+======================================================================
+  SPARQL Prefixes:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+    PREFIX dbo: <http://dbpedia.org/ontology/>
+    PREFIX dbp: <http://dbpedia.org/property/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+  
+  IMPORTANT: Use the EXACT URIs shown for each entity.
+  
+  Entity: Visions Of Light
+  URI: <http://dbpedia.org/resource/Visions_of_Light>
+  Class: dbo:Film
+  
+    dbo: director, producer, starring, releaseDate, runtime, distributor, country, budget, gross, cinematography
+    dbp: director, producer, starring, released, runtime, studio, distributor, country, budget, gross
+    Property hints:
+      - director: film director (returns Person)
+      - producer: film producer (returns Person)
+      - starring: lead actors (returns Person)
+      - releaseDate: release date (xsd:date)
+  ... (35 lines total)
+
+======================================================================
+STEP 3: Route Decision → TEXT
+======================================================================
+  LLM response: TEXT
+
+======================================================================
+STEP 4: Text Fallback — LLM-generated context SPARQL
+======================================================================
+  Context SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbp:property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?entity ?label WHERE {
+  # seed film
+  { VALUES ?entity { <http://dbpedia.org/resource/Visions_of_Little> }
+ 
+  Results: 0 rows, error: 'QueryBadFormed: A bad request has been sent to the endpoint:'
+  Retry SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?director ?directorName ?birthPlace ?birthPlaceName WHERE {
+  # director(s) of the film
+  { dbr:Visio
+  Retry results: 5 rows
+  Context entities (1):
+    - Visions Of Light [spotlight]
+
+======================================================================
+SPARQL context found no new entities — falling back to KG exploration
+======================================================================
+
+======================================================================
+STEP 4: Text Fallback — Schema-guided KG exploration
+======================================================================
+  Exploring: Visions Of Light
+    [class: Film → schema: Film] allowed: {budget, cinematography, country, director, distributor, editing, gross, music...}
+      Visions Of Light --distributor--> 20th Century Home Entertainment [Agent, Company, Organisation]
+  Seed: 1, Total: 2
+
+======================================================================
+STEP 5: Wikipedia retrieval
+======================================================================
+    Fetching: 'Visions of Light' (source=spotlight)
+      -> 2280 chars
+    Fetching: '20th Century Home Entertainment' (source=kg_explore)
+      -> 25735 chars
+    Web search: 'place birth director film visions light?'
+      -> web results: ['Visions of Light', '1861 in animation', 'David di Donatello for Best Visual Effects']
+      -> 1861 in animation: 2249 chars
+      -> David di Donatello for Best Visual Effects: 6175 chars
+  Visions of Light: 2280 -> 1237 chars
+  20th Century Home Entertainment: 25735 -> 3006 chars
+  1861 in animation: 2249 -> 500 chars
+  David di Donatello for Best Visual Effects: 6175 -> 1530 chars
+
+======================================================================
+STEP 6: LLM Reasoning over text
+======================================================================
+  Context: 6421 chars from 4 pages
+
+======================================================================
+RESULT (method=text_explore)
+======================================================================
+  Question: What is the place of birth of the director of film Visions Of Light?
+  Answer:   The place of birth is not provided in the text.
+  Pages:    4 (Visions of Light, 20th Century Home Entertainment, 1861 in animation, David di Donatello for Best Visual Effects)
+

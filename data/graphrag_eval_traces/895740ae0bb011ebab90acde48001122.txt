@@ -1,0 +1,120 @@
+
+======================================================================
+STEP 1: Entity Linking (Spotlight + spaCy fallback)
+======================================================================
+  - William Paulet, 4Th Marquess Of Winchester  [spotlight]
+    URI: http://dbpedia.org/resource/William_Paulet,_4th_Marquess_of_Winchester
+
+======================================================================
+STEP 2: Schema Discovery
+======================================================================
+  SPARQL Prefixes:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+    PREFIX dbo: <http://dbpedia.org/ontology/>
+    PREFIX dbp: <http://dbpedia.org/property/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+  
+  IMPORTANT: Use the EXACT URIs shown for each entity.
+  
+  Entity: William Paulet, 4Th Marquess Of Winchester
+  URI: <http://dbpedia.org/resource/William_Paulet,_4th_Marquess_of_Winchester>
+  Class: dbo:Person
+  
+    dbo: birthDate, deathDate, birthPlace, deathPlace, parent, child, spouse, nationality, occupation, almaMater
+    dbp: father, mother, birthDate, birthPlace, deathDate, deathPlace, spouse, children, nationality, occupation
+    Property hints:
+      - father: father of the person (use for paternal relations)
+      - mother: mother of the person (use for maternal relations)
+      - parent: generic parent (could be father or mother)
+      - birthDate: date of birth (xsd:date format)
+  ... (34 lines total)
+
+======================================================================
+STEP 3: Route Decision → SPARQL
+======================================================================
+  LLM response: SPARQL
+
+======================================================================
+STEP 4: SPARQL Generation + Execution
+======================================================================
+  Generated SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http:
+  Results: 0 rows, error: 'QueryBadFormed: A bad request has been sent to the endpoint: probably the SPARQL'
+  Retry SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http:
+  Retry results: 0 rows
+
+======================================================================
+STEP 4: Text Fallback — LLM-generated context SPARQL
+======================================================================
+  Context SPARQL:
+    PREFIX dbr: <http://dbseed.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?entity ?label WHERE {
+  { VALUES ?entity { <http://dbpedia.org/resource/William_Paulet,_4th_Marquess_
+  Results: 0 rows, error: 'QueryBadFormed: A bad request has been sent to the endpoint:'
+  Retry SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?grandmother ?label WHERE {
+  {
+    dbr:William_Paulet,_4th_Marquess_of_Winchester dbp:father ?father
+  Retry results: 0 rows
+  Context entities (1):
+    - William Paulet, 4Th Marquess Of Winchester [spotlight]
+
+======================================================================
+SPARQL context found no new entities — falling back to KG exploration
+======================================================================
+
+======================================================================
+STEP 4: Text Fallback — Schema-guided KG exploration
+======================================================================
+  Exploring: William Paulet, 4Th Marquess Of Winchester
+    [class: Person → schema: Person] allowed: {almaMater, birthDate, birthPlace, child, children, deathDate, deathPlace, education...}
+      William Paulet, 4Th Marquess Of Winchester --father--> William Paulet, 3rd Marquess of Winchester [Animal, Eukaryote, Person, Politician, Species]
+  Seed: 1, Total: 2
+
+======================================================================
+STEP 5: Wikipedia retrieval
+======================================================================
+    Fetching: 'William Paulet, 4th Marquess of Winchester' (source=spotlight)
+      -> 1813 chars
+    Fetching: 'William Paulet, 3rd Marquess of Winchester' (source=kg_explore)
+      -> 3171 chars
+    Web search: 'william paulet, 4th marquess winchester's paternal'
+      -> web results: ['William Paulet, 4th Marquess of Winchester', 'Marquess of Winchester', 'William Paulet']
+      -> Marquess of Winchester: 8831 chars
+      -> William Paulet: 581 chars
+  William Paulet, 4th Marquess of Winchester: 1813 -> 1553 chars
+  William Paulet, 3rd Marquess of Winchester: 3171 -> 2668 chars
+  Marquess of Winchester: 8831 -> 3010 chars
+  William Paulet: 581 -> 502 chars
+
+======================================================================
+STEP 6: LLM Reasoning over text
+======================================================================
+  Context: 7895 chars from 4 pages
+
+======================================================================
+RESULT (method=text_explore)
+======================================================================
+  Question: Who is William Paulet, 4Th Marquess Of Winchester's paternal grandmother?
+  Answer:   Elizabeth Willoughby**
+  Pages:    4 (William Paulet, 4th Marquess of Winchester, William Paulet, 3rd Marquess of Winchester, Marquess of Winchester, William Paulet)
+

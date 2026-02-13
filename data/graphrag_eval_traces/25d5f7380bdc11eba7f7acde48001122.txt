@@ -1,0 +1,114 @@
+
+======================================================================
+STEP 1: Entity Linking (Spotlight + spaCy fallback)
+======================================================================
+  - Prince Moriyoshi  [spotlight]
+    URI: http://dbpedia.org/resource/Prince_Moriyoshi
+
+======================================================================
+STEP 2: Schema Discovery
+======================================================================
+  SPARQL Prefixes:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+    PREFIX dbo: <http://dbpedia.org/ontology/>
+    PREFIX dbp: <http://dbpedia.org/property/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+  
+  IMPORTANT: Use the EXACT URIs shown for each entity.
+  
+  Entity: Prince Moriyoshi
+  URI: <http://dbpedia.org/resource/Prince_Moriyoshi>
+  Class: dbo:Person
+  
+    dbo: birthDate, deathDate, birthPlace, deathPlace, parent, child, spouse, nationality, occupation, almaMater
+    dbp: father, mother, birthDate, birthPlace, deathDate, deathPlace, spouse, children, nationality, occupation
+    Property hints:
+      - father: father of the person (use for paternal relations)
+      - mother: mother of the person (use for maternal relations)
+      - parent: generic parent (could be father or mother)
+      - birthDate: date of birth (xsd:date format)
+  ... (37 lines total)
+
+======================================================================
+STEP 3: Route Decision → TEXT
+======================================================================
+  LLM response: TEXT
+
+======================================================================
+STEP 4: Text Fallback — LLM-generated context SPARQL
+======================================================================
+  Context SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbp.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?entity ?label WHERE {
+  { VALUES ?entity { dbr:Prince_Moriyoshi }
+    ?entity rdfs:label ?label .
+    FI
+  Results: 0 rows, error: 'QueryBadFormed: A bad request has been sent to the endpoint:'
+  Retry SPARQL:
+    PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbp.org/property/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?entity ?label WHERE {
+  { dbr:Prince_Moriyoshi dbo:parent ?father .
+    ?father dbo:birthPlace ?entity .
+  Retry results: 0 rows
+  Context entities (1):
+    - Prince Moriyoshi [spotlight]
+
+======================================================================
+SPARQL context found no new entities — falling back to KG exploration
+======================================================================
+
+======================================================================
+STEP 4: Text Fallback — Schema-guided KG exploration
+======================================================================
+  Exploring: Prince Moriyoshi
+    [class: Person → schema: Person] allowed: {almaMater, birthDate, birthPlace, child, children, deathDate, deathPlace, education...}
+      Prince Moriyoshi --spouse--> Kitabatake Chikafusa [Animal, Eukaryote, Person, Species, Writer]
+      Prince Moriyoshi --father--> Emperor Go-Daigo [Animal, Eukaryote, Person, Royalty, Species]
+      Prince Moriyoshi --parent--> Minamoto no Chikako [Animal, Eukaryote, Person, Species]
+  Seed: 1, Total: 4
+
+======================================================================
+STEP 5: Wikipedia retrieval
+======================================================================
+    Fetching: 'Prince Moriyoshi' (source=spotlight)
+      -> 2562 chars
+    Fetching: 'Kitabatake Chikafusa' (source=kg_explore)
+      -> 5803 chars
+    Fetching: 'Emperor Go-Daigo' (source=kg_explore)
+      -> 13230 chars
+    Fetching: 'Minamoto no Chikako' (source=kg_explore)
+      -> 305 chars
+    Web search: 'place birth prince moriyoshi's father?'
+      -> web results: ['Minamoto no Sanetomo', 'Tokugawa Yoshinobu', 'Minamoto no Yoritomo']
+      -> Minamoto no Sanetomo: 4778 chars
+      -> Tokugawa Yoshinobu: 14475 chars
+      -> Minamoto no Yoritomo: 14359 chars
+  Prince Moriyoshi: 2562 -> 2177 chars
+  Kitabatake Chikafusa: 5803 -> 2335 chars
+  Emperor Go-Daigo: 13230 -> 2973 chars
+  Minamoto no Chikako: 305 -> 225 chars
+  Minamoto no Sanetomo: 4778 -> 989 chars
+  Tokugawa Yoshinobu: 14475 -> 2970 chars
+  Minamoto no Yoritomo: 14359 -> 2986 chars
+
+======================================================================
+STEP 6: LLM Reasoning over text
+======================================================================
+  Context: 12008 chars from 7 pages
+
+======================================================================
+RESULT (method=text_explore)
+======================================================================
+  Question: What is the place of birth of Prince Moriyoshi's father?
+  Answer:   The text does not specify the place of birth of Emperor Go‑Daigo.**
+  Pages:    7 (Prince Moriyoshi, Kitabatake Chikafusa, Emperor Go-Daigo, Minamoto no Chikako, Minamoto no Sanetomo, Tokugawa Yoshinobu, Minamoto no Yoritomo)
+
