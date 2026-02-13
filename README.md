@@ -6,36 +6,14 @@ A hybrid question-answering system that combines DBpedia knowledge graph with Wi
 
 ## Architecture
 
-The system implements three evaluation pipelines and a hybrid router:
+The main system is the **Schema-Routed Hybrid Pipeline** (`hybrid_qa.py`). Two additional evaluation baselines are provided for comparison:
 
-```
-                          Question
-                             |
-              +--------------+--------------+
-              |              |              |
-         GRASP (KG)    LLM-SPARQL     GraphRAG (Text)
-              |              |              |
-              |     Entity Linking          |
-              |     (Spotlight +            |
-              |      spaCy NER)            |
-              |         |                   |
-              |     Schema Discovery        |
-              |     (ontology classes +     |
-              |      property sampling)    |
-              |         |                   |
-              |     Generate SPARQL         |
-              |     (LLM + retry)          |
-              |         |                   |
-              |     Execute against         |
-              |     DBpedia endpoint        |
-              |              |              |
-              +--------------+--------------+
-                             |
-                   Hybrid Router (hybrid_qa.py)
-                   SPARQL-first, text fallback
-                             |
-                          Answer
-```
+| Pipeline | Entry Point | Strategy |
+|----------|-------------|----------|
+| **Hybrid (main)** | `hybrid_qa.py` | Schema-routed: SPARQL when schema supports it, text fallback otherwise |
+| GraphRAG | `graphrag_wiki.py` | Text-only: KG exploration + Wikipedia + LLM |
+| GRASP | `grasp_evaluation.py` | External KG QA system (WebSocket API) |
+| LLM-SPARQL | `sparql_evaluation.py` | SPARQL-only: schema discovery + LLM SPARQL generation |
 
 ### GraphRAG Pipeline (graphrag_wiki.py)
 
@@ -55,23 +33,32 @@ Question
 Answer
 ```
 
-### Hybrid Pipeline (hybrid_qa.py)
+### Schema-Routed Hybrid Pipeline (hybrid_qa.py)
 
 ```
 Question
    |
 1. Entity Linking (Spotlight + spaCy fallback)
    |
-2. Schema Discovery (ontology classes, properties, sample values)
+2. Schema Discovery (classes, properties, sample values via SPARQL)
    |
-3. LLM generates SPARQL query
+3. Route Decision — LLM examines schema → SPARQL or TEXT?
    |
-4. Execute with retry (revise query on failure)
-   |
-5. Result found? -> Answer from structured data
-   |  else -> Text fallback:
-   |    a) "explore"        — schema-guided KG exploration
-   |    b) "sparql_context" — LLM generates context SPARQL
+   ├─ SPARQL route:
+   │    4a. LLM generates SPARQL query using schema URIs
+   │    4b. Execute with retry (feed error back to LLM)
+   │    4c. Extract answer from structured results
+   │         (fall through to TEXT on failure)
+   │
+   └─ TEXT route (or SPARQL failure):
+        5. Context building (auto-chain):
+           a) sparql_context — LLM generates context SPARQL to find entities
+              + entity relevance filter (label words ∩ question words)
+           b) explore — schema-guided 1-hop KG traversal (if a finds nothing)
+        6. Wikipedia retrieval for context entities
+        7. Section extraction (sentence-level, keyword-scored)
+        8. Context assembly (pages ranked by keyword density, 12K budget)
+        9. LLM reads passages → FINAL ANSWER
    |
 Answer
 ```
@@ -151,9 +138,9 @@ python graphrag_wiki.py "Who directed Inception?" --verbose
 python graphrag_wiki.py "Who is the paternal grandfather of Eadred?" --verbose
 ```
 
-### Hybrid Pipeline (SPARQL-first)
+### Hybrid Pipeline (Schema-Routed)
 
-Tries structured SPARQL first, falls back to text retrieval:
+Uses KG schema to decide SPARQL vs text retrieval per question:
 
 ```bash
 python hybrid_qa.py "Who directed Inception?" --verbose
@@ -211,7 +198,7 @@ dbpedia_qa/
 +-- models.py                # Data models (Entity, Triple)
 +-- graphrag_wiki.py         # GraphRAG pipeline: Spotlight -> KG -> Wikipedia -> LLM
 +-- graphrag_debug.py        # Debug script showing all intermediate results
-+-- hybrid_qa.py             # Hybrid QA: SPARQL-first with text fallback
++-- hybrid_qa.py             # Main pipeline: schema-routed SPARQL + text fallback
 +-- sparql_evaluation.py     # LLM-SPARQL evaluation pipeline
 +-- grasp_evaluation.py      # GRASP WebSocket evaluation client
 +-- grasp_evaluate_results.py# Offline re-evaluation of GRASP results
@@ -257,6 +244,12 @@ The `ablation_study_v3/` module evaluates 5 levels of KG detail to measure the i
 
 ## Key Technical Decisions
 
+### Schema-Based Route Decision
+- LLM examines discovered schema *before* generating SPARQL
+- If properties can answer the question (e.g., `dbo:director` for "Who directed X?") -> SPARQL route
+- If schema lacks needed properties (e.g., only `dbo:description` for plot questions) -> TEXT route
+- Prevents wasted SPARQL generation and wrong answers from incorrect property matches
+
 ### DBpedia Spotlight Entity Linking
 - `min_confidence=0.5` filters noise (e.g., "Albert" -> Uncle Albert at 0.40)
 - Built-in fallback to SPARQL label search when Spotlight fails
@@ -267,16 +260,23 @@ The `ablation_study_v3/` module evaluates 5 levels of KG detail to measure the i
 - Type-aware neighbor retrieval via `get_neighbors_with_types()`
 - KG exploration adds value ~60% of the time (property coverage)
 
-### Hybrid Schema Discovery
-1. **Cached class schemas** for common DBpedia classes (Person, Film, Place, etc.)
+### Schema Discovery
+1. **Cached class schemas** for 6 common DBpedia classes (Person, Film, Organisation, Place, Work, Band)
 2. **Dynamic property discovery** via SPARQL queries for unknown entities
-3. **LLM-based SPARQL generation** with retry on execution failure
+3. Schema includes exact URIs, property names, and sample values for LLM context
+
+### Text Fallback: Auto-Chaining + Relevance Filtering
+- **Auto-chain**: tries LLM-generated context SPARQL first, falls back to KG exploration if no new entities found
+- **Entity relevance filter**: drops context entities whose labels share no words with the question or seed entities
+- **Sentence-level section extraction**: splits oversized paragraphs into sentences, scores by keyword density
+- **Keyword-ranked context assembly**: pages ranked by keyword density, most relevant fill 12K budget first
 
 ## Dependencies
 
 ### Core
 - `sparqlwrapper` - SPARQL query execution
-- `httpx` - HTTP client
+- `httpx` - HTTP client (entity linking)
+- `requests` - HTTP client (Wikipedia API)
 - `spacy` (en_core_web_sm) - NLP entity extraction
 - `tenacity` - Retry logic
 

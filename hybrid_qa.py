@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Schema-Routed Hybrid QA: SPARQL-first with text fallback.
+"""Schema-Routed Hybrid QA: uses KG schema to route SPARQL vs text.
 
-Pipeline (paper Algorithm 1):
-  1. EntityLink(q)           — DBpedia Spotlight (spaCy fallback)
-  2. OntologySchema(E)       — entity classes, properties, sample values
-  3. LLM_GenerateSPARQL(q,S) — attempt structured KG query
-  4. ExecuteWithRetry(sparql) — execute; retry with revised query on failure
-  5. if result != empty -> answer from structured data
-  6. else -> text fallback (two modes via --fallback flag):
-     a) "explore"        — programmatic schema-guided KG exploration
-     b) "sparql_context" — LLM generates SPARQL to find context entities
+Pipeline:
+  1. EntityLink(q)            — DBpedia Spotlight (spaCy fallback)
+  2. SchemaDiscovery(E)       — entity classes, properties, sample values
+  3. RouteDecision(q, S)      — LLM examines schema -> SPARQL | TEXT
+  4. if SPARQL: GenerateSPARQL(q, S) -> Execute with retry -> answer
+  5. if TEXT (or SPARQL fail): auto-chain context building:
+     a) sparql_context  — LLM generates SPARQL to find context entities
+     b) explore         — schema-guided KG exploration (fallback if a finds nothing)
+  6. WikipediaRetrieval       — fetch pages for context entities
+  7. SectionExtraction        — sentence-level keyword scoring
+  8. LLM reads passages       -> FINAL ANSWER
 
 Usage:
   python3 hybrid_qa.py "Who directed Inception?" --verbose
-  python3 hybrid_qa.py "Who destroys the last Horcrux?" --fallback sparql_context --verbose
+  python3 hybrid_qa.py "Who destroys the last Horcrux?" --verbose
   python3 hybrid_qa.py "When was Albert Einstein born?" --api-key $GROQ_API_KEY
 """
 
