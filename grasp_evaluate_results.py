@@ -21,13 +21,8 @@ import os
 import sys
 from collections import defaultdict
 
-from grasp_evaluation import (
-    normalize_answer,
-    compute_em,
-    compute_f1,
-    compute_containment,
-    clean_verbose_answer,
-)
+from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
+from grasp_evaluation import clean_verbose_answer
 
 # ---------------------------------------------------------------------------
 # Data loading

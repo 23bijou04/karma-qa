@@ -21,47 +21,14 @@ import asyncio
 import json
 import os
 import re
-import string
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 
 import websockets
 
-# ---------------------------------------------------------------------------
-# Metrics (inlined from evaluation/metrics.py to avoid import issues)
-# ---------------------------------------------------------------------------
-
-def normalize_answer(answer: str) -> str:
-    """Normalize answer for comparison (2WikiMultiHopQA standard)."""
-    answer = answer.lower()
-    answer = re.sub(r'\b(a|an|the)\b', ' ', answer)
-    answer = ''.join(ch for ch in answer if ch not in string.punctuation)
-    return ' '.join(answer.split()).strip()
-
-
-def compute_em(prediction: str, ground_truth: str) -> float:
-    return float(normalize_answer(prediction) == normalize_answer(ground_truth))
-
-
-def compute_f1(prediction: str, ground_truth: str) -> float:
-    pred_tokens = normalize_answer(prediction).split()
-    gold_tokens = normalize_answer(ground_truth).split()
-    if not pred_tokens or not gold_tokens:
-        return float(pred_tokens == gold_tokens)
-    common = Counter(pred_tokens) & Counter(gold_tokens)
-    num_common = sum(common.values())
-    if num_common == 0:
-        return 0.0
-    precision = num_common / len(pred_tokens)
-    recall = num_common / len(gold_tokens)
-    return (2 * precision * recall) / (precision + recall)
-
-
-def compute_containment(prediction: str, ground_truth: str) -> float:
-    """Check if gold answer appears anywhere in the prediction (upper bound)."""
-    return float(normalize_answer(ground_truth) in normalize_answer(prediction))
+from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
 
 # ---------------------------------------------------------------------------
 # Configuration

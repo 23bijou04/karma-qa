@@ -8,6 +8,8 @@ import logging
 from typing import Optional
 from SPARQLWrapper import SPARQLWrapper, JSON
 
+from .sparql_utils import escape_sparql_string, escape_sparql_uri
+
 logger = logging.getLogger(__name__)
 
 # Cached ontology schemas for common DBpedia classes
@@ -211,7 +213,7 @@ class SchemaDiscovery:
         SELECT ?entity WHERE {{
             ?entity rdfs:label ?label .
             FILTER(LANG(?label) = "en")
-            FILTER(CONTAINS(LCASE(?label), "{search_term.lower()[:30]}"))
+            FILTER(CONTAINS(LCASE(?label), "{escape_sparql_string(search_term.lower()[:30])}"))
         }}
         LIMIT 1
         """
@@ -246,9 +248,10 @@ class SchemaDiscovery:
 
     def _entity_exists(self, uri: str) -> bool:
         """Check if an entity URI exists in DBpedia."""
+        safe_uri = escape_sparql_uri(uri)
         query = f"""
         ASK WHERE {{
-            <{uri}> ?p ?o .
+            <{safe_uri}> ?p ?o .
         }}
         """
         try:
@@ -263,7 +266,7 @@ class SchemaDiscovery:
         """Search for entity by rdfs:label."""
         query = f"""
         SELECT ?entity WHERE {{
-            ?entity rdfs:label "{entity_name}"@en .
+            ?entity rdfs:label "{escape_sparql_string(entity_name)}"@en .
             ?entity a ?type .
             FILTER(STRSTARTS(STR(?type), "http://dbpedia.org/ontology/"))
         }}
@@ -288,9 +291,10 @@ class SchemaDiscovery:
         Returns:
             Class name (e.g., "Person", "Film") or None
         """
+        safe_uri = escape_sparql_uri(entity_uri)
         query = f"""
         SELECT ?type WHERE {{
-            <{entity_uri}> a ?type .
+            <{safe_uri}> a ?type .
             FILTER(STRSTARTS(STR(?type), "http://dbpedia.org/ontology/"))
         }}
         """
@@ -327,14 +331,15 @@ class SchemaDiscovery:
         filter_clause = ""
         if property_filter:
             conditions = " || ".join([
-                f'CONTAINS(LCASE(STR(?property)), "{p.lower()}")'
+                f'CONTAINS(LCASE(STR(?property)), "{escape_sparql_string(p.lower())}")'
                 for p in property_filter
             ])
             filter_clause = f"FILTER({conditions})"
 
+        safe_uri = escape_sparql_uri(entity_uri)
         query = f"""
         SELECT DISTINCT ?property ?value WHERE {{
-            <{entity_uri}> ?property ?value .
+            <{safe_uri}> ?property ?value .
             FILTER(
                 STRSTARTS(STR(?property), "http://dbpedia.org/ontology/") ||
                 STRSTARTS(STR(?property), "http://dbpedia.org/property/")

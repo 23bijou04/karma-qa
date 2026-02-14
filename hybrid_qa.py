@@ -41,10 +41,7 @@ from graphrag_wiki import (
     link_entities_to_dbpedia,
     explore_kg,
     retrieve_wikipedia,
-    extract_relevant_sections,
-    STOPWORDS,
-    MAX_CONTEXT_CHARS,
-    MAX_CHARS_PER_PAGE,
+    assemble_context,
 )
 from sparql_evaluation import (
     get_schema_for_uris,
@@ -87,9 +84,9 @@ Reply with EXACTLY one word:
 - SPARQL — if the schema contains properties that can answer the question (e.g., dbo:director, dbp:birthDate, dbo:author)
 - TEXT — if the schema lacks the needed properties and we should search Wikipedia text instead"""
 
-CONTEXT_SPARQL_PROMPT = """You are a SPARQL expert for DBpedia. The direct SPARQL query returned no results, so we need to find related Wikipedia pages that contain the answer.
+CONTEXT_SPARQL_PROMPT = """You are a SPARQL expert for DBpedia. The KG schema does not have enough properties to answer this question directly via SPARQL. Instead, we need to find related DBpedia entities whose Wikipedia pages likely contain the answer.
 
-Generate a SPARQL query that finds DBpedia entities whose Wikipedia pages are likely to contain information needed to answer the question. Return entity URIs and their labels.
+Generate a SPARQL query that finds these related entities. Return entity URIs and their labels.
 
 {schema}
 
@@ -298,13 +295,14 @@ def explore_kg_fallback(question: str, entities: list[Entity],
 
 def hybrid_answer(question: str, api_key: str,
                   model: str = "llama-3.3-70b-versatile",
-                  fallback: str = "explore",
+                  fallback: str = "auto",
                   verbose: bool = False) -> tuple[str, str]:
-    """Answer a question using SPARQL-first with text fallback.
+    """Schema-routed hybrid QA: SPARQL when schema supports it, text otherwise.
 
     Args:
-        fallback: "explore" (programmatic KG exploration) or
-                  "sparql_context" (LLM-generated context SPARQL)
+        fallback: "auto" (sparql_context first, explore if no new entities),
+                  "sparql_context" (LLM-generated context SPARQL only), or
+                  "explore" (programmatic KG exploration only)
 
     Returns: (answer, method) where method is "sparql", "text_explore",
              or "text_sparql_context".
@@ -445,42 +443,8 @@ def hybrid_answer(question: str, api_key: str,
             print("  No Wikipedia text retrieved.")
         return "Could not find answer", method_label
 
-    # Section extraction
-    q_keywords = [
-        w.strip("?.,!:;\"'") for w in question.lower().split()
-        if w.strip("?.,!:;\"'") not in STOPWORDS and len(w.strip("?.,!:;\"'")) > 2
-    ]
-    per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
-    filtered_texts = {}
-    for title, full_text in raw_texts.items():
-        relevant = extract_relevant_sections(full_text, q_keywords, per_page)
-        if relevant:
-            filtered_texts[title] = relevant
-        if verbose:
-            print(f"  {title}: {len(full_text)} -> {len(relevant)} chars")
-
-    # Assemble context — rank pages by keyword density, include best first
-    def _page_keyword_score(text: str) -> int:
-        t_lower = text.lower()
-        return sum(t_lower.count(kw) for kw in q_keywords)
-
-    ranked_pages = sorted(
-        filtered_texts.items(),
-        key=lambda item: _page_keyword_score(item[1]),
-        reverse=True,
-    )
-    context_parts = []
-    total_chars = 0
-    for title, txt in ranked_pages:
-        entry = f"=== {title} ===\n{txt}"
-        if total_chars + len(entry) > MAX_CONTEXT_CHARS:
-            remaining = MAX_CONTEXT_CHARS - total_chars
-            if remaining > 200:
-                context_parts.append(entry[:remaining])
-            break
-        context_parts.append(entry)
-        total_chars += len(entry)
-    context = "\n\n".join(context_parts)
+    # Section extraction and context assembly
+    context, filtered_texts = assemble_context(raw_texts, question, verbose=verbose)
 
     # LLM reasoning
     if verbose:

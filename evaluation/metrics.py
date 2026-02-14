@@ -87,6 +87,11 @@ def compute_f1(prediction: str, ground_truth: str) -> float:
     return f1
 
 
+def compute_containment(prediction: str, ground_truth: str) -> float:
+    """Check if gold answer appears anywhere in the prediction (upper bound)."""
+    return float(normalize_answer(ground_truth) in normalize_answer(prediction))
+
+
 def compute_supporting_facts_em(
     prediction: list[tuple[str, int]],
     ground_truth: list[tuple[str, int]],

@@ -43,7 +43,8 @@ Output: answer a, method m
    pages <- fetch_wikipedia(context_entities) + web_search(keywords(q))
 
 7. SECTION EXTRACTION
-   for each page: extract top sentences by keyword density (budget=3000 chars)
+   per_page_budget <- max(3000, 12000 / |pages|)
+   for each page: extract top sentences by keyword density (budget=per_page_budget)
    context <- rank pages by keyword density, fill up to 12000 chars
 
 8. ANSWER

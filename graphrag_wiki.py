@@ -544,6 +544,67 @@ def retrieve_wikipedia(entities: list[Entity], question: str,
 
 
 # ---------------------------------------------------------------------------
+# 3b. Context assembly (shared with hybrid_qa.py)
+# ---------------------------------------------------------------------------
+
+def assemble_context(
+    raw_texts: dict[str, str],
+    question: str,
+    verbose: bool = False,
+) -> tuple[str, dict[str, str]]:
+    """Extract relevant sections, rank pages, and assemble LLM context.
+
+    Args:
+        raw_texts: {page_title: full_wiki_text}
+        question: The question to answer
+        verbose: Print progress
+
+    Returns:
+        (context_string, filtered_texts_dict)
+    """
+    q_keywords = [
+        w.strip("?.,!:;\"'") for w in question.lower().split()
+        if w.strip("?.,!:;\"'") not in STOPWORDS
+        and len(w.strip("?.,!:;\"'")) > 2
+    ]
+    per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
+    filtered_texts = {}
+    for title, full_text in raw_texts.items():
+        relevant = extract_relevant_sections(full_text, q_keywords, per_page)
+        if relevant:
+            filtered_texts[title] = relevant
+        if verbose:
+            print(f"    {title}: {len(full_text)} -> {len(relevant)} chars (filtered, budget={per_page})")
+
+    if verbose:
+        print(f"\n  Total pages: {len(filtered_texts)}")
+
+    def _page_kw_score(text: str) -> int:
+        t_lower = text.lower()
+        return sum(t_lower.count(kw) for kw in q_keywords)
+
+    ranked_pages = sorted(
+        filtered_texts.items(),
+        key=lambda item: _page_kw_score(item[1]),
+        reverse=True,
+    )
+    context_parts = []
+    total_chars = 0
+    for title, text in ranked_pages:
+        entry = f"=== {title} ===\n{text}"
+        if total_chars + len(entry) > MAX_CONTEXT_CHARS:
+            remaining = MAX_CONTEXT_CHARS - total_chars
+            if remaining > 200:
+                context_parts.append(entry[:remaining])
+            break
+        context_parts.append(entry)
+        total_chars += len(entry)
+    context = "\n\n".join(context_parts)
+
+    return context, filtered_texts
+
+
+# ---------------------------------------------------------------------------
 # 4. Main pipeline
 # ---------------------------------------------------------------------------
 
@@ -591,44 +652,8 @@ def answer_question(question: str, api_key: str,
         print("\nFailed: no Wikipedia text retrieved.")
         return "Could not find answer"
 
-    # Extract relevant sections with dynamic per-page budget
-    q_keywords = [w.strip("?.,!:;\"'") for w in question.lower().split()
-                  if w.strip("?.,!:;\"'") not in STOPWORDS
-                  and len(w.strip("?.,!:;\"'")) > 2]
-    per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
-    filtered_texts = {}
-    for title, full_text in raw_texts.items():
-        relevant = extract_relevant_sections(full_text, q_keywords, per_page)
-        if relevant:
-            filtered_texts[title] = relevant
-        if verbose:
-            print(f"    {title}: {len(full_text)} -> {len(relevant)} chars (filtered, budget={per_page})")
-
-    if verbose:
-        print(f"\n  Total pages: {len(filtered_texts)}")
-
-    # Step 4: LLM reasoning — rank pages by keyword density, include best first
-    def _page_kw_score(text: str) -> int:
-        t_lower = text.lower()
-        return sum(t_lower.count(kw) for kw in q_keywords)
-
-    ranked_pages = sorted(
-        filtered_texts.items(),
-        key=lambda item: _page_kw_score(item[1]),
-        reverse=True,
-    )
-    context_parts = []
-    total_chars = 0
-    for title, text in ranked_pages:
-        entry = f"=== {title} ===\n{text}"
-        if total_chars + len(entry) > MAX_CONTEXT_CHARS:
-            remaining = MAX_CONTEXT_CHARS - total_chars
-            if remaining > 200:
-                context_parts.append(entry[:remaining])
-            break
-        context_parts.append(entry)
-        total_chars += len(entry)
-    context = "\n\n".join(context_parts)
+    # Extract relevant sections, rank, and assemble context
+    context, filtered_texts = assemble_context(raw_texts, question, verbose=verbose)
 
     prompt = f"""Answer this question using ONLY the Wikipedia text below.
 

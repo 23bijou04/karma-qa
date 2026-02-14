@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..models import Entity, Triple
 from .cache import CacheManager
+from .sparql_utils import escape_sparql_string, escape_sparql_uri
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class DBpediaSPARQLClient:
         query = f"""
         SELECT ?uri ?abstract
         WHERE {{
-            ?uri rdfs:label "{label}"@{lang} .
+            ?uri rdfs:label "{escape_sparql_string(label)}"@{lang} .
             OPTIONAL {{ ?uri dbo:abstract ?abstract . FILTER(LANG(?abstract) = "{lang}") }}
         }}
         LIMIT 1
@@ -122,13 +123,14 @@ class DBpediaSPARQLClient:
         if not uri.startswith("http"):
             uri = f"http://dbpedia.org/resource/{uri.replace(' ', '_')}"
 
+        safe_uri = escape_sparql_uri(uri)
         query = f"""
         SELECT ?label ?abstract ?type
         WHERE {{
-            <{uri}> rdfs:label ?label .
+            <{safe_uri}> rdfs:label ?label .
             FILTER(LANG(?label) = "en")
-            OPTIONAL {{ <{uri}> dbo:abstract ?abstract . FILTER(LANG(?abstract) = "en") }}
-            OPTIONAL {{ <{uri}> rdf:type ?type . }}
+            OPTIONAL {{ <{safe_uri}> dbo:abstract ?abstract . FILTER(LANG(?abstract) = "en") }}
+            OPTIONAL {{ <{safe_uri}> rdf:type ?type . }}
         }}
         LIMIT 10
         """
@@ -161,10 +163,11 @@ class DBpediaSPARQLClient:
         else:
             filter_clause = ""
 
+        safe_uri = escape_sparql_uri(entity_uri)
         query = f"""
         SELECT ?p ?o ?pLabel ?oLabel
         WHERE {{
-            <{entity_uri}> ?p ?o .
+            <{safe_uri}> ?p ?o .
             {filter_clause}
             OPTIONAL {{ ?p rdfs:label ?pLabel . FILTER(LANG(?pLabel) = "en") }}
             OPTIONAL {{ ?o rdfs:label ?oLabel . FILTER(LANG(?oLabel) = "en") }}
@@ -202,6 +205,7 @@ class DBpediaSPARQLClient:
         if not entity_uri.startswith("http"):
             entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
 
+        safe_uri = escape_sparql_uri(entity_uri)
         results = []
 
         # Outgoing relations
@@ -209,7 +213,7 @@ class DBpediaSPARQLClient:
             query = f"""
             SELECT DISTINCT ?p ?neighbor ?neighborLabel
             WHERE {{
-                <{entity_uri}> ?p ?neighbor .
+                <{safe_uri}> ?p ?neighbor .
                 FILTER(isIRI(?neighbor))
                 FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
                 OPTIONAL {{ ?neighbor rdfs:label ?neighborLabel . FILTER(LANG(?neighborLabel) = "en") }}
@@ -229,7 +233,7 @@ class DBpediaSPARQLClient:
             query = f"""
             SELECT DISTINCT ?p ?neighbor ?neighborLabel
             WHERE {{
-                ?neighbor ?p <{entity_uri}> .
+                ?neighbor ?p <{safe_uri}> .
                 FILTER(isIRI(?neighbor))
                 FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
                 OPTIONAL {{ ?neighbor rdfs:label ?neighborLabel . FILTER(LANG(?neighborLabel) = "en") }}
@@ -263,6 +267,7 @@ class DBpediaSPARQLClient:
         if not entity_uri.startswith("http"):
             entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
 
+        safe_uri = escape_sparql_uri(entity_uri)
         results = []
 
         if direction in ("out", "both"):
@@ -270,7 +275,7 @@ class DBpediaSPARQLClient:
             SELECT ?p ?neighbor
                    (GROUP_CONCAT(DISTINCT STR(?nt); separator=",") AS ?neighborTypes)
             WHERE {{
-                <{entity_uri}> ?p ?neighbor .
+                <{safe_uri}> ?p ?neighbor .
                 FILTER(isIRI(?neighbor))
                 FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
                 OPTIONAL {{
@@ -300,7 +305,7 @@ class DBpediaSPARQLClient:
             SELECT ?p ?neighbor
                    (GROUP_CONCAT(DISTINCT STR(?nt); separator=",") AS ?neighborTypes)
             WHERE {{
-                ?neighbor ?p <{entity_uri}> .
+                ?neighbor ?p <{safe_uri}> .
                 FILTER(isIRI(?neighbor))
                 FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
                 OPTIONAL {{
@@ -333,10 +338,12 @@ class DBpediaSPARQLClient:
         if not entity_uri.startswith("http"):
             entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
 
+        safe_uri = escape_sparql_uri(entity_uri)
+        safe_prop = escape_sparql_uri(property_uri)
         query = f"""
         SELECT ?value ?valueLabel
         WHERE {{
-            <{entity_uri}> <{property_uri}> ?value .
+            <{safe_uri}> <{safe_prop}> ?value .
             OPTIONAL {{ ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = "en") }}
         }}
         LIMIT 1
@@ -362,7 +369,7 @@ class DBpediaSPARQLClient:
             ?uri rdfs:label ?label .
             {type_filter}
             FILTER(LANG(?label) = "en")
-            FILTER(CONTAINS(LCASE(STR(?label)), LCASE("{search_term}")))
+            FILTER(CONTAINS(LCASE(STR(?label)), LCASE("{escape_sparql_string(search_term)}")))
             OPTIONAL {{ ?uri dbo:abstract ?abstract . FILTER(LANG(?abstract) = "en") }}
         }}
         LIMIT {limit}
@@ -387,10 +394,11 @@ class DBpediaSPARQLClient:
         if not entity_uri.startswith("http"):
             entity_uri = f"http://dbpedia.org/resource/{entity_uri.replace(' ', '_')}"
 
+        safe_uri = escape_sparql_uri(entity_uri)
         query = f"""
         SELECT ?wikiPageID
         WHERE {{
-            <{entity_uri}> dbo:wikiPageID ?wikiPageID .
+            <{safe_uri}> dbo:wikiPageID ?wikiPageID .
         }}
         LIMIT 1
         """

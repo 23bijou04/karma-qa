@@ -4,22 +4,13 @@ import argparse
 import json
 import os
 import time
-import importlib
 import logging
 from dataclasses import asdict
 
 from groq import Groq
 from SPARQLWrapper import SPARQLWrapper, JSON
 
-# Import evaluation.metrics directly to avoid evaluation/__init__.py side effects
-_metrics_spec = importlib.util.spec_from_file_location(
-    "evaluation.metrics",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evaluation", "metrics.py"),
-)
-_metrics = importlib.util.module_from_spec(_metrics_spec)
-_metrics_spec.loader.exec_module(_metrics)
-compute_em = _metrics.compute_em
-compute_f1 = _metrics.compute_f1
+from evaluation.metrics import compute_em, compute_f1
 
 from .sampling import create_stratified_sample
 from .levels_base import answer_level_0, answer_level_1, answer_level_4, LevelResult

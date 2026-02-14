@@ -217,7 +217,7 @@ def entity_to_uri(entity: str, sparql: Optional[SPARQLWrapper] = None) -> str:
 
     # Fallback: rdfs:label search
     try:
-        safe_label = entity.replace('"', '\\"')
+        safe_label = entity.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
         sparql.setQuery(f"""
             SELECT ?entity WHERE {{
                 ?entity rdfs:label "{safe_label}"@en .
