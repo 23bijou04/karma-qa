@@ -1,14 +1,19 @@
 """DBpedia SPARQL client with caching and rate limiting."""
 
-import time
 import logging
+import time
 from typing import Any, Optional
-from SPARQLWrapper import SPARQLWrapper, JSON
+
+from SPARQLWrapper import JSON, SPARQLWrapper
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..models import Entity, Triple
 from .cache import CacheManager
-from .sparql_utils import escape_sparql_string, escape_sparql_uri
+from .sparql_utils import (
+    build_bif_expression,
+    escape_sparql_string,
+    escape_sparql_uri,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -388,6 +393,76 @@ class DBpediaSPARQLClient:
             entities.append(entity)
 
         return entities
+
+    def search_entities_fulltext(
+        self,
+        search_term: str,
+        entity_type: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[Entity]:
+        """Search entities using Virtuoso bif:contains full-text index.
+
+        Much faster than FILTER(CONTAINS(...)) because it uses Virtuoso's
+        built-in text index. Supports multi-word AND queries.
+        """
+        bif_expr = build_bif_expression(search_term)
+        if bif_expr is None:
+            return []
+
+        type_clause = f"?uri a {entity_type} ." if entity_type else ""
+        query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+            ?uri rdfs:label ?label .
+            ?label bif:contains "{bif_expr}" .
+            {type_clause}
+            FILTER(LANG(?label) = "en")
+            FILTER(STRSTARTS(STR(?uri), "http://dbpedia.org/resource/"))
+            FILTER(!STRSTARTS(STR(?uri), "http://dbpedia.org/resource/Category:"))
+        }} LIMIT {int(limit)}
+        """
+        try:
+            results = self.query(query)
+        except Exception as e:
+            logger.warning(f"bif:contains search failed for '{search_term}': {e}")
+            return []
+
+        entities = []
+        for binding in results.get("results", {}).get("bindings", []):
+            entities.append(Entity(
+                uri=binding["uri"]["value"],
+                label=binding["label"]["value"],
+                source="sparql_fulltext",
+            ))
+        return entities
+
+    def search_entity_by_name(
+        self,
+        name: str,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Entity]:
+        """Find the best DBpedia entity for a name string.
+
+        Cascade: exact label match -> bif:contains fulltext search.
+        Disambiguation: exact label > type match > shortest URI.
+        """
+        # Step 1: exact match
+        exact = self.get_entity_by_label(name)
+        if exact:
+            return exact
+
+        # Step 2: fulltext search
+        candidates = self.search_entities_fulltext(name, entity_type, limit=5)
+        if not candidates:
+            return None
+
+        # Step 3: disambiguate
+        name_lower = name.lower().strip()
+        # Prefer exact label match among candidates
+        for c in candidates:
+            if c.label.lower().strip() == name_lower:
+                return c
+        # Prefer shortest URI (less likely to be a disambiguation/list page)
+        return min(candidates, key=lambda e: len(e.uri))
 
     def get_wikipedia_page_id(self, entity_uri: str) -> Optional[str]:
         """Get Wikipedia page ID for a DBpedia entity."""
