@@ -38,8 +38,8 @@ def normalize_answer(answer: str) -> str:
         return ' '.join(text.split())
 
     answer = answer.lower()
-    answer = remove_articles(answer)
     answer = remove_punctuation(answer)
+    answer = remove_articles(answer)
     answer = normalize_whitespace(answer)
 
     return answer.strip()
