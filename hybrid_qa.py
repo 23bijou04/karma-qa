@@ -4,11 +4,11 @@
 Pipeline:
   1. EntityLink(q)            — DBpedia Spotlight (spaCy fallback)
   2. SchemaDiscovery(E)       — entity classes, properties, sample values
-  3. RouteDecision(q, S)      — LLM examines schema -> SPARQL | TEXT
+  3. RouteDecision(q, S)      — rule-based first, LLM fallback -> SPARQL | TEXT
   4. if SPARQL: GenerateSPARQL(q, S) -> Execute with retry -> answer
-  5. if TEXT (or SPARQL fail): auto-chain context building:
-     a) sparql_context  — LLM generates SPARQL to find context entities
-     b) explore         — schema-guided KG exploration (fallback if a finds nothing)
+  5. if TEXT (or SPARQL fail): context entity discovery:
+     a) LLM-generated SPARQL  — targeted context entities
+     b) SPARQL neighbor query  — reliable fallback if a finds nothing new
   6. WikipediaRetrieval       — fetch pages for context entities
   7. SectionExtraction        — sentence-level keyword scoring
   8. LLM reads passages       -> FINAL ANSWER
@@ -39,7 +39,6 @@ from dbpedia_qa.models import Entity
 
 from graphrag_wiki import (
     link_entities_to_dbpedia,
-    explore_kg,
     retrieve_wikipedia,
     assemble_context,
 )
@@ -72,17 +71,22 @@ Instructions:
 - End with exactly: FINAL ANSWER: <answer>
 """
 
-ROUTE_PROMPT = """You are a SPARQL expert for DBpedia. Given a question and the schema of linked entities, decide if a SPARQL query can answer this question.
+ROUTE_PROMPT = """Given a question and DBpedia entity schemas, decide the best route.
 
 {schema}
 
 QUESTION: {question}
 
-Look at the properties available for each entity. Can the answer be found by querying these properties?
+DECISION RULES:
+- SPARQL if the schema has properties RELATED to the question (exact match not required)
+- Comparison questions (older/younger/earlier/later/first/last) with ANY date property -> SPARQL
+- Relationship properties (director/author/spouse/parent) with matching property -> SPARQL
+- 2-hop chains are SPARQL: Film has dbo:director -> director is Person with birthDate/deathDate
+  So "which director was born earlier" + Film with dbo:director -> SPARQL
+- Questions about a person's relative (father/mother) + any property -> SPARQL
+- Choose TEXT only if NO relevant properties exist in the schema at all
 
-Reply with EXACTLY one word:
-- SPARQL — if the schema contains properties that can answer the question (e.g., dbo:director, dbp:birthDate, dbo:author)
-- TEXT — if the schema lacks the needed properties and we should search Wikipedia text instead"""
+Reply with EXACTLY one word: SPARQL or TEXT"""
 
 CONTEXT_SPARQL_PROMPT = """You are a SPARQL expert for DBpedia. The KG schema does not have enough properties to answer this question directly via SPARQL. Instead, we need to find related DBpedia entities whose Wikipedia pages likely contain the answer.
 
@@ -127,6 +131,82 @@ Generate ONLY the corrected SPARQL query:"""
 
 
 # ---------------------------------------------------------------------------
+# Route decision
+# ---------------------------------------------------------------------------
+
+def _rule_based_route(question: str, schema_ctx: str) -> str | None:
+    """Return 'SPARQL' if rules match, None if inconclusive (let LLM decide)."""
+    q_lower = question.lower()
+
+    # Parse properties from both schema formats:
+    #   Format 1: "dbo:prop -> value" (actual properties section)
+    actual_props = set(re.findall(r'(?:dbo|dbp):\w+', schema_ctx))
+    #   Format 2: "  dbo: prop1, prop2, ..." (cached ontology list, may be truncated)
+    for m in re.finditer(r'^\s+(dbo|dbp): ([\w]+(?:,\s*[\w]+)*)', schema_ctx, re.MULTILINE):
+        prefix = m.group(1)
+        for name in m.group(2).split(','):
+            name = name.strip()
+            if name:
+                actual_props.add(f"{prefix}:{name}")
+
+    comparison_words = [
+        "earlier", "later", "older", "younger", "first", "before", "after",
+    ]
+    date_props = {
+        "dbo:birthDate", "dbp:birthDate", "dbo:deathDate", "dbp:deathDate",
+        "dbo:activeYearsStartYear", "dbp:established", "dbo:foundingYear",
+        "dbp:foundingDate", "dbo:releaseDate", "dbp:released",
+    }
+
+    # Comparison + date properties on the entity itself -> SPARQL
+    if any(w in q_lower for w in comparison_words):
+        if actual_props & date_props:
+            return "SPARQL"
+
+    # Bridge comparison: entity class + comparison + relationship word -> SPARQL
+    # Handles 2-hop: Film->director->Person->birthDate, Book->author->deathDate, etc.
+    bridge_rel_words = [
+        "director", "directed", "producer", "produced", "writer", "wrote",
+        "author", "composer", "starring", "actor", "actress",
+    ]
+    bridge_classes = {"dbo:Film", "dbo:Book", "dbo:TelevisionShow", "dbo:MusicalWork"}
+    if any(w in q_lower for w in comparison_words):
+        has_bridge_class = any(cls in schema_ctx for cls in bridge_classes)
+        has_bridge_rel = any(w in q_lower for w in bridge_rel_words)
+        if has_bridge_class and has_bridge_rel:
+            return "SPARQL"
+
+    # Parent chain: father/mother + any property question -> SPARQL
+    # Handles: "Where did X's father graduate?", "When was X's mother born?"
+    parent_words = ["father", "mother", "parent", "paternal", "maternal"]
+    parent_props = {"dbo:parent", "dbp:father", "dbp:mother"}
+    if any(w in q_lower for w in parent_words) and actual_props & parent_props:
+        return "SPARQL"
+
+    # Direct property lookup
+    direct_map = {
+        "direct": {"dbo:director", "dbp:director"},
+        "wrote": {"dbo:author", "dbp:author", "dbo:writer", "dbp:writer"},
+        "born": {"dbo:birthDate", "dbp:birthDate", "dbo:birthPlace", "dbp:birthPlace"},
+        "died": {"dbo:deathDate", "dbp:deathDate", "dbo:deathPlace"},
+        "capital": {"dbo:capital", "dbp:capital"},
+        "population": {"dbo:populationTotal", "dbp:population"},
+        "spouse": {"dbo:spouse", "dbp:spouse"},
+        "founded": {"dbo:foundingYear", "dbp:foundingDate", "dbo:founder", "dbp:founder"},
+        "nationality": {"dbo:nationality", "dbp:nationality", "dbo:citizenship"},
+        "father": {"dbo:parent", "dbp:father"},
+        "mother": {"dbo:parent", "dbp:mother"},
+        "award": {"dbo:award", "dbp:award"},
+        "occupation": {"dbo:occupation", "dbp:occupation"},
+    }
+    for keyword, props in direct_map.items():
+        if keyword in q_lower and actual_props & props:
+            return "SPARQL"
+
+    return None  # inconclusive — let LLM decide
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -136,6 +216,62 @@ def entities_to_schema_dicts(entities: list[Entity]) -> list[dict]:
         {"uri": e.uri, "name": e.label}
         for e in entities if e.uri
     ]
+
+
+def _sparql_neighbors(entities: list[Entity],
+                      kg_client: DBpediaSPARQLClient,
+                      limit_per_entity: int = 10,
+                      verbose: bool = False) -> list[Entity]:
+    """Get direct dbo:/dbp: neighbors via a simple SPARQL query.
+
+    Much simpler than explore_kg: no schema lookup, no type blocklist.
+    Just gets the first N structured neighbors for each seed entity.
+    """
+    from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+
+    all_entities = list(entities)
+    seen_uris = {e.uri for e in entities if e.uri}
+
+    for entity in entities:
+        if not entity.uri:
+            continue
+        safe_uri = escape_sparql_uri(entity.uri)
+        query = f"""
+        SELECT DISTINCT ?p ?neighbor ?label WHERE {{
+            <{safe_uri}> ?p ?neighbor .
+            FILTER(isIRI(?neighbor))
+            FILTER(
+                STRSTARTS(STR(?p), "http://dbpedia.org/ontology/")
+                || STRSTARTS(STR(?p), "http://dbpedia.org/property/")
+            )
+            FILTER(?p != <http://dbpedia.org/ontology/wikiPageWikiLink>)
+            FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
+            FILTER(!STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/Category:"))
+            ?neighbor rdfs:label ?label .
+            FILTER(LANG(?label) = "en")
+        }} LIMIT {limit_per_entity}
+        """
+        try:
+            raw = kg_client.query(query)
+            bindings = raw.get("results", {}).get("bindings", [])
+        except Exception as e:
+            logger.warning(f"Neighbor query failed for {entity.label}: {e}")
+            continue
+
+        for b in bindings:
+            uri = b["neighbor"]["value"]
+            if uri in seen_uris:
+                continue
+            seen_uris.add(uri)
+            label = b.get("label", {}).get("value", "")
+            if not label:
+                label = unquote(uri.split("/")[-1]).replace("_", " ")
+            all_entities.append(Entity(uri=uri, label=label, source="sparql_neighbor"))
+            if verbose:
+                prop = b["p"]["value"].split("/")[-1]
+                print(f"    {entity.label} --{prop}--> {label}")
+
+    return all_entities
 
 
 def _sparql_results_to_entities(results: list[dict],
@@ -180,77 +316,104 @@ def _sparql_results_to_entities(results: list[dict],
 # Text fallback: LLM-generated context SPARQL
 # ---------------------------------------------------------------------------
 
-def sparql_context_fallback(question: str, entities: list[Entity],
-                            schema_ctx: str, llm_client, model: str,
-                            verbose: bool = False) -> list[Entity]:
-    """LLM generates SPARQL to find entities for context retrieval.
+def _find_context_entities(question: str, entities: list[Entity],
+                           schema_ctx: str, llm_client, model: str,
+                           kg_client: DBpediaSPARQLClient,
+                           verbose: bool = False) -> list[Entity]:
+    """Find context entities for Wikipedia retrieval.
 
+    Two-tier approach:
+      1. LLM-generated SPARQL (targeted, may fail)
+      2. Simple SPARQL neighbor query (reliable fallback)
     Returns Entity objects whose Wikipedia pages should be fetched.
     """
     sep = "=" * 70
     seed_uris = {e.uri for e in entities if e.uri}
 
-    if verbose:
-        print(f"\n{sep}")
-        print("STEP 4: Text Fallback — LLM-generated context SPARQL")
-        print(sep)
+    context_entities = []
+    used_llm_sparql = False
 
-    # Generate context SPARQL
-    prompt = CONTEXT_SPARQL_PROMPT.format(schema=schema_ctx, question=question)
-    resp = call_llm(llm_client, prompt, model)
-    sparql_query = extract_sparql(resp)
-    if verbose:
-        print(f"  Context SPARQL:\n    {sparql_query[:300]}")
+    # --- Tier 1: LLM-generated context SPARQL (only if schema available) ---
+    if schema_ctx:
+        if verbose:
+            print(f"\n{sep}")
+            print("STEP 4a: Context entities — LLM-generated SPARQL")
+            print(sep)
 
-    # Execute
-    results, err = execute_sparql(sparql_query)
-    if verbose:
-        status = f"{len(results)} rows"
-        if err:
-            status += f", error: '{err[:60]}'"
-        print(f"  Results: {status}")
+        prompt = CONTEXT_SPARQL_PROMPT.format(schema=schema_ctx, question=question)
+        resp = call_llm(llm_client, prompt, model)
+        sparql_query = extract_sparql(resp)
+        if verbose:
+            print(f"  Context SPARQL:\n    {sparql_query[:300]}")
 
-    # Retry if empty or error
-    if not results or err:
-        problem = f"an error: {err}" if err else "empty results (no rows)"
-        retry_prompt = CONTEXT_SPARQL_RETRY_PROMPT.format(
-            problem=problem, sparql=sparql_query,
-            schema=schema_ctx, question=question,
+        results, err = execute_sparql(sparql_query)
+        if verbose:
+            status = f"{len(results)} rows"
+            if err:
+                status += f", error: '{err[:60]}'"
+            print(f"  Results: {status}")
+
+        # Retry if empty or error
+        if not results or err:
+            problem = f"an error: {err}" if err else "empty results (no rows)"
+            retry_prompt = CONTEXT_SPARQL_RETRY_PROMPT.format(
+                problem=problem, sparql=sparql_query,
+                schema=schema_ctx, question=question,
+            )
+            retry_resp = call_llm(llm_client, retry_prompt, model)
+            retry_query = extract_sparql(retry_resp)
+            if verbose:
+                print(f"  Retry SPARQL:\n    {retry_query[:300]}")
+            results2, err2 = execute_sparql(retry_query)
+            if verbose:
+                print(f"  Retry results: {len(results2)} rows")
+            if results2:
+                results = results2
+
+        # Convert to entities
+        context_entities = _sparql_results_to_entities(results, seed_uris)
+
+        # Relevance filter: keep entities whose labels share words with question/seeds
+        q_words = {w.strip("?.,!:;\"'").lower() for w in question.split()
+                   if len(w.strip("?.,!:;\"'")) > 2}
+        seed_words = set()
+        for e in entities:
+            seed_words.update(w.lower() for w in e.label.split() if len(w) > 2)
+        relevance_words = q_words | seed_words
+
+        filtered = []
+        for e in context_entities:
+            if e.uri in seed_uris:
+                filtered.append(e)
+                continue
+            label_words = {w.lower().strip("(),") for w in e.label.split()
+                           if len(w.strip("(),")) > 2}
+            if label_words & relevance_words:
+                filtered.append(e)
+        if verbose and len(filtered) < len(context_entities):
+            dropped = len(context_entities) - len(filtered)
+            print(f"  Filtered: dropped {dropped} irrelevant entities")
+        context_entities = filtered
+        used_llm_sparql = True
+
+    # --- Tier 2: SPARQL neighbor fallback (if LLM SPARQL found no new entities) ---
+    new_uris = {e.uri for e in context_entities if e.uri} - seed_uris
+    if not new_uris:
+        if verbose:
+            if used_llm_sparql:
+                print(f"\n{sep}")
+                print("STEP 4b: LLM SPARQL found no new entities — neighbor fallback")
+                print(sep)
+            else:
+                print(f"\n{sep}")
+                print("STEP 4: Context entities — SPARQL neighbors")
+                print(sep)
+        context_entities = _sparql_neighbors(
+            entities, kg_client, verbose=verbose,
         )
-        retry_resp = call_llm(llm_client, retry_prompt, model)
-        retry_query = extract_sparql(retry_resp)
         if verbose:
-            print(f"  Retry SPARQL:\n    {retry_query[:300]}")
-        results2, err2 = execute_sparql(retry_query)
-        if verbose:
-            print(f"  Retry results: {len(results2)} rows")
-        if results2:
-            results = results2
-
-    # Convert to entities
-    context_entities = _sparql_results_to_entities(results, seed_uris)
-
-    # Filter: keep entities whose labels share words with question or seeds
-    q_words = {w.strip("?.,!:;\"'").lower() for w in question.split()
-               if len(w.strip("?.,!:;\"'")) > 2}
-    seed_words = set()
-    for e in entities:
-        seed_words.update(w.lower() for w in e.label.split() if len(w) > 2)
-    relevance_words = q_words | seed_words
-
-    filtered = []
-    for e in context_entities:
-        if e.uri in seed_uris:
-            filtered.append(e)
-            continue
-        label_words = {w.lower().strip("(),") for w in e.label.split()
-                       if len(w.strip("(),")) > 2}
-        if label_words & relevance_words:
-            filtered.append(e)
-    if verbose and len(filtered) < len(context_entities):
-        dropped = len(context_entities) - len(filtered)
-        print(f"  Filtered: dropped {dropped} irrelevant entities")
-    context_entities = filtered
+            print(f"  Seed: {len(entities)}, Total: {len(context_entities)}")
+        return context_entities
 
     # Always include seed entities (in case SPARQL missed them)
     seen_uris = {e.uri for e in context_entities}
@@ -267,51 +430,29 @@ def sparql_context_fallback(question: str, entities: list[Entity],
 
 
 # ---------------------------------------------------------------------------
-# Text fallback: programmatic explore_kg (original method)
-# ---------------------------------------------------------------------------
-
-def explore_kg_fallback(question: str, entities: list[Entity],
-                        kg_client: DBpediaSPARQLClient,
-                        schema_disc: SchemaDiscovery,
-                        verbose: bool = False) -> list[Entity]:
-    """Schema-guided KG exploration (programmatic, no LLM call)."""
-    sep = "=" * 70
-    if verbose:
-        print(f"\n{sep}")
-        print("STEP 4: Text Fallback — Schema-guided KG exploration")
-        print(sep)
-
-    all_entities = explore_kg(entities, kg_client, schema_disc, verbose=verbose)
-    if verbose:
-        seed = len(entities)
-        print(f"  Seed: {seed}, Total: {len(all_entities)}")
-
-    return all_entities
-
-
-# ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
 def hybrid_answer(question: str, api_key: str,
                   model: str = "llama-3.3-70b-versatile",
-                  fallback: str = "auto",
-                  verbose: bool = False) -> tuple[str, str]:
+                  verbose: bool = False,
+                  llm_client=None, linker=None,
+                  kg_client=None, schema_disc=None) -> tuple[str, str]:
     """Schema-routed hybrid QA: SPARQL when schema supports it, text otherwise.
 
     Args:
-        fallback: "auto" (sparql_context first, explore if no new entities),
-                  "sparql_context" (LLM-generated context SPARQL only), or
-                  "explore" (programmatic KG exploration only)
+        llm_client: Optional pre-created Groq client (for batch reuse)
+        linker: Optional pre-created DBpediaEntityLinker (for batch reuse)
+        kg_client: Optional pre-created DBpediaSPARQLClient (for batch reuse)
+        schema_disc: Optional pre-created SchemaDiscovery (for batch reuse)
 
-    Returns: (answer, method) where method is "sparql", "text_explore",
-             or "text_sparql_context".
+    Returns: (answer, method) where method is "sparql" or "text".
     """
     sep = "=" * 70
-    llm_client = Groq(api_key=api_key)
-    linker = DBpediaEntityLinker(min_confidence=0.5)
-    kg_client = DBpediaSPARQLClient()
-    schema_disc = SchemaDiscovery()
+    llm_client = llm_client or Groq(api_key=api_key)
+    linker = linker or DBpediaEntityLinker(min_confidence=0.5)
+    kg_client = kg_client or DBpediaSPARQLClient()
+    schema_disc = schema_disc or SchemaDiscovery()
 
     # === Step 1: Entity Linking ===
     entities = link_entities_to_dbpedia(question, linker)
@@ -345,14 +486,23 @@ def hybrid_answer(question: str, api_key: str,
     sparql_answer = ""
     route = "TEXT"
     if schema_ctx:
-        route_prompt = ROUTE_PROMPT.format(schema=schema_ctx, question=question)
-        route_resp = call_llm(llm_client, route_prompt, model).strip().upper()
-        route = "SPARQL" if "SPARQL" in route_resp else "TEXT"
-        if verbose:
-            print(f"\n{sep}")
-            print(f"STEP 3: Route Decision → {route}")
-            print(sep)
-            print(f"  LLM response: {route_resp[:80]}")
+        # Rule-based first (saves an LLM call when rules are conclusive)
+        rule_route = _rule_based_route(question, schema_ctx)
+        if rule_route:
+            route = rule_route
+            if verbose:
+                print(f"\n{sep}")
+                print(f"STEP 3: Route Decision → {route} (rule-based)")
+                print(sep)
+        else:
+            route_prompt = ROUTE_PROMPT.format(schema=schema_ctx, question=question)
+            route_resp = call_llm(llm_client, route_prompt, model).strip().upper()
+            route = "SPARQL" if "SPARQL" in route_resp else "TEXT"
+            if verbose:
+                print(f"\n{sep}")
+                print(f"STEP 3: Route Decision → {route} (LLM)")
+                print(sep)
+                print(f"  LLM response: {route_resp[:80]}")
 
     # === Step 4: SPARQL Generation + Execution (only if routed) ===
     if route == "SPARQL" and schema_ctx:
@@ -406,31 +556,12 @@ def hybrid_answer(question: str, api_key: str,
             print(f"  Answer:   {sparql_answer}")
         return sparql_answer, "sparql"
 
-    # === Text Fallback — choose method ===
-    # "auto" (default): try sparql_context first, fall back to explore
-    # "sparql_context": only LLM-generated context SPARQL
-    # "explore": only programmatic KG exploration
-    all_entities = []
-    method_label = ""
-    seed_uris = {e.uri for e in entities if e.uri}
-
-    if fallback in ("auto", "sparql_context") and schema_ctx:
-        all_entities = sparql_context_fallback(
-            question, entities, schema_ctx, llm_client, model, verbose,
-        )
-        method_label = "text_sparql_context"
-
-    # Auto-chain: fall back to explore if sparql_context found no NEW entities
-    new_entities = [e for e in all_entities if e.uri not in seed_uris]
-    if not new_entities and fallback in ("auto", "explore"):
-        if verbose and fallback == "auto" and schema_ctx:
-            print(f"\n{'=' * 70}")
-            print("SPARQL context found no new entities — falling back to KG exploration")
-            print("=" * 70)
-        all_entities = explore_kg_fallback(
-            question, entities, kg_client, schema_disc, verbose,
-        )
-        method_label = "text_explore"
+    # === Text Fallback — find context entities + Wikipedia ===
+    method_label = "text"
+    all_entities = _find_context_entities(
+        question, entities, schema_ctx, llm_client, model,
+        kg_client, verbose,
+    )
 
     # === Wikipedia retrieval (shared by both methods) ===
     if verbose:
@@ -486,14 +617,6 @@ def main():
         default="llama-3.3-70b-versatile",
         help="LLM model (default: llama-3.3-70b-versatile)",
     )
-    parser.add_argument(
-        "--fallback",
-        choices=["auto", "explore", "sparql_context"],
-        default="auto",
-        help="Text fallback strategy: 'auto' (try sparql_context first, "
-             "then explore), 'explore' (programmatic KG only), or "
-             "'sparql_context' (LLM-generated SPARQL only)",
-    )
     parser.add_argument("--verbose", action="store_true", help="Show pipeline steps")
     args = parser.parse_args()
 
@@ -503,7 +626,7 @@ def main():
 
     answer, method = hybrid_answer(
         args.question, args.api_key, model=args.model,
-        fallback=args.fallback, verbose=args.verbose,
+        verbose=args.verbose,
     )
     if not args.verbose:
         print(f"Answer ({method}): {answer}")
