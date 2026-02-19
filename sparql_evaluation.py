@@ -14,15 +14,18 @@ Usage:
 import argparse
 import json
 import os
+import re
+import socket
 import sys
+import tempfile
 import time
 import logging
 from collections import defaultdict
 from datetime import datetime
+from urllib.parse import unquote
 
 from groq import Groq
 from SPARQLWrapper import SPARQLWrapper, JSON
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ---------------------------------------------------------------------------
 # sys.path guard (same pattern as graphrag_wiki.py)
@@ -36,11 +39,28 @@ from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute
 
 logger = logging.getLogger(__name__)
 
+_ipv4_patched = False
+
+
+def force_ipv4():
+    """Force IPv4 — DBpedia's IPv6 endpoint is unreachable from some networks.
+
+    Only patches once; safe to call multiple times.
+    """
+    global _ipv4_patched
+    if _ipv4_patched:
+        return
+    _orig = socket.getaddrinfo
+    def _ipv4_only(*args, **kwargs):
+        return [r for r in _orig(*args, **kwargs) if r[0] == socket.AF_INET]
+    socket.getaddrinfo = _ipv4_only
+    _ipv4_patched = True
+
 # ---------------------------------------------------------------------------
 # Data loading (same as grasp_evaluation.py)
 # ---------------------------------------------------------------------------
 
-COVERAGE_FILE = "data/coverage_analysis_800.json"
+DEFAULT_COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
 
 def load_answerable_questions(coverage_file: str) -> list[dict]:
     with open(coverage_file) as f:
@@ -189,36 +209,99 @@ def extract_sparql(response: str) -> str:
             break
     return query
 
+
+# Characters that break dbr:/dbo:/dbp: prefixed names in SPARQL
+_PREFIX_RE = re.compile(r"(dbr:|dbo:|dbp:)(\S+)")
+_NEEDS_IRI = re.compile(r"['\",()!&#]")
+_PREFIX_MAP = {
+    "dbr:": "http://dbpedia.org/resource/",
+    "dbo:": "http://dbpedia.org/ontology/",
+    "dbp:": "http://dbpedia.org/property/",
+}
+
+
+def sanitize_sparql_uris(query: str) -> str:
+    """Rewrite prefixed names with special chars to full IRI <...> form.
+
+    E.g. dbr:God's_Gift_to_Women → <http://dbpedia.org/resource/God's_Gift_to_Women>
+    Handles commas, parentheses, apostrophes, ampersands in entity names by
+    greedily capturing the token then stripping trailing SPARQL delimiters.
+    Skips matches inside string literals to avoid corrupting FILTER/BIND.
+    """
+    # Find quoted-string spans to skip
+    string_spans = [(m.start(), m.end())
+                    for m in re.finditer(r'"[^"]*"|\'[^\']*\'', query)]
+
+    def _in_string(pos):
+        return any(s <= pos < e for s, e in string_spans)
+
+    def _rewrite(m):
+        if _in_string(m.start()):
+            return m.group(0)
+        prefix, raw = m.group(1), m.group(2)
+        local = raw
+        trail = ""
+        while local:
+            ch = local[-1]
+            if ch == ')' and '(' in local[:-1]:
+                break  # balanced parens — part of the entity name
+            if ch in '.;},)':
+                trail = ch + trail
+                local = local[:-1]
+            else:
+                break
+        if not local:
+            return m.group(0)
+        if _NEEDS_IRI.search(local):
+            return f"<{_PREFIX_MAP[prefix]}{local}>{trail}"
+        return m.group(0)
+    return _PREFIX_RE.sub(_rewrite, query)
+
+
 # ---------------------------------------------------------------------------
 # SPARQL execution (lightweight, with retry)
 # ---------------------------------------------------------------------------
 
 SPARQL_ENDPOINT = "https://dbpedia.org/sparql"
 
-@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=2, max=15))
 def execute_sparql(query: str, endpoint: str = SPARQL_ENDPOINT,
-                   timeout: int = 60) -> tuple[list[dict], str]:
-    """Execute SPARQL query, return (results_list, error_string)."""
+                   timeout: int = 60,
+                   max_retries: int = 2) -> tuple[list[dict], str]:
+    """Execute SPARQL query, return (results_list, error_string).
+
+    Retries on transient network errors (timeouts, connection resets).
+    Returns immediately on SPARQL syntax/query errors.
+    """
+    import urllib.error
+
     sparql = SPARQLWrapper(endpoint)
     sparql.setReturnFormat(JSON)
     sparql.setTimeout(timeout)
     sparql.addCustomHttpHeader("User-Agent", "DBpediaQA/1.0 (research)")
     sparql.setQuery(query)
-    try:
-        raw = sparql.query().convert()
-        bindings = raw.get("results", {}).get("bindings", [])
-        rows = []
-        for b in bindings:
-            row = {}
-            for var, val in b.items():
-                v = val.get("value", "")
-                if val.get("type") == "uri":
-                    v = v.split("/")[-1].replace("_", " ")
-                row[var] = v
-            rows.append(row)
-        return rows, ""
-    except Exception as e:
-        return [], str(e)
+
+    last_err = ""
+    for attempt in range(max_retries):
+        try:
+            raw = sparql.query().convert()
+            bindings = raw.get("results", {}).get("bindings", [])
+            rows = []
+            for b in bindings:
+                row = {}
+                for var, val in b.items():
+                    v = val.get("value", "")
+                    if val.get("type") == "uri":
+                        v = unquote(v.split("/")[-1]).replace("_", " ")
+                    row[var] = v
+                rows.append(row)
+            return rows, ""
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            last_err = str(e)
+            if attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+        except Exception as e:
+            return [], str(e)
+    return [], last_err
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -232,11 +315,12 @@ QUESTION: {question}
 
 RULES:
 1. Use the EXACT entity URIs provided in the schema
-2. For multi-hop queries, chain triple patterns
-3. Prefer dbp: properties when both dbo:/dbp: are available
+2. For multi-hop queries, chain triple patterns using dbo: properties (they return URIs, not strings)
+3. Prefer dbo: properties for multi-hop joins; only use dbp: for single-hop leaf values
 4. Always add LIMIT 100
 5. For comparison questions (who/which was born first, etc.), return data for BOTH entities so results can be compared
-6. Generate ONLY the SPARQL query, no explanation"""
+6. If an entity URI contains special characters (apostrophes, commas, parentheses), use full IRI syntax <http://dbpedia.org/resource/...> instead of dbr: prefix
+7. Generate ONLY the SPARQL query, no explanation"""
 
 SPARQL_RETRY_PROMPT = """Your previous SPARQL query returned {problem}.
 
@@ -251,13 +335,13 @@ QUESTION: {question}
 
 Generate ONLY the corrected SPARQL query:"""
 
-ANSWER_PROMPT = """Given the question and SPARQL query results from DBpedia, provide ONLY the final answer — no explanation, no reasoning.
+ANSWER_PROMPT = """Given the question and SPARQL query results from DBpedia, provide the answer.
 
 Question: {question}
 SPARQL Results:
 {results}
 
-Answer:"""
+End your response with FINAL ANSWER: <your answer>"""
 
 # ---------------------------------------------------------------------------
 # Per-question evaluation
@@ -294,7 +378,7 @@ def evaluate_question(q: dict, client: Groq, model: str,
         trace["sparql_prompt"] = sparql_prompt
         sparql_resp = call_llm(client, sparql_prompt, model)
         trace["sparql_response"] = sparql_resp
-        sparql_query = extract_sparql(sparql_resp)
+        sparql_query = sanitize_sparql_uris(extract_sparql(sparql_resp))
         trace["sparql_query"] = sparql_query
         record["sparql"] = sparql_query
 
@@ -315,7 +399,7 @@ def evaluate_question(q: dict, client: Groq, model: str,
             trace["retry"] = {"prompt": retry_prompt}
             retry_resp = call_llm(client, retry_prompt, model)
             trace["retry"]["response"] = retry_resp
-            retry_query = extract_sparql(retry_resp)
+            retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
             trace["retry"]["query"] = retry_query
             record["sparql_retry"] = True
             record["sparql_retry_query"] = retry_query
@@ -348,7 +432,11 @@ def evaluate_question(q: dict, client: Groq, model: str,
             trace["answer_response"] = ""
 
         record["raw_answer"] = raw_answer
-        record["predicted_answer"] = raw_answer.strip()
+        cleaned = raw_answer.strip()
+        fa_match = re.search(r"FINAL ANSWER:", cleaned, re.IGNORECASE)
+        if fa_match:
+            cleaned = cleaned[fa_match.end():].strip()
+        record["predicted_answer"] = cleaned
         record["error"] = ""
 
     except Exception as e:
@@ -436,6 +524,7 @@ def print_summary(results: list[dict]):
 # ---------------------------------------------------------------------------
 
 def main():
+    force_ipv4()
     parser = argparse.ArgumentParser(
         description="Direct LLM+SPARQL evaluation on WikiMultiHop"
     )
@@ -447,6 +536,10 @@ def main():
                         help="Output JSONL path")
     parser.add_argument("--api-key", default=None,
                         help="Groq API key (default: GROQ_API_KEY env var)")
+    parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE_FILE,
+                        help="Path to coverage analysis JSON")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Re-evaluate questions that had empty answers or errors")
     args = parser.parse_args()
 
     # Ensure API key
@@ -463,8 +556,28 @@ def main():
     os.makedirs(trace_dir, exist_ok=True)
 
     # Load questions & resume
-    questions = load_answerable_questions(COVERAGE_FILE)
+    questions = load_answerable_questions(args.coverage_file)
     completed_ids, completed_results = load_completed_ids(args.output)
+
+    if args.retry_failed and completed_results:
+        keep_records = [
+            r for r in completed_results
+            if r.get("predicted_answer") and not r.get("error")
+        ]
+        retry_count = len(completed_results) - len(keep_records)
+        print(f"Retry mode: keeping {len(keep_records)}, retrying {retry_count}")
+
+        # Atomic rewrite: temp file + os.replace() to prevent data loss on crash
+        out_dir = os.path.dirname(args.output) or "."
+        temp_fd, temp_path = tempfile.mkstemp(dir=out_dir, suffix=".tmp")
+        with os.fdopen(temp_fd, "w") as tmp:
+            for rec in keep_records:
+                tmp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        os.replace(temp_path, args.output)
+
+        completed_ids = {r["question_id"] for r in keep_records}
+        completed_results = keep_records
+
     remaining = [q for q in questions if q["question_id"] not in completed_ids]
 
     if args.limit:
