@@ -35,6 +35,7 @@ if _parent not in sys.path:
 from groq import Groq
 
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_RANGES, CACHED_CLASS_SCHEMAS
 from dbpedia_qa.models import Entity
 
 from graphrag_wiki import (
@@ -81,8 +82,8 @@ DECISION RULES:
 - SPARQL if the schema has properties RELATED to the question (exact match not required)
 - Comparison questions (older/younger/earlier/later/first/last) with ANY date property -> SPARQL
 - Relationship properties (director/author/spouse/parent) with matching property -> SPARQL
-- 2-hop chains are SPARQL: Film has dbo:director -> director is Person with birthDate/deathDate
-  So "which director was born earlier" + Film with dbo:director -> SPARQL
+- If the schema shows "2-Hop chains", use them:
+  e.g., dbo:director -> Person: birthDate means you can compare directors' birth dates via SPARQL
 - Questions about a person's relative (father/mother) + any property -> SPARQL
 - Choose TEXT only if NO relevant properties exist in the schema at all
 
@@ -134,6 +135,36 @@ Generate ONLY the corrected SPARQL query:"""
 # Route decision
 # ---------------------------------------------------------------------------
 
+def _parse_2hop_chains(schema_ctx: str) -> dict[str, tuple[str, list[str]]]:
+    """Extract 2-hop chain info from the '2-Hop chains:' section only.
+
+    Section-anchored: only parses lines inside '2-Hop chains:' blocks,
+    NOT 'Actual properties' lines like 'dbo:director -> Christopher Nolan'.
+
+    Returns: {"director": ("Person", ["birthDate", "deathDate", ...])}
+    """
+    chains: dict[str, tuple[str, list[str]]] = {}
+    in_section = False
+    for line in schema_ctx.split("\n"):
+        stripped = line.strip()
+        if stripped == "2-Hop chains:":
+            in_section = True
+            continue
+        if in_section:
+            if not stripped or not stripped.startswith("- dbo:"):
+                in_section = False
+                continue
+            m = re.match(
+                r'-\s*dbo:(\w+)\s*->\s*(\w+):\s*(\w+(?:,\s*\w+)*)', stripped
+            )
+            if m:
+                chains[m.group(1)] = (
+                    m.group(2),
+                    [p.strip() for p in m.group(3).split(",")],
+                )
+    return chains
+
+
 def _rule_based_route(question: str, schema_ctx: str) -> str | None:
     """Return 'SPARQL' if rules match, None if inconclusive (let LLM decide)."""
     q_lower = question.lower()
@@ -163,18 +194,70 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
         if actual_props & date_props:
             return "SPARQL"
 
-    # Bridge comparison: entity class + comparison + relationship word -> SPARQL
-    # Handles 2-hop: Film->director->Person->birthDate, Book->author->deathDate, etc.
-    bridge_rel_words = [
-        "director", "directed", "producer", "produced", "writer", "wrote",
-        "author", "composer", "starring", "actor", "actress",
-    ]
-    bridge_classes = {"dbo:Film", "dbo:Book", "dbo:TelevisionShow", "dbo:MusicalWork"}
+    # Bridge chain validation: verify the relationship word maps to a target class
+    # whose properties are relevant to the question (replaces blind class+word check)
+    bridge_word_to_prop = {
+        "director": "director", "directed": "director",
+        "producer": "producer", "produced": "producer",
+        "writer": "writer", "wrote": "writer",
+        "author": "author",
+        "composer": "musicComposer",
+        "starring": "starring", "actor": "starring", "actress": "starring",
+        "founded": "foundedBy", "founder": "foundedBy",
+    }
+
+    chains_2hop = _parse_2hop_chains(schema_ctx)
+
+    def _has_bridge_word(word: str) -> bool:
+        return bool(re.search(rf"\b{word}\b", q_lower))
+
     if any(w in q_lower for w in comparison_words):
-        has_bridge_class = any(cls in schema_ctx for cls in bridge_classes)
-        has_bridge_rel = any(w in q_lower for w in bridge_rel_words)
-        if has_bridge_class and has_bridge_rel:
-            return "SPARQL"
+        for word, prop_name in bridge_word_to_prop.items():
+            if not _has_bridge_word(word):
+                continue
+            # Check if this property has a chain in schema text
+            if prop_name in chains_2hop:
+                target_cls, target_props = chains_2hop[prop_name]
+                if any(p in target_props for p in [
+                    "birthDate", "deathDate", "foundingDate",
+                    "activeYearsStartYear",
+                ]):
+                    return "SPARQL"
+            # Fallback: check PROPERTY_RANGES directly
+            range_key = f"dbo:{prop_name}"
+            if range_key in PROPERTY_RANGES:
+                target_cls = PROPERTY_RANGES[range_key]
+                if target_cls in CACHED_CLASS_SCHEMAS:
+                    target_schema = CACHED_CLASS_SCHEMAS[target_cls]
+                    if any(p in target_schema.get("dbo", []) for p in [
+                        "birthDate", "deathDate", "foundingDate",
+                    ]):
+                        return "SPARQL"
+
+    # Non-comparison bridge: "When was the director of X born?"
+    # Detects: bridge_word + hop-2 property keyword
+    hop2_keywords = {
+        "born": ["birthDate", "birthPlace"],
+        "died": ["deathDate", "deathPlace"],
+        "birth": ["birthDate", "birthPlace"],
+        "death": ["deathDate", "deathPlace"],
+        "country": ["country", "nationality"],
+    }
+    for word, prop_name in bridge_word_to_prop.items():
+        if not _has_bridge_word(word):
+            continue
+        range_key = f"dbo:{prop_name}"
+        if range_key not in PROPERTY_RANGES:
+            continue
+        target_cls = PROPERTY_RANGES[range_key]
+        if target_cls not in CACHED_CLASS_SCHEMAS:
+            continue
+        target_dbo = CACHED_CLASS_SCHEMAS[target_cls].get("dbo", [])
+        for kw, needed_props in hop2_keywords.items():
+            if re.search(rf"\b{kw}\b", q_lower) and any(
+                p in target_dbo for p in needed_props
+            ):
+                return "SPARQL"
 
     # Parent chain: father/mother + any property question -> SPARQL
     # Handles: "Where did X's father graduate?", "When was X's mother born?"

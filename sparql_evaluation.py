@@ -34,7 +34,9 @@ _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from dbpedia_qa.dbpedia.schema_discovery import SchemaDiscovery, CACHED_CLASS_SCHEMAS
+from dbpedia_qa.dbpedia.schema_discovery import (
+    SchemaDiscovery, CACHED_CLASS_SCHEMAS, format_2hop_lines,
+)
 from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,7 @@ def get_schema_for_uris(schema_disc: SchemaDiscovery,
                 lines.append("  Property hints:")
                 for prop, desc in list(cached["descriptions"].items())[:5]:
                     lines.append(f"    - {prop}: {desc}")
+            lines.extend(format_2hop_lines(cached))
             lines.append("")
 
         # Actual properties with sample values
@@ -315,7 +318,10 @@ QUESTION: {question}
 
 RULES:
 1. Use the EXACT entity URIs provided in the schema
-2. For multi-hop queries, chain triple patterns using dbo: properties (they return URIs, not strings)
+2. For multi-hop queries, chain triple patterns using dbo: properties (they return URIs, not strings).
+   Use the "2-Hop chains" section in the schema to identify valid chains.
+   Example: if schema shows dbo:director -> Person: birthDate, write:
+   ?film dbo:director ?person . ?person dbo:birthDate ?date .
 3. Prefer dbo: properties for multi-hop joins; only use dbp: for single-hop leaf values
 4. Always add LIMIT 100
 5. For comparison questions (who/which was born first, etc.), return data for BOTH entities so results can be compared

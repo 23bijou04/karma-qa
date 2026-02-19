@@ -32,11 +32,18 @@ CACHED_CLASS_SCHEMAS = {
             "parent": "generic parent (could be father or mother)",
             "birthDate": "date of birth (xsd:date format)",
             "deathDate": "date of death (xsd:date format)",
-            "birthPlace": "place of birth (returns Place entity)",
+            "birthPlace": "place of birth (returns Place with country, isPartOf)",
             "spouse": "married partner",
             "child": "children of the person",
             "nationality": "country of citizenship"
-        }
+        },
+        "dbo_2hop": {
+            "parent": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "spouse": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "child": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "birthPlace": ("Place", ["country", "isPartOf", "populationTotal"]),
+            "deathPlace": ("Place", ["country", "isPartOf"]),
+        },
     },
     "Film": {
         "dbo": [
@@ -50,14 +57,22 @@ CACHED_CLASS_SCHEMAS = {
             "music", "cinematography", "editing", "writer"
         ],
         "descriptions": {
-            "director": "film director (returns Person)",
-            "producer": "film producer (returns Person)",
-            "starring": "lead actors (returns Person)",
+            "director": "film director (returns Person with birthDate, deathDate, birthPlace)",
+            "producer": "film producer (returns Person with birthDate, deathDate)",
+            "starring": "lead actors (returns Person with birthDate, deathDate)",
             "releaseDate": "release date (xsd:date)",
             "released": "release date (alternative property)",
             "distributor": "distribution company",
             "country": "country of origin"
-        }
+        },
+        "dbo_2hop": {
+            "director": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "producer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "starring": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "writer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "musicComposer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "distributor": ("Company", ["foundingDate", "locationCity", "locationCountry"]),
+        },
     },
     "Company": {
         "dbo": [
@@ -71,13 +86,20 @@ CACHED_CLASS_SCHEMAS = {
             "keyPeople", "products", "services"
         ],
         "descriptions": {
-            "foundedBy": "founder of the company (returns Person)",
+            "foundedBy": "founder of the company (returns Person with birthDate, deathDate)",
             "founder": "founder (alternative property)",
             "foundingDate": "date company was founded",
             "founded": "founding date (alternative)",
             "locationCity": "city where headquartered",
             "industry": "business sector"
-        }
+        },
+        "dbo_2hop": {
+            "foundedBy": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "keyPerson": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "parentCompany": ("Company", ["foundingDate", "locationCity"]),
+            "locationCity": ("Place", ["country", "isPartOf", "populationTotal"]),
+            "locationCountry": ("Place", ["capital", "populationTotal"]),
+        },
     },
     "Place": {
         "dbo": [
@@ -93,7 +115,12 @@ CACHED_CLASS_SCHEMAS = {
             "isPartOf": "parent administrative region",
             "populationTotal": "total population count",
             "capital": "capital city (for countries/states)"
-        }
+        },
+        "dbo_2hop": {
+            "country": ("Place", ["capital", "populationTotal", "leader"]),
+            "isPartOf": ("Place", ["country", "capital", "populationTotal"]),
+            "capital": ("Place", ["populationTotal", "country"]),
+        },
     },
     "MusicalArtist": {
         "dbo": [
@@ -108,7 +135,11 @@ CACHED_CLASS_SCHEMAS = {
             "genre": "music genre",
             "recordLabel": "record label company",
             "associatedMusicalArtist": "collaborating artists"
-        }
+        },
+        "dbo_2hop": {
+            "associatedMusicalArtist": ("MusicalArtist", ["genre", "recordLabel", "birthDate"]),
+            "birthPlace": ("Place", ["country", "isPartOf", "populationTotal"]),
+        },
     },
     "Book": {
         "dbo": [
@@ -120,12 +151,78 @@ CACHED_CLASS_SCHEMAS = {
             "isbn", "genre", "language", "country"
         ],
         "descriptions": {
-            "author": "book author (returns Person)",
+            "author": "book author (returns Person with birthDate, deathDate, birthPlace)",
             "publisher": "publishing company",
             "publicationDate": "date of publication"
-        }
+        },
+        "dbo_2hop": {
+            "author": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "publisher": ("Company", ["foundingDate", "locationCity"]),
+        },
     }
 }
+
+# Property -> target class mappings for dbo: properties that return entities.
+# Only includes properties whose range is one of the 6 cached classes.
+PROPERTY_RANGES: dict[str, str] = {
+    # Film -> Person
+    "dbo:director": "Person",
+    "dbo:producer": "Person",
+    "dbo:starring": "Person",
+    "dbo:writer": "Person",
+    "dbo:musicComposer": "Person",
+    "dbo:cinematography": "Person",
+    "dbo:editing": "Person",
+    # Film -> Company
+    "dbo:distributor": "Company",
+    # Book -> Person
+    "dbo:author": "Person",
+    # Book -> Company
+    "dbo:publisher": "Company",
+    # Person -> Place
+    "dbo:birthPlace": "Place",
+    "dbo:deathPlace": "Place",
+    "dbo:residence": "Place",
+    "dbo:almaMater": "Place",
+    # Person -> Person
+    "dbo:parent": "Person",
+    "dbo:spouse": "Person",
+    "dbo:child": "Person",
+    # Company -> Person
+    "dbo:foundedBy": "Person",
+    "dbo:keyPerson": "Person",
+    # Company -> Company
+    "dbo:parentCompany": "Company",
+    "dbo:subsidiary": "Company",
+    # Company -> Place
+    "dbo:locationCity": "Place",
+    "dbo:locationCountry": "Place",
+    # Place -> Place
+    "dbo:country": "Place",
+    "dbo:isPartOf": "Place",
+    "dbo:capital": "Place",
+    # MusicalArtist -> MusicalArtist
+    "dbo:associatedMusicalArtist": "MusicalArtist",
+}
+
+
+def format_2hop_lines(cached: dict, max_chains: int = 5, max_props: int = 4) -> list[str]:
+    """Format 2-hop chain info from a cached class schema entry.
+
+    Shared by _build_schema_text() and sparql_evaluation.get_schema_for_uris().
+    Returns list of lines (without trailing newline).
+    """
+    dbo_2hop = cached.get("dbo_2hop")
+    if not dbo_2hop:
+        return []
+    lines = ["  2-Hop chains:"]
+    for prop, (target_cls, target_props) in list(dbo_2hop.items())[:max_chains]:
+        lines.append(
+            f"    - dbo:{prop} -> {target_cls}: "
+            f"{', '.join(target_props[:max_props])}"
+        )
+    return lines
+
 
 # Common entity name -> DBpedia URI mappings (for entities with special URIs)
 ENTITY_URI_OVERRIDES = {
@@ -469,6 +566,8 @@ class SchemaDiscovery:
                 lines.append("  Property hints:")
                 for prop, desc in list(cached["descriptions"].items())[:5]:
                     lines.append(f"    - {prop}: {desc}")
+
+            lines.extend(format_2hop_lines(cached))
 
         lines.append("")
 
