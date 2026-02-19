@@ -35,7 +35,7 @@ from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute
 # ---------------------------------------------------------------------------
 
 GRASP_WS_URL = "wss://grasp.cs.uni-freiburg.de/api/live"
-COVERAGE_FILE = "data/coverage_analysis_800.json"
+COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
 WS_TIMEOUT = 180        # seconds per WebSocket message
 QUESTION_TIMEOUT = 600   # 10 min overall per question
 MAX_RETRIES = 3
@@ -103,16 +103,19 @@ def clean_verbose_answer(raw: str) -> str:
     # try to extract a direct answer statement first
     if len(raw) > 500 and raw.startswith("I "):
         # Look for direct answer patterns in the explanation text
+        # Unicode letter ranges: \u00C0-\u024F covers Latin Extended (accents, diacritics)
+        _L = r"A-Za-z\u00C0-\u024F"  # letter class
+        _U = r"A-Z\u00C0-\u00D6\u00D8-\u00DE\u0100-\u024F"  # uppercase start
         direct_patterns = [
             # "Charlotte Spurkeland (1987) was born later than ..."
-            r'(\b[A-Z][A-Za-z\s\'-]+?)(?:\s*\(\d{4}\))?\s+was born (?:later|earlier|first)',
-            r'(\b[A-Z][A-Za-z\s\'-]+?)(?:\s*\(\d{4}\))?\s+died (?:earlier|later|first)',
-            r'(\b[A-Z][A-Za-z\s\'-]+?)(?:\s*\(\d{4}\))?\s+was released (?:earlier|later|first)',
-            r'(\b[A-Z][A-Za-z\s\'-]+?)(?:\s*\(\d{4}\))?\s+was founded (?:earlier|later|first)',
+            rf'(\b[{_U}][{_L}\s\'-]+?)(?:\s*\(\d{{4}}\))?\s+was born (?:later|earlier|first)',
+            rf'(\b[{_U}][{_L}\s\'-]+?)(?:\s*\(\d{{4}}\))?\s+died (?:earlier|later|first)',
+            rf'(\b[{_U}][{_L}\s\'-]+?)(?:\s*\(\d{{4}}\))?\s+was released (?:earlier|later|first)',
+            rf'(\b[{_U}][{_L}\s\'-]+?)(?:\s*\(\d{{4}}\))?\s+was founded (?:earlier|later|first)',
             # "the answer is Charlotte Spurkeland"
-            r'(?:the answer is|answer:|the result is)\s+([A-Z][A-Za-z\s\'-]+)',
+            rf'(?:the answer is|answer:|the result is)\s+([{_U}][{_L}\s\'-]+)',
             # "which shows Charlotte Spurkeland was born later"
-            r'which shows\s+(\b[A-Z][A-Za-z\s\'-]+?)(?:\s*\(\d{4}\))?\s+was\b',
+            rf'which shows\s+(\b[{_U}][{_L}\s\'-]+?)(?:\s*\(\d{{4}}\))?\s+was\b',
         ]
         for pat in direct_patterns:
             m = re.search(pat, raw)
