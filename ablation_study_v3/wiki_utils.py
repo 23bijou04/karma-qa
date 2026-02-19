@@ -4,7 +4,7 @@ import re
 import time
 import logging
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import requests
 from groq import Groq
@@ -238,7 +238,7 @@ def entity_to_uri(entity: str, sparql: Optional[SPARQLWrapper] = None) -> str:
 def uri_to_wiki_title(uri: str) -> str:
     """Extract Wikipedia title from a DBpedia URI."""
     if "dbpedia.org/resource/" in uri:
-        return uri.split("/resource/")[-1].replace("_", " ")
+        return unquote(uri.split("/resource/")[-1]).replace("_", " ")
     return uri
 
 
