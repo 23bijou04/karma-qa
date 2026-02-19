@@ -1,15 +1,56 @@
 """Entity linking using DBpedia Spotlight and SPARQL fallback."""
 
 import logging
+import re
 from typing import Optional
+
 import httpx
+import spacy
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..models import Entity
-from .client import DBpediaSPARQLClient
 from .cache import CacheManager
+from .client import DBpediaSPARQLClient
 
 logger = logging.getLogger(__name__)
+
+_nlp = spacy.load("en_core_web_sm")
+
+# Words to strip from the front of noun chunks
+_STRIP_WORDS = frozenset({
+    "who", "what", "when", "where", "which", "how", "why",
+    "the", "a", "an", "is", "are", "was", "were", "be",
+    "did", "does", "do", "has", "have", "had", "both", "either",
+    "of", "in", "on", "at", "to", "for", "with", "from", "by",
+    "and", "or", "not", "that", "this", "it", "its",
+})
+
+# Common nouns that appear as spaCy mentions but are NOT entity names.
+# These would resolve to ontology/property URIs, not resources.
+_MENTION_BLOCKLIST = frozenset({
+    "film", "movie", "director", "book", "author", "novel", "song",
+    "album", "band", "country", "city", "person", "actor", "actress",
+    "writer", "singer", "politician", "company", "school", "university",
+    "year", "date", "time", "place", "name", "age", "number",
+    "first", "last", "born", "died", "older", "younger",
+    "earlier", "later", "more", "fewer", "same", "different",
+})
+
+# Maps question keywords to the type of SUBJECT entities being compared.
+TYPE_HINTS: dict[str, str] = {
+    r'\bfilm\b': 'dbo:Film',
+    r'\bmovie\b': 'dbo:Film',
+    r'\bdirector\b': 'dbo:Film',
+    r'\bbook\b': 'dbo:Book',
+    r'\bauthor\b': 'dbo:Book',
+    r'\bnovel\b': 'dbo:Book',
+    r'\bsong\b': 'dbo:MusicalWork',
+    r'\balbum\b': 'dbo:MusicalWork',
+    r'\bband\b': 'dbo:MusicalArtist',
+    r'\bcountry\b': 'dbo:Country',
+    r'\bcity\b': 'dbo:City',
+    r'\bperson\b': 'dbo:Person',
+}
 
 
 class DBpediaEntityLinker:
@@ -35,6 +76,109 @@ class DBpediaEntityLinker:
         if hasattr(self, "_http_client"):
             self._http_client.close()
 
+    # ------------------------------------------------------------------
+    # Mention extraction & type hinting helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_mentions(question: str) -> list[str]:
+        """Extract entity mentions from question using spaCy NER + noun chunks.
+
+        Returns raw mention strings (no title-casing — that's for Wikipedia).
+        Deduplicates and removes substring mentions.
+        """
+        doc = _nlp(question)
+        mentions: list[str] = []
+
+        # Quoted strings
+        mentions.extend(re.findall(r'"([^"]+)"', question))
+
+        # Noun chunks with stopword stripping
+        for chunk in doc.noun_chunks:
+            words = chunk.text.split()
+            while words and words[0].lower() in _STRIP_WORDS:
+                words.pop(0)
+            text = " ".join(words).strip()
+            if text:
+                mentions.append(text)
+
+        # Named entities (skip numeric types)
+        # Split on " or " for bridge_comparison patterns ("X or Y?")
+        for ent in doc.ents:
+            if ent.label_ not in ("CARDINAL", "ORDINAL", "QUANTITY", "PERCENT"):
+                if " or " in ent.text:
+                    for part in ent.text.split(" or "):
+                        part = part.strip()
+                        if part:
+                            mentions.append(part)
+                else:
+                    mentions.append(ent.text)
+
+        # Deduplicate case-insensitively, filter blocklisted words
+        seen: set[str] = set()
+        unique: list[str] = []
+        for m in mentions:
+            key = m.lower().strip()
+            if (key not in seen
+                    and len(key) > 1
+                    and key not in _MENTION_BLOCKLIST):
+                seen.add(key)
+                unique.append(m)
+
+        # Remove substring mentions
+        final: list[str] = []
+        for m in unique:
+            if not any(
+                m.lower() != o.lower() and m.lower() in o.lower()
+                for o in unique
+            ):
+                final.append(m)
+        return final
+
+    @staticmethod
+    def _extract_type_hint(question: str) -> str | None:
+        """Extract a dbo: type hint from question keywords."""
+        q_lower = question.lower()
+        for pattern, dbo_type in TYPE_HINTS.items():
+            if re.search(pattern, q_lower):
+                return dbo_type
+        return None
+
+    @staticmethod
+    def _find_unlinked(
+        mentions: list[str], entities: list[Entity]
+    ) -> list[str]:
+        """Find mentions that Spotlight didn't link (or mislinked).
+
+        Uses word-level Jaccard similarity (threshold 0.5) and substring
+        containment to match spaCy mentions against Spotlight surface forms.
+        """
+        # Collect Spotlight surface forms (label field holds surfaceForm)
+        surface_forms = [e.label for e in entities]
+        unlinked: list[str] = []
+
+        for mention in mentions:
+            m_lower = mention.lower().strip()
+            m_words = set(m_lower.split())
+            matched = False
+            for sf in surface_forms:
+                sf_lower = sf.lower().strip()
+                sf_words = set(sf_lower.split())
+                # Jaccard similarity
+                intersection = m_words & sf_words
+                union = m_words | sf_words
+                jaccard = len(intersection) / len(union) if union else 0
+                # Substring: mention IN surface_form is a match,
+                # but surface_form IN mention is a MISLINK (partial match)
+                mention_in_sf = m_lower in sf_lower
+                if jaccard >= 0.5 or mention_in_sf:
+                    matched = True
+                    break
+            if not matched:
+                unlinked.append(mention)
+
+        return unlinked
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, max=10))
     def _call_spotlight(self, text: str) -> dict:
         """Call DBpedia Spotlight API."""
@@ -56,43 +200,69 @@ class DBpediaEntityLinker:
             raise
 
     def link_entities(self, text: str, use_cache: bool = True) -> list[Entity]:
-        """Extract and link entities from text using Spotlight.
+        """Extract and link entities from text using Spotlight + bif:contains.
+
+        Cascade:
+          1. Spotlight API (primary — good for common entities)
+          2. spaCy NER identifies ALL entity mentions
+          3. For unlinked mentions -> bif:contains text search with type hints
+          4. Disambiguation via type matching + exact label preference
 
         Args:
             text: Input text to extract entities from
             use_cache: Whether to use cached results
 
         Returns:
-            List of linked Entity objects
+            List of linked Entity objects (every entity has a resolved URI)
         """
         if use_cache:
-            cache_key = f"spotlight:{text}"
+            cache_key = f"link_entities:{text}"
             cached = self.cache.get(cache_key)
             if cached is not None:
                 return [Entity(**e) for e in cached]
 
-        entities = []
+        entities: list[Entity] = []
 
+        # Step 1: Spotlight
         try:
             result = self._call_spotlight(text)
             resources = result.get("Resources", [])
-
             for resource in resources:
-                entity = Entity(
+                entities.append(Entity(
                     uri=resource["@URI"],
                     label=resource["@surfaceForm"],
                     confidence=float(resource.get("@similarityScore", 0.5)),
                     source="spotlight",
-                )
-                entities.append(entity)
-
+                ))
         except Exception as e:
-            logger.warning(f"Spotlight failed, falling back to SPARQL: {e}")
+            logger.warning(f"Spotlight failed: {e}")
+
+        # Step 2: spaCy mention extraction + unlinked detection
+        mentions = self._extract_mentions(text)
+        unlinked = self._find_unlinked(mentions, entities)
+
+        if unlinked:
+            type_hint = self._extract_type_hint(text)
+            existing_uris = {e.uri for e in entities}
+
+            for mention in unlinked:
+                found = self.sparql_client.search_entity_by_name(
+                    mention, entity_type=type_hint
+                )
+                if found and found.uri not in existing_uris:
+                    logger.info(
+                        f"bif:contains resolved '{mention}' -> {found.uri}"
+                    )
+                    entities.append(found)
+                    existing_uris.add(found.uri)
+
+        # Fallback: if nothing found at all, try old SPARQL label fallback
+        if not entities:
             entities = self._sparql_fallback(text)
 
         if use_cache and entities:
             self.cache.set(
-                f"spotlight:{text}",
+                cache_key,
                 [
                     {
                         "uri": e.uri,

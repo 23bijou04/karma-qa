@@ -128,21 +128,13 @@ def extract_entities(question: str) -> list[str]:
 
 def link_entities_to_dbpedia(question: str,
                              linker: DBpediaEntityLinker) -> list[Entity]:
-    """Link question entities to DBpedia URIs using Spotlight.
+    """Link question entities to DBpedia URIs.
 
-    Primary: DBpedia Spotlight API (disambiguation + linking).
-    Fallback: spaCy extraction → Entity objects without URIs.
+    Delegates to linker.link_entities() which handles the full cascade:
+    Spotlight -> spaCy mention extraction -> bif:contains fallback.
+    Every returned entity has a resolved URI (no more Entity(uri="")).
     """
-    try:
-        entities = linker.link_entities(question)
-        if entities:
-            return entities
-    except Exception as e:
-        logger.warning(f"Spotlight failed: {e}")
-
-    # Fallback: spaCy extraction → Entity objects without URIs
-    mentions = extract_entities(question)
-    return [Entity(uri="", label=name, source="spacy", confidence=0.0) for name in mentions]
+    return linker.link_entities(question)
 
 
 # ---------------------------------------------------------------------------
