@@ -1,6 +1,7 @@
-"""Tests for 2-hop chain routing rules."""
+"""Tests for 2-hop chain routing rules and comparison question detection."""
 
-from hybrid_qa import _parse_2hop_chains, _rule_based_route
+from hybrid_qa import _parse_2hop_chains, _rule_based_route, _is_comparison_question
+from dbpedia_qa.models import Entity
 
 SAMPLE_FILM_SCHEMA = """Entity: Inception
 URI: <http://dbpedia.org/resource/Inception>
@@ -105,3 +106,48 @@ Actual properties found:
             book_schema,
         )
         assert result == "SPARQL"
+
+
+def _make_entities(*names):
+    """Helper: create Entity objects with URIs from names."""
+    return [
+        Entity(
+            uri=f"http://dbpedia.org/resource/{n.replace(' ', '_')}",
+            label=n,
+            source="test",
+        )
+        for n in names
+    ]
+
+
+class TestIsComparisonQuestion:
+    def test_earlier_with_two_entities(self):
+        entities = _make_entities("Film A", "Film B")
+        assert _is_comparison_question("Which film's director died earlier, Film A or Film B?", entities)
+
+    def test_older_with_two_entities(self):
+        entities = _make_entities("Person A", "Person B")
+        assert _is_comparison_question("Who is older, Person A or Person B?", entities)
+
+    def test_same_with_two_entities(self):
+        entities = _make_entities("Film A", "Film B")
+        assert _is_comparison_question("Are both Film A and Film B from the same country?", entities)
+
+    def test_both_with_two_entities(self):
+        entities = _make_entities("X", "Y")
+        assert _is_comparison_question("Do both X and Y share the same director?", entities)
+
+    def test_more_recently_with_two_entities(self):
+        entities = _make_entities("Film A", "Film B")
+        assert _is_comparison_question("Which was released more recently, Film A or Film B?", entities)
+
+    def test_single_entity_returns_false(self):
+        entities = _make_entities("Film A")
+        assert not _is_comparison_question("Which film was released earlier?", entities)
+
+    def test_no_comparison_words_returns_false(self):
+        entities = _make_entities("Film A", "Film B")
+        assert not _is_comparison_question("Who directed Film A?", entities)
+
+    def test_empty_entities_returns_false(self):
+        assert not _is_comparison_question("Who was born earlier?", [])

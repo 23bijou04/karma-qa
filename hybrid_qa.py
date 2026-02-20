@@ -48,6 +48,7 @@ from sparql_evaluation import (
     call_llm,
     extract_sparql,
     execute_sparql,
+    sanitize_sparql_uris,
     SPARQL_GEN_PROMPT,
     SPARQL_RETRY_PROMPT,
     ANSWER_PROMPT,
@@ -116,6 +117,18 @@ SELECT DISTINCT ?entity ?label WHERE {{
   {{ <http://dbpedia.org/resource/Inception> dbo:director ?entity .
      ?entity rdfs:label ?label . FILTER(LANG(?label) = "en") }}
 }} LIMIT 10"""
+
+SPARQL_DECOMPOSE_PROMPT = """You are a SPARQL expert for DBpedia. Generate a query for ONE entity relevant to a comparison question.
+
+{schema}
+
+QUESTION: {question}
+TARGET ENTITY: {entity_name} (<{entity_uri}>)
+
+Generate a SPARQL query that extracts the relevant property value(s) for ONLY this entity.
+Use OPTIONAL patterns so the query returns results even if some properties are missing.
+Add LIMIT 10.
+Generate ONLY the SPARQL query, no explanation."""
 
 CONTEXT_SPARQL_RETRY_PROMPT = """Your previous context-retrieval SPARQL query returned {problem}.
 
@@ -301,6 +314,73 @@ def entities_to_schema_dicts(entities: list[Entity]) -> list[dict]:
     ]
 
 
+def _is_comparison_question(question: str, entities: list[Entity]) -> bool:
+    """Check if this is a comparison question with 2+ entities."""
+    q_lower = question.lower()
+    # Superset of comparison_words in _rule_based_route — intentionally broader
+    # to catch comparison patterns (same/both/longer/shorter) that may not require
+    # date-based routing but do benefit from per-entity decomposition.
+    comparison_words = [
+        "earlier", "later", "older", "younger", "first", "before", "after",
+        "more recently", "longer", "shorter", "same", "both",
+    ]
+    return len(entities) >= 2 and any(w in q_lower for w in comparison_words)
+
+
+def _try_per_entity_sparql(question: str, entities: list[Entity],
+                           schema_ctx: str, llm_client, model: str,
+                           verbose: bool = False) -> list[dict]:
+    """Decompose a comparison query into per-entity SPARQL queries.
+
+    Returns combined results if BOTH entities return data, else empty list.
+    Only processes the first 2 entities (2WikiMultiHopQA comparisons are always 2-entity).
+    """
+    sep = "=" * 70
+    if verbose:
+        print(f"\n{sep}")
+        print("STEP 4c: Per-Entity SPARQL Decomposition (comparison recovery)")
+        print(sep)
+        print(f"  Entities: {', '.join(e.label for e in entities[:2])}")
+
+    per_entity_results = []
+    for i, entity in enumerate(entities[:2]):
+        if verbose:
+            print(f"\n  --- Entity {i + 1}: {entity.label} ---")
+
+        prompt = SPARQL_DECOMPOSE_PROMPT.format(
+            schema=schema_ctx, question=question,
+            entity_name=entity.label, entity_uri=entity.uri,
+        )
+        resp = call_llm(llm_client, prompt, model)
+        query = sanitize_sparql_uris(extract_sparql(resp))
+        if verbose:
+            print(f"  Generated SPARQL:\n    {query}")
+
+        results, err = execute_sparql(query)
+        if verbose:
+            if err:
+                print(f"  Results: {len(results)} rows, error: '{err[:80]}'")
+            else:
+                print(f"  Results: {len(results)} rows")
+            if results:
+                for row in results[:5]:
+                    print(f"    {row}")
+
+        if not results or err:
+            if verbose:
+                print(f"  No data for {entity.label} — decomposition failed, falling to TEXT")
+            return []
+
+        for row in results:
+            row["entity_name"] = entity.label
+        per_entity_results.extend(results)
+
+    if verbose:
+        print(f"\n  Combined: {len(per_entity_results)} rows from both entities")
+
+    return per_entity_results
+
+
 def _sparql_neighbors(entities: list[Entity],
                       kg_client: DBpediaSPARQLClient,
                       limit_per_entity: int = 10,
@@ -425,7 +505,7 @@ def _find_context_entities(question: str, entities: list[Entity],
 
         prompt = CONTEXT_SPARQL_PROMPT.format(schema=schema_ctx, question=question)
         resp = call_llm(llm_client, prompt, model)
-        sparql_query = extract_sparql(resp)
+        sparql_query = sanitize_sparql_uris(extract_sparql(resp))
         if verbose:
             print(f"  Context SPARQL:\n    {sparql_query[:300]}")
 
@@ -444,7 +524,7 @@ def _find_context_entities(question: str, entities: list[Entity],
                 schema=schema_ctx, question=question,
             )
             retry_resp = call_llm(llm_client, retry_prompt, model)
-            retry_query = extract_sparql(retry_resp)
+            retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
             if verbose:
                 print(f"  Retry SPARQL:\n    {retry_query[:300]}")
             results2, err2 = execute_sparql(retry_query)
@@ -596,7 +676,7 @@ def hybrid_answer(question: str, api_key: str,
 
         sparql_prompt = SPARQL_GEN_PROMPT.format(schema=schema_ctx, question=question)
         sparql_resp = call_llm(llm_client, sparql_prompt, model)
-        sparql_query = extract_sparql(sparql_resp)
+        sparql_query = sanitize_sparql_uris(extract_sparql(sparql_resp))
         if verbose:
             print(f"  Generated SPARQL:\n    {sparql_query[:200]}")
 
@@ -611,7 +691,7 @@ def hybrid_answer(question: str, api_key: str,
                 schema=schema_ctx, question=question,
             )
             retry_resp = call_llm(llm_client, retry_prompt, model)
-            retry_query = extract_sparql(retry_resp)
+            retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
             if verbose:
                 print(f"  Retry SPARQL:\n    {retry_query[:200]}")
             results2, err2 = execute_sparql(retry_query)
@@ -619,6 +699,12 @@ def hybrid_answer(question: str, api_key: str,
                 print(f"  Retry results: {len(results2)} rows")
             if results2:
                 results = results2
+
+        # Per-entity decomposition for comparison questions (JOIN failure recovery)
+        if not results and _is_comparison_question(question, entities):
+            results = _try_per_entity_sparql(
+                question, entities, schema_ctx, llm_client, model, verbose,
+            )
 
         if results:
             fmt_results = json.dumps(results[:20], indent=2)
