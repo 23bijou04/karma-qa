@@ -27,6 +27,7 @@ from collections import defaultdict
 from datetime import datetime
 
 import websockets
+import websockets.exceptions
 
 from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
 
@@ -257,6 +258,24 @@ async def query_grasp(
 # Per-question evaluation
 # ---------------------------------------------------------------------------
 
+class RateLimitError(Exception):
+    """Raised when GRASP returns a rate-limit / too-many-requests error."""
+    def __init__(self, wait_seconds: int, message: str = ""):
+        self.wait_seconds = wait_seconds
+        super().__init__(message or f"Rate limited, retry after {wait_seconds}s")
+
+
+def parse_retry_after(error_msg: str) -> int | None:
+    """Extract wait seconds from rate-limit messages.
+
+    Handles formats like:
+      'Too many requests, retry after 816s'
+      'Request limit exceeded, retry after 3,517s'
+    """
+    m = re.search(r'retry after ([\d,]+)s', error_msg)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
 def retry_delay(attempt: int) -> float:
     """Exponential backoff: 5s, 15s, 45s."""
     return 5 * (3 ** (attempt - 1))
@@ -290,6 +309,10 @@ async def evaluate_question(
 
             if "error" in grasp_result and "type" not in grasp_result:
                 error = grasp_result["error"]
+                # Check for rate-limit — bubble up to main loop
+                wait = parse_retry_after(error)
+                if wait is not None:
+                    raise RateLimitError(wait, error)
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(retry_delay(attempt))
                     continue
@@ -299,14 +322,22 @@ async def evaluate_question(
                 error = ""
                 break
 
+        except RateLimitError:
+            raise  # always propagate to main loop
         except asyncio.TimeoutError:
             error = f"Timeout (attempt {attempt})"
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(retry_delay(attempt))
         except websockets.exceptions.ConnectionClosed as e:
+            wait = parse_retry_after(str(e))
+            if wait is not None:
+                raise RateLimitError(wait, f"Connection closed: {e}")
             error = f"Connection closed: {e} (attempt {attempt})"
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(retry_delay(attempt))
+        except websockets.exceptions.InvalidStatus as e:
+            # Server rejecting connections — likely rate-limited
+            raise RateLimitError(60, f"WebSocket rejected: {e}")
         except json.JSONDecodeError as e:
             error = f"JSONDecodeError: {e} (attempt {attempt})"
             if attempt < MAX_RETRIES:
@@ -441,6 +472,8 @@ async def main():
                         help="Max questions to evaluate (0 = all answerable)")
     parser.add_argument("--output-dir", default="data",
                         help="Directory for output files")
+    parser.add_argument("--delay", type=int, default=MIN_REQUEST_DELAY,
+                        help=f"Seconds between requests (default: {MIN_REQUEST_DELAY})")
     args = parser.parse_args()
 
     # Load answerable questions
@@ -469,7 +502,8 @@ async def main():
     print(f"  Remaining: {len(remaining)}")
     print(f"  Output: {results_file}")
     print(f"  Traces: {trace_dir}/")
-    est_min = len(remaining) * 1.5
+    print(f"  Delay: {args.delay}s between requests")
+    est_min = len(remaining) * (1.5 + args.delay / 60)
     print(f"  Estimated time: ~{est_min:.0f} min ({est_min/60:.1f} hr)")
     print()
 
@@ -481,11 +515,20 @@ async def main():
 
     # Process questions sequentially (GRASP is a shared public service)
     with open(results_file, "a") as out_f:
-        for i, q in enumerate(remaining):
+        i = 0
+        while i < len(remaining):
+            q = remaining[i]
             idx = len(completed_ids) + i + 1
             print(f"[{idx}/{total}] {q['question'][:80]}...")
 
-            result = await evaluate_question(q, args.kg, args.task, trace_dir)
+            try:
+                result = await evaluate_question(q, args.kg, args.task, trace_dir)
+            except RateLimitError as e:
+                wait = min(e.wait_seconds + 10, 3600)  # cap at 1 hour
+                print(f"  -> RATE LIMITED. Waiting {wait}s before retrying...")
+                await asyncio.sleep(wait)
+                continue  # retry same question (i not incremented)
+
             all_results.append(result)
 
             # Status indicator
@@ -511,7 +554,9 @@ async def main():
 
             # Politeness delay between requests
             if i < len(remaining) - 1:
-                await asyncio.sleep(MIN_REQUEST_DELAY)
+                await asyncio.sleep(args.delay)
+
+            i += 1
 
     # Final summary
     print("\n" + "=" * 70)
