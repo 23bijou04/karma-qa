@@ -1,6 +1,6 @@
 # Evaluation Report: Schema-Guided SPARQL vs GRASP (1000q Subset)
 
-**Date:** 2026-02-21
+**Date:** 2026-02-23 (corrected SPARQL numbers from latest eval)
 **Dataset:** 2WikiMultiHopQA dev split — 1000-question stratified sample
 **Evaluation subset:** 346 DBpedia-answerable questions (all required properties verified)
 
@@ -19,10 +19,10 @@
 
 | Metric | Schema-Guided SPARQL | GRASP | Delta |
 |---|:---:|:---:|:---:|
-| **EM** | **64.5%** | 32.9% | +31.5 pp |
-| **F1** | **77.0%** | 48.7% | +28.3 pp |
-| **Containment** | 88.7% | **88.2%** | +0.6 pp |
-| **Judge EM** | **90.5%** | — | — |
+| **EM** | **69.1%** | 32.9% | +36.2 pp |
+| **F1** | **83.2%** | 48.7% | +34.5 pp |
+| **Judge EM** | **91.9%** | 69.7% | +22.3 pp |
+| **Containment** | **88.7%** | 88.2% | +0.6 pp |
 | **Answered** | 346/346 (100%) | 333/346 (96.2%) | +3.8 pp |
 | **Errors** | 0 | 0 | — |
 
@@ -34,19 +34,19 @@
 
 | Type | n | Schema-Guided | GRASP | Delta |
 |---|:---:|:---:|:---:|:---:|
-| bridge_comparison | 141 | **86.5%** | 55.3% | +31.2 pp |
-| comparison | 71 | **88.7%** | 50.7% | +38.0 pp |
-| compositional | 100 | **17.0%** | 0.0% | +17.0 pp |
-| inference | 34 | **61.8%** | 0.0% | +61.8 pp |
+| bridge_comparison | 141 | **94.3%** | 55.3% | +39.0 pp |
+| comparison | 71 | **85.9%** | 50.7% | +35.2 pp |
+| compositional | 100 | **21.0%** | 0.0% | +21.0 pp |
+| inference | 34 | **70.6%** | 0.0% | +70.6 pp |
 
 ### 3.2 F1 Score
 
 | Type | n | Schema-Guided | GRASP | Delta |
 |---|:---:|:---:|:---:|:---:|
-| bridge_comparison | 141 | **88.7%** | 73.0% | +15.7 pp |
-| comparison | 71 | **90.2%** | 66.0% | +24.3 pp |
-| compositional | 100 | **47.6%** | 5.8% | +41.8 pp |
-| inference | 34 | **87.2%** | 38.4% | +48.8 pp |
+| bridge_comparison | 141 | **96.2%** | 73.0% | +23.2 pp |
+| comparison | 71 | **92.3%** | 66.0% | +26.3 pp |
+| compositional | 100 | **55.3%** | 5.8% | +49.5 pp |
+| inference | 34 | **91.9%** | 38.4% | +53.5 pp |
 
 ### 3.3 Containment
 
@@ -57,14 +57,27 @@
 | compositional | 100 | 77.0% | **76.0%** | +1.0 pp |
 | inference | 34 | 82.4% | **79.4%** | +2.9 pp |
 
-### 3.4 Judge EM (Schema-Guided only)
+### 3.4 Judge EM (via Ollama qwen2.5:7b)
 
-| Type | n | Judge EM | Auto EM | Gap |
+| Type | n | Schema-Guided | GRASP | Delta |
 |---|:---:|:---:|:---:|:---:|
-| bridge_comparison | 141 | 92.9% | 86.5% | 6.4 pp |
-| comparison | 71 | 95.8% | 88.7% | 7.0 pp |
-| compositional | 100 | 80.0% | 17.0% | 63.0 pp |
-| inference | 34 | 100.0% | 61.8% | 38.2 pp |
+| bridge_comparison | 141 | **97.2%** | 85.1% | +12.1 pp |
+| comparison | 71 | **95.8%** | 83.1% | +12.7 pp |
+| compositional | 100 | **81.0%** | 34.0% | +47.0 pp |
+| inference | 34 | **94.1%** | 82.4% | +11.8 pp |
+
+### 3.5 Judge EM vs Auto EM Gap (per system)
+
+| Type | Schema-Guided EM | Schema-Guided Judge | Gap | GRASP EM | GRASP Judge | Gap |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| bridge_comparison | 94.3% | 97.2% | 2.8 pp | 55.3% | 85.1% | 29.8 pp |
+| comparison | 85.9% | 95.8% | 9.9 pp | 50.7% | 83.1% | 32.4 pp |
+| compositional | 21.0% | 81.0% | 60.0 pp | 0.0% | 34.0% | 34.0 pp |
+| inference | 70.6% | 94.1% | 23.5 pp | 0.0% | 82.4% | 82.4 pp |
+
+**Key insight:** Both systems suffer from answer extraction gaps, but in different ways:
+- **Schema-Guided** has small gaps on comparison/bridge (2.8-9.9 pp) but a massive 60 pp gap on compositional — the SPARQL returns correct data but string normalization fails.
+- **GRASP** has large gaps across all types (29.8-82.4 pp) — its narrative answer format consistently defeats extraction heuristics. The 82.4 pp gap on inference is the largest: GRASP gets the right person 82.4% of the time but EM captures 0% due to URI suffixes and label variants.
 
 ---
 
@@ -193,22 +206,23 @@ GRASP's extraction succeeds because:
 | Metric | Schema-Guided | GRASP |
 |---|:---:|:---:|
 | Total questions | 346 | 346 |
-| Overall EM | **64.5%** | 32.9% |
-| Overall F1 | **77.0%** | 48.7% |
+| Overall EM | **69.1%** | 32.9% |
+| Overall F1 | **83.2%** | 48.7% |
+| Judge EM | **91.9%** | 69.7% |
 | Containment | **88.7%** | 88.2% |
-| Best type (EM) | comparison (88.7%) | bridge_comparison (55.3%) |
-| Worst type (EM) | compositional (17.0%) | compositional (0.0%) |
+| Best type (EM) | bridge_comparison (94.3%) | bridge_comparison (55.3%) |
+| Worst type (EM) | compositional (21.0%) | compositional (0.0%) |
 | Avg latency | ~5s | ~72s |
 | Runtime errors | 0 | 0 |
 | Answer rate | 100% | 96.2% |
 
 ### Key Takeaways
 
-1. **Schema-Guided dominates overall** (+31.5 pp EM) due to direct SPARQL result binding extraction vs GRASP's narrative format.
-2. **GRASP's 0% EM on compositional/inference is an extraction problem, not a retrieval problem.** Containment shows 76-79% of answers are present in raw output.
-3. **Comparison types are GRASP's sweet spot** because answers appear at the start of responses, aligning with extraction heuristics.
+1. **Schema-Guided dominates on both EM (+36.2 pp) and Judge EM (+22.3 pp).** The gap narrows with judge evaluation but remains substantial.
+2. **GRASP's 0% EM on compositional/inference is an extraction problem, not a retrieval problem.** Judge EM reveals GRASP actually gets 34.0% of compositional and 82.4% of inference answers correct — auto EM captures none of this.
+3. **Both systems suffer extraction losses, but differently:** Schema-Guided loses 60 pp on compositional (string normalization); GRASP loses 82.4 pp on inference (narrative format + URI suffixes).
 4. **Both systems achieve ~88% containment overall**, indicating similar underlying retrieval quality — the gap is in answer formatting.
-5. **Potential GRASP improvement:** Fixing URI_SUFFIX extraction alone (44.9% of failures) could lift compositional EM from 0% to ~30%.
+5. **Judge EM closes much of the gap:** EM delta is 36.2 pp, but Judge EM delta is only 22.3 pp. With better extraction on both sides, the systems are closer than raw EM suggests.
 
 ---
 
