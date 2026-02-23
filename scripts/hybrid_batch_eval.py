@@ -184,19 +184,23 @@ def main():
         }
 
         try:
-            raw_answer, method = hybrid_answer(
+            result = hybrid_answer(
                 question, args.api_key, model=args.model,
                 llm_client=llm_client, linker=linker,
                 kg_client=kg_client, schema_disc=schema_disc,
             )
-            record["raw_answer"] = raw_answer
-            record["predicted_answer"] = clean_answer(raw_answer)
-            record["method"] = method
+            record["raw_answer"] = result.answer
+            record["predicted_answer"] = clean_answer(result.answer)
+            record["method"] = result.method
+            record["route_source"] = result.route_source
+            record["sparql_fallback"] = result.sparql_fallback
             record["error"] = ""
         except Exception as e:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
             record["method"] = "error"
+            record["route_source"] = ""
+            record["sparql_fallback"] = False
             record["error"] = str(e)
 
         # Compute metrics

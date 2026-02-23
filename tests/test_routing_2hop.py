@@ -59,12 +59,16 @@ class TestParse2HopChains:
 
 class TestRuleBasedRoute:
     def test_bridge_comparison_director_born(self):
-        """'Which director was born earlier' + Film schema -> SPARQL."""
+        """'Which director was born earlier' + Film schema -> SPARQL.
+        Hits direct_date_comparison first because Film has dbo:releaseDate."""
         result = _rule_based_route(
             "Which director of Inception was born earlier?",
             SAMPLE_FILM_SCHEMA,
         )
-        assert result == "SPARQL"
+        assert result is not None
+        route, reason = result
+        assert route == "SPARQL"
+        assert reason == "rule:direct_date_comparison"
 
     def test_bridge_non_comparison_director_born(self):
         """'When was the director born' + Film schema -> SPARQL."""
@@ -72,7 +76,10 @@ class TestRuleBasedRoute:
             "When was the director of Inception born?",
             SAMPLE_FILM_SCHEMA,
         )
-        assert result == "SPARQL"
+        assert result is not None
+        route, reason = result
+        assert route == "SPARQL"
+        assert reason == "rule:bridge_hop2"
 
     def test_direct_date_comparison(self):
         """'Who was born earlier' + Person with birthDate -> SPARQL."""
@@ -80,7 +87,10 @@ class TestRuleBasedRoute:
             "Who was born earlier, Einstein or Newton?",
             SAMPLE_PERSON_SCHEMA,
         )
-        assert result == "SPARQL"
+        assert result is not None
+        route, reason = result
+        assert route == "SPARQL"
+        assert reason == "rule:direct_date_comparison"
 
     def test_no_relevant_props_returns_none(self):
         """Question about unrelated topic -> None (LLM decides)."""
@@ -105,7 +115,10 @@ Actual properties found:
             "Which author was born earlier, the author of Harry Potter or LOTR?",
             book_schema,
         )
-        assert result == "SPARQL"
+        assert result is not None
+        route, reason = result
+        assert route == "SPARQL"
+        assert reason == "rule:bridge_comparison"
 
 
 def _make_entities(*names):

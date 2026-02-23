@@ -36,7 +36,7 @@ from groq import Groq
 
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_RANGES, CACHED_CLASS_SCHEMAS
-from dbpedia_qa.models import Entity
+from dbpedia_qa.models import Entity, HybridResult
 
 from graphrag_wiki import (
     link_entities_to_dbpedia,
@@ -178,8 +178,8 @@ def _parse_2hop_chains(schema_ctx: str) -> dict[str, tuple[str, list[str]]]:
     return chains
 
 
-def _rule_based_route(question: str, schema_ctx: str) -> str | None:
-    """Return 'SPARQL' if rules match, None if inconclusive (let LLM decide)."""
+def _rule_based_route(question: str, schema_ctx: str) -> tuple[str, str] | None:
+    """Return ('SPARQL', reason) if rules match, None if inconclusive (let LLM decide)."""
     q_lower = question.lower()
 
     # Parse properties from both schema formats:
@@ -205,7 +205,7 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
     # Comparison + date properties on the entity itself -> SPARQL
     if any(w in q_lower for w in comparison_words):
         if actual_props & date_props:
-            return "SPARQL"
+            return ("SPARQL", "rule:direct_date_comparison")
 
     # Bridge chain validation: verify the relationship word maps to a target class
     # whose properties are relevant to the question (replaces blind class+word check)
@@ -235,7 +235,7 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
                     "birthDate", "deathDate", "foundingDate",
                     "activeYearsStartYear",
                 ]):
-                    return "SPARQL"
+                    return ("SPARQL", "rule:bridge_comparison")
             # Fallback: check PROPERTY_RANGES directly
             range_key = f"dbo:{prop_name}"
             if range_key in PROPERTY_RANGES:
@@ -245,7 +245,7 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
                     if any(p in target_schema.get("dbo", []) for p in [
                         "birthDate", "deathDate", "foundingDate",
                     ]):
-                        return "SPARQL"
+                        return ("SPARQL", "rule:bridge_comparison")
 
     # Non-comparison bridge: "When was the director of X born?"
     # Detects: bridge_word + hop-2 property keyword
@@ -270,14 +270,14 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
             if re.search(rf"\b{kw}\b", q_lower) and any(
                 p in target_dbo for p in needed_props
             ):
-                return "SPARQL"
+                return ("SPARQL", "rule:bridge_hop2")
 
     # Parent chain: father/mother + any property question -> SPARQL
     # Handles: "Where did X's father graduate?", "When was X's mother born?"
     parent_words = ["father", "mother", "parent", "paternal", "maternal"]
     parent_props = {"dbo:parent", "dbp:father", "dbp:mother"}
     if any(w in q_lower for w in parent_words) and actual_props & parent_props:
-        return "SPARQL"
+        return ("SPARQL", "rule:parent_chain")
 
     # Direct property lookup
     direct_map = {
@@ -297,7 +297,7 @@ def _rule_based_route(question: str, schema_ctx: str) -> str | None:
     }
     for keyword, props in direct_map.items():
         if keyword in q_lower and actual_props & props:
-            return "SPARQL"
+            return ("SPARQL", "rule:direct_property")
 
     return None  # inconclusive — let LLM decide
 
@@ -609,7 +609,7 @@ def hybrid_answer(question: str, api_key: str,
         kg_client: Optional pre-created DBpediaSPARQLClient (for batch reuse)
         schema_disc: Optional pre-created SchemaDiscovery (for batch reuse)
 
-    Returns: (answer, method) where method is "sparql" or "text".
+    Returns: HybridResult with answer, method, route_source, and sparql_fallback.
     """
     sep = "=" * 70
     llm_client = llm_client or Groq(api_key=api_key)
@@ -648,22 +648,24 @@ def hybrid_answer(question: str, api_key: str,
     # === Step 3: Route Decision — can SPARQL answer this? ===
     sparql_answer = ""
     route = "TEXT"
+    route_source = "no_schema_fallback"
     if schema_ctx:
         # Rule-based first (saves an LLM call when rules are conclusive)
-        rule_route = _rule_based_route(question, schema_ctx)
-        if rule_route:
-            route = rule_route
+        rule_result = _rule_based_route(question, schema_ctx)
+        if rule_result:
+            route, route_source = rule_result
             if verbose:
                 print(f"\n{sep}")
-                print(f"STEP 3: Route Decision → {route} (rule-based)")
+                print(f"STEP 3: Route Decision → {route} ({route_source})")
                 print(sep)
         else:
             route_prompt = ROUTE_PROMPT.format(schema=schema_ctx, question=question)
             route_resp = call_llm(llm_client, route_prompt, model).strip().upper()
             route = "SPARQL" if "SPARQL" in route_resp else "TEXT"
+            route_source = "llm"
             if verbose:
                 print(f"\n{sep}")
-                print(f"STEP 3: Route Decision → {route} (LLM)")
+                print(f"STEP 3: Route Decision → {route} (llm)")
                 print(sep)
                 print(f"  LLM response: {route_resp[:80]}")
 
@@ -719,14 +721,15 @@ def hybrid_answer(question: str, api_key: str,
     if sparql_answer:
         if verbose:
             print(f"\n{sep}")
-            print("RESULT (method=sparql)")
+            print(f"RESULT (method=sparql, route={route_source})")
             print(sep)
             print(f"  Question: {question}")
             print(f"  Answer:   {sparql_answer}")
-        return sparql_answer, "sparql"
+        return HybridResult(sparql_answer, "sparql", route_source)
 
     # === Text Fallback — find context entities + Wikipedia ===
     method_label = "text"
+    sparql_fallback = route == "SPARQL"  # originally routed SPARQL but it failed
     all_entities = _find_context_entities(
         question, entities, schema_ctx, llm_client, model,
         kg_client, verbose,
@@ -741,7 +744,7 @@ def hybrid_answer(question: str, api_key: str,
     if not raw_texts:
         if verbose:
             print("  No Wikipedia text retrieved.")
-        return "Could not find answer", method_label
+        return HybridResult("Could not find answer", method_label, route_source, sparql_fallback)
 
     # Section extraction and context assembly
     context, filtered_texts = assemble_context(raw_texts, question, verbose=verbose)
@@ -761,14 +764,15 @@ def hybrid_answer(question: str, api_key: str,
         answer = answer.split("FINAL ANSWER:")[-1].strip()
 
     if verbose:
+        fb_tag = " [sparql_fallback]" if sparql_fallback else ""
         print(f"\n{sep}")
-        print(f"RESULT (method={method_label})")
+        print(f"RESULT (method={method_label}, route={route_source}{fb_tag})")
         print(sep)
         print(f"  Question: {question}")
         print(f"  Answer:   {answer}")
         print(f"  Pages:    {len(filtered_texts)} ({', '.join(filtered_texts.keys())})")
 
-    return answer, method_label
+    return HybridResult(answer, method_label, route_source, sparql_fallback)
 
 
 def main():
@@ -793,12 +797,13 @@ def main():
         print("Error: provide --api-key or set GROQ_API_KEY env var")
         sys.exit(1)
 
-    answer, method = hybrid_answer(
+    result = hybrid_answer(
         args.question, args.api_key, model=args.model,
         verbose=args.verbose,
     )
     if not args.verbose:
-        print(f"Answer ({method}): {answer}")
+        fb = " [sparql_fallback]" if result.sparql_fallback else ""
+        print(f"Answer ({result.method}, route={result.route_source}{fb}): {result.answer}")
 
 
 if __name__ == "__main__":

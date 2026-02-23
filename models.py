@@ -73,3 +73,13 @@ class Triple:
             and self.predicate == other.predicate
             and self.obj == other.obj
         )
+
+
+@dataclass
+class HybridResult:
+    """Result from the hybrid QA pipeline."""
+
+    answer: str
+    method: str  # "sparql" or "text"
+    route_source: str = ""  # "rule:*", "llm", "no_schema_fallback"
+    sparql_fallback: bool = False  # True if routed SPARQL but fell back to text
