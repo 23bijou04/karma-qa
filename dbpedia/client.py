@@ -99,6 +99,23 @@ class DBpediaSPARQLClient:
 
         return results
 
+    def get_entity_types(self, entity_uri: str) -> list[str]:
+        """Get dbo: rdf:type values for an entity."""
+        safe_uri = escape_sparql_uri(entity_uri)
+        query = f"""
+        SELECT ?type WHERE {{
+            <{safe_uri}> rdf:type ?type .
+            FILTER(STRSTARTS(STR(?type), "http://dbpedia.org/ontology/"))
+        }}
+        """
+        try:
+            raw = self.query(query)
+            bindings = raw.get("results", {}).get("bindings", [])
+            return [b["type"]["value"].split("/")[-1] for b in bindings]
+        except Exception as e:
+            logger.warning(f"Type query failed for {entity_uri}: {e}")
+            return []
+
     def get_entity_by_label(self, label: str, lang: str = "en") -> Optional[Entity]:
         """Find entity by exact label match."""
         query = f"""

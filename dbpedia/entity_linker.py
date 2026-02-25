@@ -52,6 +52,31 @@ TYPE_HINTS: dict[str, str] = {
     r'\bperson\b': 'dbo:Person',
 }
 
+# Maps relation words to the type of the OBJECT entity (the thing being acted upon).
+# "director of X" -> X is a Film; "author of X" -> X is a Book.
+RELATION_TYPE_HINTS: dict[str, str] = {
+    r'\bdirector\s+of\b': 'dbo:Film',
+    r'\bdirected\b': 'dbo:Film',
+    r'\bcast\s+of\b': 'dbo:Film',
+    r'\bstarring\s+in\b': 'dbo:Film',
+    r'\bauthor\s+of\b': 'dbo:Book',
+    r'\bwrote\b': 'dbo:Book',
+    r'\bwriter\s+of\b': 'dbo:Book',
+    r'\bcomposer\s+of\b': 'dbo:MusicalWork',
+    r'\bpresident\s+of\b': 'dbo:Country',
+    r'\bfounder\s+of\b': 'dbo:Company',
+    r'\bcapital\s+of\b': 'dbo:Country',
+}
+
+# Map dbo:type to readable suffix for Wikipedia search disambiguation
+_TYPE_SUFFIX_MAP = {
+    'dbo:Film': 'film',
+    'dbo:Book': 'book',
+    'dbo:MusicalWork': 'album',
+    'dbo:Country': 'country',
+    'dbo:Company': 'company',
+}
+
 
 class DBpediaEntityLinker:
     """Entity linker using DBpedia Spotlight with SPARQL fallback."""
@@ -137,12 +162,96 @@ class DBpediaEntityLinker:
 
     @staticmethod
     def _extract_type_hint(question: str) -> str | None:
-        """Extract a dbo: type hint from question keywords."""
+        """Extract a dbo: type hint from question keywords and relation context.
+
+        Checks two sources:
+          1. RELATION_TYPE_HINTS: relation-implied types ("director of X" -> Film)
+          2. TYPE_HINTS: explicit type words ("film", "movie")
+        Relation hints take priority (more specific).
+        """
         q_lower = question.lower()
+        # Check relation-based hints first (higher specificity)
+        for pattern, dbo_type in RELATION_TYPE_HINTS.items():
+            if re.search(pattern, q_lower):
+                return dbo_type
+        # Fall back to explicit keyword hints
         for pattern, dbo_type in TYPE_HINTS.items():
             if re.search(pattern, q_lower):
                 return dbo_type
         return None
+
+    def _validate_entity_types(
+        self, entities: list[Entity], question: str, expected_type: str,
+    ) -> list[Entity]:
+        """Validate Spotlight entities against expected type from question context.
+
+        If an entity's rdf:type doesn't include the expected type AND the entity
+        label appears after a relation keyword (e.g., "director of [X]"), try
+        bif:contains search with type constraint as disambiguation.
+        """
+        # Build obj_pattern dynamically from RELATION_TYPE_HINTS to stay DRY.
+        # Extract all first words from patterns like r'\bdirector\s+of\b' -> "director"
+        relation_words = []
+        for pattern in RELATION_TYPE_HINTS:
+            m = re.search(r"\\b(\w+)", pattern)
+            if m:
+                relation_words.append(m.group(1))
+        if not relation_words:
+            return entities
+
+        words_alt = "|".join(relation_words)
+        # Match both "X of Y" form and verb "Xed Y" / "X Y" form
+        obj_match = re.search(
+            rf'(?:{words_alt})\s+of\s+(.+?)(?:\?|,|$)', question, re.IGNORECASE,
+        )
+        if not obj_match:
+            # Verb form: "directed Polish-Russian War", "wrote Harry Potter"
+            obj_match = re.search(
+                rf'(?:{words_alt})\s+(.+?)(?:\?|,|$)', question, re.IGNORECASE,
+            )
+        if not obj_match:
+            return entities
+
+        obj_phrase = obj_match.group(1).strip().rstrip("?.,!")
+        obj_lower = obj_phrase.lower()
+
+        suffix = _TYPE_SUFFIX_MAP.get(expected_type, '')
+        if not suffix:
+            return entities
+
+        validated = []
+        for entity in entities:
+            # Check if this entity corresponds to the object phrase
+            if obj_lower not in entity.label.lower() and entity.label.lower() not in obj_lower:
+                validated.append(entity)  # not the target entity, keep as-is
+                continue
+
+            # Check entity types via SPARQL
+            try:
+                types = self.sparql_client.get_entity_types(entity.uri)
+                type_short = expected_type.replace('dbo:', '')
+                if any(type_short in t for t in types):
+                    validated.append(entity)  # correct type, keep
+                    continue
+            except Exception:
+                pass  # can't verify, try fallback
+
+            # Type mismatch: search with type suffix for disambiguation
+            search_query = f"{obj_phrase} {suffix}"
+            logger.info(
+                f"Type mismatch for '{entity.label}' (expected {expected_type}), "
+                f"searching: '{search_query}'"
+            )
+            fallback = self.sparql_client.search_entity_by_name(
+                search_query, entity_type=expected_type,
+            )
+            if fallback and fallback.uri != entity.uri:
+                logger.info(f"Replaced '{entity.label}' -> '{fallback.label}' ({fallback.uri})")
+                validated.append(fallback)
+            else:
+                validated.append(entity)  # keep original if no better candidate
+
+        return validated
 
     @staticmethod
     def _find_unlinked(
@@ -237,12 +346,20 @@ class DBpediaEntityLinker:
         except Exception as e:
             logger.warning(f"Spotlight failed: {e}")
 
+        # Post-hoc type validation: if we can infer the expected type from the
+        # question context, check Spotlight entities against it. If a Spotlight
+        # entity's DBpedia types don't match, try search with type appended.
+        type_hint = self._extract_type_hint(text)
+        if type_hint and entities:
+            entities = self._validate_entity_types(entities, text, type_hint)
+
         # Step 2: spaCy mention extraction + unlinked detection
         mentions = self._extract_mentions(text)
         unlinked = self._find_unlinked(mentions, entities)
 
         if unlinked:
-            type_hint = self._extract_type_hint(text)
+            if type_hint is None:
+                type_hint = self._extract_type_hint(text)
             existing_uris = {e.uri for e in entities}
 
             for mention in unlinked:
