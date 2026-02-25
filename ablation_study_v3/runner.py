@@ -2,20 +2,20 @@
 
 import argparse
 import json
+import logging
 import os
 import time
-import logging
 from dataclasses import asdict
 
 from groq import Groq
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 from evaluation.metrics import compute_em, compute_f1
 
-from .sampling import create_stratified_sample
-from .levels_base import answer_level_0, answer_level_1, answer_level_4, LevelResult
+from .levels_base import LevelResult, answer_level_0, answer_level_1, answer_level_4
 from .levels_kg import answer_level_2, answer_level_3
 from .reporting import generate_report
+from .sampling import create_stratified_sample
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class AblationV3Runner:
         print("=" * 70)
         print("  ABLATION STUDY V3: Controlled KG Detail Levels")
         print(f"  Sample: {len(sample)} questions ({self.n_per_type} per type)")
-        print(f"  Levels: {[LEVEL_NAMES[l] for l in self.levels]}")
+        print(f"  Levels: {[LEVEL_NAMES[lv] for lv in self.levels]}")
         print("=" * 70)
 
         for level in self.levels:

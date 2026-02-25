@@ -23,8 +23,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
-
+from evaluation.metrics import compute_containment, compute_em, compute_f1
 
 # ---------------------------------------------------------------------------
 # Extract answer from hybrid_qa verbose output
@@ -61,9 +60,9 @@ def extract_answer_from_output(output: str) -> tuple[str, str]:
             method = m.group(1)
             answer = m.group(2).strip()
 
-    # Pattern 4: FINAL ANSWER in LLM output
+    # Pattern 4: FINAL ANSWER in LLM output (case-insensitive)
     if not answer:
-        m = re.search(r'FINAL ANSWER:\s*(.+)', output)
+        m = re.search(r'FINAL ANSWER:\s*(.+)', output, re.IGNORECASE)
         if m:
             answer = m.group(1).strip()
 

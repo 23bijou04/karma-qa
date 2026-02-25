@@ -1,7 +1,7 @@
 """Level 0 (No KG), Level 1 (Entity-Only KG), Level 4 (Oracle) + LevelResult."""
 
-import time
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -9,9 +9,13 @@ from groq import Groq
 from SPARQLWrapper import SPARQLWrapper
 
 from .wiki_utils import (
-    search_wikipedia, get_wikipedia_text, get_wikipedia_text_by_title,
-    extract_answer_with_llm, compare_with_llm, entity_to_uri, uri_to_wiki_title,
+    compare_with_llm,
+    entity_to_uri,
+    extract_answer_with_llm,
+    get_wikipedia_text,
+    get_wikipedia_text_by_title,
     llm_call_with_retry,
+    uri_to_wiki_title,
 )
 
 logger = logging.getLogger(__name__)

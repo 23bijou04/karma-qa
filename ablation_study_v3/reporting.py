@@ -4,7 +4,7 @@ import json
 import os
 from collections import defaultdict
 
-from .sampling import wilson_confidence_interval, mcnemar_test, bootstrap_ci
+from .sampling import mcnemar_test, wilson_confidence_interval
 
 LEVEL_NAMES = {
     0: "L0: No KG",
@@ -67,7 +67,7 @@ def generate_report(output_dir: str, levels: list[int]):
             types_seen.add(r["question_type"])
 
     type_list = sorted(types_seen)
-    header = "| Type | " + " | ".join(LEVEL_NAMES.get(l, f"L{l}") for l in levels) + " |"
+    header = "| Type | " + " | ".join(LEVEL_NAMES.get(lv, f"L{lv}") for lv in levels) + " |"
     sep = "|------|" + "|".join("------" for _ in levels) + "|"
     lines.append(header)
     lines.append(sep)
@@ -138,7 +138,7 @@ def generate_report(output_dir: str, levels: list[int]):
             lines.append(f"- L3 (Full KG) EM: {l3_em:.3f}")
             lines.append(f"- Delta (L3 - L1): {delta:+.3f}")
             if abs(delta) <= 0.10:
-                lines.append(f"- **Thesis SUPPORTED**: L1 is within 10 points of L3")
+                lines.append("- **Thesis SUPPORTED**: L1 is within 10 points of L3")
             else:
                 lines.append(f"- **Thesis NOT supported**: L1 is {abs(delta)*100:.1f} points from L3")
 

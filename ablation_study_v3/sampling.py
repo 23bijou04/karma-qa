@@ -5,7 +5,6 @@ import math
 import random
 from typing import Optional
 
-
 # Standard evidence chain lengths per question type
 STANDARD_EVIDENCE_LENGTHS = {
     "comparison": 2,

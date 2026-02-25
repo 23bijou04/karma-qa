@@ -6,7 +6,8 @@ to provide complete schema information to LLM for SPARQL generation.
 
 import logging
 from typing import Optional
-from SPARQLWrapper import SPARQLWrapper, JSON
+
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 from .sparql_utils import escape_sparql_string, escape_sparql_uri
 
@@ -236,7 +237,13 @@ ENTITY_URI_OVERRIDES = {
 
 
 class SchemaDiscovery:
-    """Hybrid schema discovery combining cached ontology with dynamic lookup."""
+    """Hybrid schema discovery combining cached ontology with dynamic lookup.
+
+    NOT thread-safe: self.sparql is a shared SPARQLWrapper instance whose
+    setQuery() mutates internal state. All methods must be called sequentially.
+    If concurrent use is needed, create one SchemaDiscovery per thread or
+    instantiate a new SPARQLWrapper per method call.
+    """
 
     def __init__(self, sparql_endpoint: str = "https://dbpedia.org/sparql"):
         """Initialize schema discovery.
@@ -245,6 +252,7 @@ class SchemaDiscovery:
             sparql_endpoint: DBpedia SPARQL endpoint URL
         """
         self.endpoint = sparql_endpoint
+        # NOT thread-safe — setQuery() mutates internal state
         self.sparql = SPARQLWrapper(sparql_endpoint)
         self.sparql.setReturnFormat(JSON)
         self.sparql.addCustomHttpHeader("User-Agent", "DBpediaQA/1.0 (research)")

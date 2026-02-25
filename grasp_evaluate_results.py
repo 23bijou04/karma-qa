@@ -17,11 +17,10 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from collections import defaultdict
 
-from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
+from evaluation.metrics import compute_containment, compute_em, compute_f1
 from grasp_evaluation import clean_verbose_answer
 
 # ---------------------------------------------------------------------------
@@ -263,7 +262,7 @@ def print_errors(results: list[dict]):
     no_answer = sum(1 for r in results if not r.get("error") and not r.get("predicted_answer"))
     wrong = sum(1 for r in results if r.get("predicted_answer") and r["em"] == 0)
     correct = sum(1 for r in results if r["em"] > 0)
-    print(f"\n  Answer status:")
+    print("\n  Answer status:")
     print(f"    Correct (EM=1):      {correct:>5} ({correct/n*100:.1f}%)")
     print(f"    Wrong answer:        {wrong:>5} ({wrong/n*100:.1f}%)")
     print(f"    No answer:           {no_answer:>5} ({no_answer/n*100:.1f}%)")
@@ -272,7 +271,7 @@ def print_errors(results: list[dict]):
     # Cleaning impact
     cleaning_helped = sum(1 for r in results if r["em"] > 0 and r.get("raw_em", 0) == 0)
     cleaning_hurt = sum(1 for r in results if r["em"] == 0 and r.get("raw_em", 0) > 0)
-    print(f"\n  Cleaning impact:")
+    print("\n  Cleaning impact:")
     print(f"    Cleaning helped (raw_em=0 -> em=1): {cleaning_helped}")
     print(f"    Cleaning hurt  (raw_em=1 -> em=0):  {cleaning_hurt}")
 
@@ -281,7 +280,7 @@ def print_errors(results: list[dict]):
         1 for r in results
         if r.get("containment", 0) > 0 and r["em"] == 0 and not r.get("error")
     )
-    print(f"\n  Extraction gap:")
+    print("\n  Extraction gap:")
     print(f"    Gold in raw but EM=0: {contained_but_wrong} "
           f"(potential for better extraction)")
 
@@ -290,7 +289,7 @@ def print_errors(results: list[dict]):
     for r in results:
         by_type[r.get("question_type", "unknown")].append(r)
 
-    print(f"\n  By question type:")
+    print("\n  By question type:")
     print(f"    {'Type':<20} {'N':>5} {'EM':>8} {'F1':>8} {'Cont':>8} {'Err':>5}")
     print(f"    {'-'*20} {'-'*5} {'-'*8} {'-'*8} {'-'*8} {'-'*5}")
     for qtype, recs in sorted(by_type.items()):

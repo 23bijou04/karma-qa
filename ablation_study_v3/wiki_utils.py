@@ -1,14 +1,14 @@
 """Wikipedia + LLM utilities with retry logic for ablation study."""
 
+import logging
 import re
 import time
-import logging
 from typing import Optional
 from urllib.parse import quote, unquote
 
 import requests
 from groq import Groq
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ def entity_to_uri(entity: str, sparql: Optional[SPARQLWrapper] = None) -> str:
 
     # URL-safe conversion: encode special chars but keep underscores
     uri_part = entity.strip().replace(" ", "_")
-    uri_part = quote(uri_part, safe="_,().'")
+    uri_part = quote(uri_part, safe="/:@!$&'()*+,;=-._~%")
     uri = f"http://dbpedia.org/resource/{uri_part}"
 
     if not sparql:

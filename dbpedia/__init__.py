@@ -1,8 +1,8 @@
 """DBpedia integration module."""
 
+from .cache import CacheManager
 from .client import DBpediaSPARQLClient
 from .entity_linker import DBpediaEntityLinker
-from .cache import CacheManager
 from .schema_discovery import SchemaDiscovery
 
 __all__ = [

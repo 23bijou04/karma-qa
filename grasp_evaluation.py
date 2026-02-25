@@ -21,7 +21,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -29,7 +28,7 @@ from datetime import datetime
 import websockets
 import websockets.exceptions
 
-from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
+from evaluation.metrics import compute_containment, compute_em, compute_f1
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -494,7 +493,7 @@ async def main():
     remaining = [q for q in questions if q["question_id"] not in completed_ids]
     total = len(questions)
 
-    print(f"\nGRASP Evaluation")
+    print("\nGRASP Evaluation")
     print(f"  KG: {args.kg}")
     print(f"  Task: {args.task}")
     print(f"  Total answerable: {total}")

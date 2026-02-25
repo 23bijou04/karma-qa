@@ -1,17 +1,22 @@
 """Level 2 (Entity + Important Relations) and Level 3 (Full KG) with SPARQL."""
 
+import logging
 import re
 import time
-import logging
 from typing import Optional
 
 from groq import Groq
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 from .levels_base import LevelResult, _answer_via_wiki_extraction, _get_all_entity_names
 from .wiki_utils import (
-    entity_to_uri, uri_to_wiki_title, get_wikipedia_text_by_title,
-    get_wikipedia_text, extract_answer_with_llm, compare_with_llm, answers_match,
+    answers_match,
+    compare_with_llm,
+    entity_to_uri,
+    extract_answer_with_llm,
+    get_wikipedia_text,
+    get_wikipedia_text_by_title,
+    uri_to_wiki_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,7 +155,6 @@ def answer_level_2(
     )
 
     evidences = question.get("evidences", [])
-    qtype = question["type"]
     entity_names = _get_all_entity_names(evidences)
 
     # Entity linking
@@ -272,7 +276,6 @@ def answer_level_3(
     )
 
     evidences = question.get("evidences", [])
-    qtype = question["type"]
     entity_names = _get_all_entity_names(evidences)
 
     # Entity linking
@@ -325,7 +328,6 @@ def _try_full_kg(
     if not sparql:
         return None
 
-    evidences = question["evidences"]
     qtype = question["type"]
 
     if qtype == "comparison":

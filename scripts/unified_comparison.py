@@ -20,8 +20,8 @@ from itertools import combinations
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
 from ablation_study_v3.sampling import mcnemar_test
+from evaluation.metrics import compute_containment, compute_em, compute_f1, normalize_answer
 
 
 def wilson_ci(p, n, z=1.96):
@@ -336,7 +336,7 @@ def main():
             print(f"    F1:          {fmt_pct_ci(m['f1'], m['f1_ci'])}")
 
         # By question type
-        print(f"\n  By question type (all routes):")
+        print("\n  By question type (all routes):")
         for qtype in types:
             type_data = {qid: hybrid_all[qid] for qid in hybrid_all
                          if qtype_map.get(qid) == qtype}
@@ -468,15 +468,15 @@ def main():
     with open(md_path, "w") as f:
         f.write("# Unified Baseline Comparison: 1,000-Question Evaluation\n\n")
         f.write("## Evaluation Setup\n\n")
-        f.write(f"- **Question set**: 1,000 questions from LinearRAG HF dataset "
-                f"(`Zly0523/linear-rag`)\n")
+        f.write("- **Question set**: 1,000 questions from LinearRAG HF dataset "
+                "(`Zly0523/linear-rag`)\n")
         f.write(f"- **Answerable subset**: {len(answerable_ids)} questions "
                 f"({len(answerable_ids)/10:.1f}%) with DBpedia entity+property coverage\n")
         f.write(f"- **Common evaluation set**: {len(common_ids)} questions "
                 f"(intersection of all systems with results)\n")
         f.write(f"- **Systems**: {', '.join(system_names)}\n")
-        f.write(f"- **LLM**: Groq `llama-3.3-70b-versatile` (Hybrid, SPARQL, LinearRAG); "
-                f"`gpt-5-mini` (GRASP)\n\n")
+        f.write("- **LLM**: Groq `llama-3.3-70b-versatile` (Hybrid, SPARQL, LinearRAG); "
+                "`gpt-5-mini` (GRASP)\n\n")
 
         # GRASP coverage note
         if grasp:
@@ -563,7 +563,7 @@ def main():
 
         # Table 5: McNemar
         if table5:
-            f.write(f"\n## Table 5: McNemar Pairwise Significance\n\n")
+            f.write("\n## Table 5: McNemar Pairwise Significance\n\n")
             f.write(f"Bonferroni-corrected alpha = {ALPHA:.4f} ({n_pairs} pairs)\n\n")
             f.write("| Pair | chi2 | p-value | Significant? |\n")
             f.write("|------|------|---------|-------------|\n")

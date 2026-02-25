@@ -11,7 +11,6 @@ Usage:
 import argparse
 import json
 import os
-import time
 
 import requests
 
@@ -135,7 +134,7 @@ def judge_level(input_dir: str, level: int, model: str,
           f" [+{summary['upgraded']} upgraded]")
 
     if upgraded:
-        print(f"  Upgraded examples:")
+        print("  Upgraded examples:")
         for pred, gold, q in upgraded[:10]:
             print(f"    pred='{pred}' gold='{gold}'")
             print(f"      Q: {q}")

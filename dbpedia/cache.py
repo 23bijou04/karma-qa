@@ -4,7 +4,6 @@ import hashlib
 import json
 import time
 from typing import Any, Optional
-from functools import lru_cache
 
 
 class InMemoryCache:
