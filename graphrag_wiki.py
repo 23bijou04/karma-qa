@@ -13,31 +13,33 @@ Usage:
   python3 graphrag_wiki.py "Who directed Inception?" --verbose
 """
 
+import argparse
+import logging
 import os
 import re
 import sys
-import logging
-import argparse
+import time
 from pathlib import Path
-
 from urllib.parse import unquote
+
+import requests
 
 # Ensure parent directory is on sys.path for dbpedia_qa package imports
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from groq import Groq
 from ddgs import DDGS
+from groq import Groq
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
-from dbpedia_qa.models import Entity
 from ablation_study_v3.wiki_utils import (
     get_wikipedia_text_by_title,
     llm_call_with_retry,
     uri_to_wiki_title,
 )
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
+from dbpedia_qa.models import Entity, extract_final_answer
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,37 @@ STOPWORDS = {
     "first", "last", "same", "both", "more", "most",
     "after", "before", "between", "about", "into", "through",
 }
+
+
+class _CircuitBreaker:
+    """Lightweight circuit breaker for external services."""
+
+    def __init__(self, threshold: int = 3, cooldown: float = 60.0):
+        self._failures = 0
+        self._threshold = threshold
+        self._tripped_at: float | None = None
+        self._cooldown = cooldown
+
+    def is_open(self) -> bool:
+        if self._tripped_at is None:
+            return False
+        if time.time() - self._tripped_at >= self._cooldown:
+            self._failures = 0
+            self._tripped_at = None
+            return False
+        return True
+
+    def record_failure(self):
+        self._failures += 1
+        if self._failures >= self._threshold:
+            self._tripped_at = time.time()
+
+    def record_success(self):
+        self._failures = 0
+        self._tripped_at = None
+
+
+_ddg_breaker = _CircuitBreaker(threshold=3, cooldown=60.0)
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +462,43 @@ def extract_relevant_sections(text: str, keywords: list[str],
 # 3. Web search for Wikipedia pages
 # ---------------------------------------------------------------------------
 
+_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (research; hybrid-qa)"}
+
+
 def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
-    """Search DuckDuckGo for Wikipedia pages matching query."""
+    """Search for Wikipedia pages. Primary: Wikipedia API. Fallback: DuckDuckGo.
+
+    Wikipedia's action=query&list=search is official, reliable, and has no
+    undocumented rate limits (unlike DDG which silently blocks after ~50 calls).
+    """
+    # Primary: Wikipedia native search API
+    try:
+        resp = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "srlimit": limit,
+                "srnamespace": 0,
+                "format": "json",
+            },
+            headers=_WIKI_SEARCH_HEADERS,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("query", {}).get("search", [])
+        titles = [r["title"] for r in results if r.get("title")]
+        if titles:
+            return titles
+    except Exception as e:
+        logger.warning(f"Wikipedia search API failed: {e}")
+
+    # Fallback: DuckDuckGo (with circuit breaker)
+    if _ddg_breaker.is_open():
+        logger.debug("DDG circuit breaker open, skipping")
+        return []
+
     try:
         results = list(DDGS().text(
             f"site:en.wikipedia.org {query}", max_results=limit,
@@ -440,10 +508,13 @@ def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
             url = r.get("href", "")
             if "en.wikipedia.org/wiki/" in url:
                 title = unquote(url.split("/wiki/")[-1]).replace("_", " ")
-                if ":" not in title:  # skip Category:, File:, etc.
+                if ":" not in title:
                     titles.append(title)
+        _ddg_breaker.record_success()
         return titles
-    except Exception:
+    except Exception as e:
+        logger.warning(f"DDG fallback failed: {e}")
+        _ddg_breaker.record_failure()
         return []
 
 
@@ -542,6 +613,7 @@ def retrieve_wikipedia(entities: list[Entity], question: str,
 def assemble_context(
     raw_texts: dict[str, str],
     question: str,
+    seed_titles: set[str] | None = None,
     verbose: bool = False,
 ) -> tuple[str, dict[str, str]]:
     """Extract relevant sections, rank pages, and assemble LLM context.
@@ -549,6 +621,7 @@ def assemble_context(
     Args:
         raw_texts: {page_title: full_wiki_text}
         question: The question to answer
+        seed_titles: Titles of seed entity pages (get 60% budget priority)
         verbose: Print progress
 
     Returns:
@@ -559,14 +632,33 @@ def assemble_context(
         if w.strip("?.,!:;\"'") not in STOPWORDS
         and len(w.strip("?.,!:;\"'")) > 2
     ]
-    per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
+
+    # Priority budget: seed entities get 60%, bridge entities 30%.
+    # Remaining 10% is implicit slack absorbed by the final MAX_CONTEXT_CHARS cap.
+    if seed_titles:
+        seed_pages = {t for t in raw_texts if t in seed_titles}
+        n_seed = max(len(seed_pages), 1)
+        n_bridge = max(len(raw_texts) - len(seed_pages), 1)
+
+        seed_budget = int(MAX_CONTEXT_CHARS * 0.60)
+        bridge_budget = int(MAX_CONTEXT_CHARS * 0.30)
+
+        seed_per_page = max(MAX_CHARS_PER_PAGE, seed_budget // n_seed)
+        bridge_per_page = max(1500, bridge_budget // n_bridge)
+    else:
+        seed_pages = set()
+        seed_per_page = max(MAX_CHARS_PER_PAGE, MAX_CONTEXT_CHARS // max(len(raw_texts), 1))
+        bridge_per_page = seed_per_page
+
     filtered_texts = {}
     for title, full_text in raw_texts.items():
-        relevant = extract_relevant_sections(full_text, q_keywords, per_page)
+        budget = seed_per_page if title in seed_pages else bridge_per_page
+        relevant = extract_relevant_sections(full_text, q_keywords, budget)
         if relevant:
             filtered_texts[title] = relevant
         if verbose:
-            print(f"    {title}: {len(full_text)} -> {len(relevant)} chars (filtered, budget={per_page})")
+            tag = "SEED" if title in seed_pages else "bridge"
+            print(f"    {title} [{tag}]: {len(full_text)} -> {len(relevant)} chars (budget={budget})")
 
     if verbose:
         print(f"\n  Total pages: {len(filtered_texts)}")
@@ -575,11 +667,17 @@ def assemble_context(
         t_lower = text.lower()
         return sum(t_lower.count(kw) for kw in q_keywords)
 
-    ranked_pages = sorted(
-        filtered_texts.items(),
-        key=lambda item: _page_kw_score(item[1]),
-        reverse=True,
+    # Rank: seed pages first (sorted by keyword score), then bridge pages
+    seed_ranked = sorted(
+        [(t, txt) for t, txt in filtered_texts.items() if t in seed_pages],
+        key=lambda item: _page_kw_score(item[1]), reverse=True,
     )
+    bridge_ranked = sorted(
+        [(t, txt) for t, txt in filtered_texts.items() if t not in seed_pages],
+        key=lambda item: _page_kw_score(item[1]), reverse=True,
+    )
+    ranked_pages = seed_ranked + bridge_ranked
+
     context_parts = []
     total_chars = 0
     for title, text in ranked_pages:
@@ -644,8 +742,13 @@ def answer_question(question: str, api_key: str,
         print("\nFailed: no Wikipedia text retrieved.")
         return "Could not find answer"
 
-    # Extract relevant sections, rank, and assemble context
-    context, filtered_texts = assemble_context(raw_texts, question, verbose=verbose)
+    # Extract relevant sections, rank, and assemble context (seed entities get priority)
+    seed_titles = {
+        uri_to_wiki_title(e.uri) for e in entities if e.uri and "/resource/" in e.uri
+    }
+    context, filtered_texts = assemble_context(
+        raw_texts, question, seed_titles=seed_titles, verbose=verbose,
+    )
 
     prompt = f"""Answer this question using ONLY the Wikipedia text below.
 
@@ -670,14 +773,12 @@ Instructions:
     response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
 
     if verbose and response:
-        print(f"\n  LLM Response:\n")
+        print("\n  LLM Response:\n")
         for line in response.split("\n"):
             print(f"    {line}")
 
     # Extract final answer
-    answer = response or "Could not generate answer"
-    if "FINAL ANSWER:" in answer:
-        answer = answer.split("FINAL ANSWER:")[-1].strip()
+    answer = extract_final_answer(response) if response else "Could not generate answer"
 
     # Summary
     print(f"\n{'=' * 70}")
@@ -686,7 +787,7 @@ Instructions:
     print(f"  Question: {question}")
     print(f"  Answer:   {answer}")
     print(f"  Pages:    {len(filtered_texts)} ({', '.join(filtered_texts.keys())})")
-    print(f"  Method:   Spotlight -> KG explore -> Wikipedia text -> LLM")
+    print("  Method:   Spotlight -> KG explore -> Wikipedia text -> LLM")
     print()
 
     return answer
