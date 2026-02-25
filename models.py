@@ -1,7 +1,24 @@
 """Data models for DBpedia Hybrid QA system."""
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+def extract_final_answer(text: str) -> str:
+    """Extract answer after the last 'FINAL ANSWER:' marker (case-insensitive).
+
+    Uses last-match semantics (backward compatible with the old split()[-1] pattern).
+    Shared utility for all pipelines to avoid inconsistent extraction logic.
+    Returns the text after the marker, or the original text if no marker found.
+    """
+    if not text:
+        return text or ""
+    # Find all occurrences; take text after the last one
+    matches = list(re.finditer(r"FINAL ANSWER:", text, re.IGNORECASE))
+    if matches:
+        return text[matches[-1].end():].strip()
+    return text
 
 
 @dataclass

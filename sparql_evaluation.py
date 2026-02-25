@@ -13,19 +13,19 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import re
 import socket
 import sys
 import tempfile
 import time
-import logging
 from collections import defaultdict
 from datetime import datetime
 from urllib.parse import unquote
 
 from groq import Groq
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 # ---------------------------------------------------------------------------
 # sys.path guard (same pattern as graphrag_wiki.py)
@@ -35,9 +35,12 @@ if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
 from dbpedia_qa.dbpedia.schema_discovery import (
-    SchemaDiscovery, CACHED_CLASS_SCHEMAS, format_2hop_lines,
+    CACHED_CLASS_SCHEMAS,
+    SchemaDiscovery,
+    format_2hop_lines,
 )
-from evaluation.metrics import normalize_answer, compute_em, compute_f1, compute_containment
+from dbpedia_qa.models import extract_final_answer
+from evaluation.metrics import compute_containment, compute_em, compute_f1
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +177,7 @@ def extract_sparql(response: str) -> str:
     # Strip markdown fences
     if "```" in response:
         lines = response.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [ln for ln in lines if not ln.strip().startswith("```")]
         response = "\n".join(lines)
 
     # Find where the query starts
@@ -269,8 +272,14 @@ SPARQL_ENDPOINT = "https://dbpedia.org/sparql"
 
 def execute_sparql(query: str, endpoint: str = SPARQL_ENDPOINT,
                    timeout: int = 60,
-                   max_retries: int = 2) -> tuple[list[dict], str]:
+                   max_retries: int = 2,
+                   preserve_uris: bool = False) -> tuple[list[dict], str]:
     """Execute SPARQL query, return (results_list, error_string).
+
+    Args:
+        preserve_uris: If True, keep full URI values instead of extracting
+            local names. Used by context entity discovery so downstream code
+            can use URIs directly without re-encoding.
 
     Retries on transient network errors (timeouts, connection resets).
     Returns immediately on SPARQL syntax/query errors.
@@ -293,7 +302,7 @@ def execute_sparql(query: str, endpoint: str = SPARQL_ENDPOINT,
                 row = {}
                 for var, val in b.items():
                     v = val.get("value", "")
-                    if val.get("type") == "uri":
+                    if val.get("type") == "uri" and not preserve_uris:
                         v = unquote(v.split("/")[-1]).replace("_", " ")
                     row[var] = v
                 rows.append(row)
@@ -438,11 +447,7 @@ def evaluate_question(q: dict, client: Groq, model: str,
             trace["answer_response"] = ""
 
         record["raw_answer"] = raw_answer
-        cleaned = raw_answer.strip()
-        fa_match = re.search(r"FINAL ANSWER:", cleaned, re.IGNORECASE)
-        if fa_match:
-            cleaned = cleaned[fa_match.end():].strip()
-        record["predicted_answer"] = cleaned
+        record["predicted_answer"] = extract_final_answer(raw_answer)
         record["error"] = ""
 
     except Exception as e:
@@ -497,7 +502,7 @@ def print_summary(results: list[dict]):
 
     overall = agg(results)
     print(f"\n{'=' * 75}")
-    print(f"  Direct LLM+SPARQL Evaluation Results")
+    print("  Direct LLM+SPARQL Evaluation Results")
     print(f"{'=' * 75}")
     print(f"  N={n}  answered={overall['answered']}  "
           f"errors={overall['errors']}  retries={overall['retries']}")
@@ -597,7 +602,6 @@ def main():
     all_results = list(completed_results)
 
     for i, q in enumerate(remaining, 1):
-        qid = q["question_id"]
         qtype = q["question_type"]
         print(f"[{i}/{len(remaining)}] {qtype} | {q['question'][:60]}...", end=" ")
 

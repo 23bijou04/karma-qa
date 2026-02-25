@@ -25,8 +25,9 @@ _parent = os.path.dirname(PROJECT_ROOT)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from groq import Groq
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.models import extract_final_answer
+from groq import Groq
 
 # Load metrics directly to avoid evaluation/__init__.py heavy imports
 _spec = importlib.util.spec_from_file_location(
@@ -84,10 +85,7 @@ def clean_answer(raw: str) -> str:
     """Normalize answer from both SPARQL and text routes."""
     if not raw:
         return ""
-    answer = raw.strip()
-    # Strip FINAL ANSWER: prefix if present
-    if "FINAL ANSWER:" in answer:
-        answer = answer.split("FINAL ANSWER:")[-1].strip()
+    answer = extract_final_answer(raw)
     # Strip common LLM preambles
     for prefix in ["The answer is ", "Answer: ", "Based on the text, "]:
         if answer.lower().startswith(prefix.lower()):
@@ -264,7 +262,7 @@ def main():
     print(f"This run: {len(remaining)} questions in {elapsed/60:.1f}min")
     print(f"  EM:  {total_em*100:.1f}%")
     print(f"  F1:  {total_f1*100:.1f}%")
-    print(f"\nBy method:")
+    print("\nBy method:")
     for method, stats in sorted(by_method.items()):
         c = stats["count"]
         me = stats["em"] / c * 100 if c else 0

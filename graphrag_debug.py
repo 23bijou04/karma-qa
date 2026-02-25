@@ -6,10 +6,10 @@ Usage:
   python3 graphrag_debug.py "Who directed Inception?" --api-key gsk_...
 """
 
+import argparse
 import os
 import re
 import sys
-import argparse
 from pathlib import Path
 
 # Ensure parent directory is on sys.path for dbpedia_qa package imports
@@ -19,17 +19,18 @@ if _parent not in sys.path:
 
 from groq import Groq
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
-from graphrag_wiki import (
-    link_entities_to_dbpedia,
-    explore_kg,
-    retrieve_wikipedia,
-    extract_relevant_sections,
-    STOPWORDS,
-    MAX_CONTEXT_CHARS,
-    MAX_CHARS_PER_PAGE,
-)
 from ablation_study_v3.wiki_utils import llm_call_with_retry
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.models import extract_final_answer
+from graphrag_wiki import (
+    MAX_CHARS_PER_PAGE,
+    MAX_CONTEXT_CHARS,
+    STOPWORDS,
+    explore_kg,
+    extract_relevant_sections,
+    link_entities_to_dbpedia,
+    retrieve_wikipedia,
+)
 
 
 def wiki_url(title: str) -> str:
@@ -155,11 +156,12 @@ Instructions:
     response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
     print(response)
 
-    if response and "FINAL ANSWER:" in response:
-        answer = response.split("FINAL ANSWER:")[-1].strip()
-        print(f"\n{sep}")
-        print(f"EXTRACTED ANSWER: {answer}")
-        print(sep)
+    if response:
+        answer = extract_final_answer(response)
+        if answer != response:
+            print(f"\n{sep}")
+            print(f"EXTRACTED ANSWER: {answer}")
+            print(sep)
 
 
 if __name__ == "__main__":
