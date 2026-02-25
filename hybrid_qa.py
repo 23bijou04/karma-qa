@@ -19,12 +19,12 @@ Usage:
   python3 hybrid_qa.py "When was Albert Einstein born?" --api-key $GROQ_API_KEY
 """
 
+import argparse
 import json
+import logging
 import os
 import re
 import sys
-import logging
-import argparse
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -35,23 +35,23 @@ if _parent not in sys.path:
 from groq import Groq
 
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
-from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_RANGES, CACHED_CLASS_SCHEMAS
-from dbpedia_qa.models import Entity, HybridResult
-
+from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
+from dbpedia_qa.models import Entity, HybridResult, extract_final_answer
+from ablation_study_v3.wiki_utils import uri_to_wiki_title
 from graphrag_wiki import (
+    assemble_context,
     link_entities_to_dbpedia,
     retrieve_wikipedia,
-    assemble_context,
 )
 from sparql_evaluation import (
-    get_schema_for_uris,
-    call_llm,
-    extract_sparql,
-    execute_sparql,
-    sanitize_sparql_uris,
+    ANSWER_PROMPT,
     SPARQL_GEN_PROMPT,
     SPARQL_RETRY_PROMPT,
-    ANSWER_PROMPT,
+    call_llm,
+    execute_sparql,
+    extract_sparql,
+    get_schema_for_uris,
+    sanitize_sparql_uris,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,8 +106,10 @@ RULES:
 5. Return ?entity and ?label columns
 6. Include the seed entities themselves in the results
 7. Use UNION to combine multiple relation paths
-8. Add LIMIT 10
-9. Generate ONLY the SPARQL query, no explanation
+8. For questions about relatives (father, mother, parent, spouse, child):
+   use dbo:parent, dbp:father, dbp:mother, dbo:spouse, dbo:child to find the relative entity
+9. Add LIMIT 6
+10. Generate ONLY the SPARQL query, no explanation
 
 EXAMPLE for "Who directed Inception?":
 SELECT DISTINCT ?entity ?label WHERE {{
@@ -116,7 +118,7 @@ SELECT DISTINCT ?entity ?label WHERE {{
   UNION
   {{ <http://dbpedia.org/resource/Inception> dbo:director ?entity .
      ?entity rdfs:label ?label . FILTER(LANG(?label) = "en") }}
-}} LIMIT 10"""
+}} LIMIT 6"""
 
 SPARQL_DECOMPOSE_PROMPT = """You are a SPARQL expert for DBpedia. Generate a query for ONE entity relevant to a comparison question.
 
@@ -195,17 +197,27 @@ def _rule_based_route(question: str, schema_ctx: str) -> tuple[str, str] | None:
 
     comparison_words = [
         "earlier", "later", "older", "younger", "first", "before", "after",
+        "same", "both", "more", "less", "longer", "shorter",
     ]
     date_props = {
         "dbo:birthDate", "dbp:birthDate", "dbo:deathDate", "dbp:deathDate",
         "dbo:activeYearsStartYear", "dbp:established", "dbo:foundingYear",
         "dbp:foundingDate", "dbo:releaseDate", "dbp:released",
     }
+    country_props = {
+        "dbo:nationality", "dbp:nationality", "dbo:country", "dbp:country",
+        "dbo:citizenship", "dbp:citizenship", "dbo:birthPlace", "dbp:birthPlace",
+        "dbo:stateOfOrigin", "dbp:placeOfBirth",
+    }
 
     # Comparison + date properties on the entity itself -> SPARQL
     if any(w in q_lower for w in comparison_words):
         if actual_props & date_props:
             return ("SPARQL", "rule:direct_date_comparison")
+        # "same country / nationality" comparisons
+        country_keywords = ["country", "nationality", "citizen", "born in"]
+        if any(kw in q_lower for kw in country_keywords) and actual_props & country_props:
+            return ("SPARQL", "rule:direct_country_comparison")
 
     # Bridge chain validation: verify the relationship word maps to a target class
     # whose properties are relevant to the question (replaces blind class+word check)
@@ -279,24 +291,36 @@ def _rule_based_route(question: str, schema_ctx: str) -> tuple[str, str] | None:
     if any(w in q_lower for w in parent_words) and actual_props & parent_props:
         return ("SPARQL", "rule:parent_chain")
 
-    # Direct property lookup
+    # Direct property lookup (includes morphological variants for word boundary matching)
+    _director_props = {"dbo:director", "dbp:director"}
+    _author_props = {"dbo:author", "dbp:author", "dbo:writer", "dbp:writer"}
+    _birth_props = {"dbo:birthDate", "dbp:birthDate", "dbo:birthPlace", "dbp:birthPlace"}
+    _award_props = {"dbo:award", "dbp:award"}
+    _founder_props = {"dbo:foundingYear", "dbp:foundingDate", "dbo:founder", "dbp:founder"}
     direct_map = {
-        "direct": {"dbo:director", "dbp:director"},
-        "wrote": {"dbo:author", "dbp:author", "dbo:writer", "dbp:writer"},
-        "born": {"dbo:birthDate", "dbp:birthDate", "dbo:birthPlace", "dbp:birthPlace"},
+        "direct": _director_props,
+        "directed": _director_props,
+        "director": _director_props,
+        "wrote": _author_props,
+        "written": _author_props,
+        "author": _author_props,
+        "born": _birth_props,
         "died": {"dbo:deathDate", "dbp:deathDate", "dbo:deathPlace"},
         "capital": {"dbo:capital", "dbp:capital"},
         "population": {"dbo:populationTotal", "dbp:population"},
         "spouse": {"dbo:spouse", "dbp:spouse"},
-        "founded": {"dbo:foundingYear", "dbp:foundingDate", "dbo:founder", "dbp:founder"},
+        "married": {"dbo:spouse", "dbp:spouse"},
+        "founded": _founder_props,
+        "founder": _founder_props,
         "nationality": {"dbo:nationality", "dbp:nationality", "dbo:citizenship"},
         "father": {"dbo:parent", "dbp:father"},
         "mother": {"dbo:parent", "dbp:mother"},
-        "award": {"dbo:award", "dbp:award"},
+        "award": _award_props,
+        "awarded": _award_props,
         "occupation": {"dbo:occupation", "dbp:occupation"},
     }
     for keyword, props in direct_map.items():
-        if keyword in q_lower and actual_props & props:
+        if re.search(rf"\b{keyword}\b", q_lower) and actual_props & props:
             return ("SPARQL", "rule:direct_property")
 
     return None  # inconclusive — let LLM decide
@@ -440,6 +464,8 @@ def _sparql_neighbors(entities: list[Entity],
 def _sparql_results_to_entities(results: list[dict],
                                 seed_uris: set[str]) -> list[Entity]:
     """Convert SPARQL context query results to Entity objects."""
+    from urllib.parse import quote
+
     entities = []
     seen = set()
     for row in results:
@@ -449,12 +475,14 @@ def _sparql_results_to_entities(results: list[dict],
         for key in ("entity", "related", "neighbor", "uri", "s", "o"):
             if key in row and row[key]:
                 val = row[key]
-                # execute_sparql converts URIs to local names (last segment)
-                # Reconstruct full URI
                 if val.startswith("http://dbpedia.org/resource/"):
-                    uri = val
+                    uri = val  # full URI — use directly, no re-encoding
                 elif "/" not in val and val.strip():
-                    uri = f"http://dbpedia.org/resource/{val.replace(' ', '_')}"
+                    # Reconstructed local name from execute_sparql's deconstruction
+                    local_name = val.replace(" ", "_")
+                    # DBpedia convention: keep (), ', , unencoded (RFC 2396 §2.4.3)
+                    encoded = quote(local_name, safe="/:@!$&'()*+,;=-._~%")
+                    uri = f"http://dbpedia.org/resource/{encoded}"
                 if uri:
                     break
         for key in ("label", "entityLabel", "name"):
@@ -509,7 +537,7 @@ def _find_context_entities(question: str, entities: list[Entity],
         if verbose:
             print(f"  Context SPARQL:\n    {sparql_query[:300]}")
 
-        results, err = execute_sparql(sparql_query)
+        results, err = execute_sparql(sparql_query, preserve_uris=True)
         if verbose:
             status = f"{len(results)} rows"
             if err:
@@ -527,36 +555,16 @@ def _find_context_entities(question: str, entities: list[Entity],
             retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
             if verbose:
                 print(f"  Retry SPARQL:\n    {retry_query[:300]}")
-            results2, err2 = execute_sparql(retry_query)
+            results2, err2 = execute_sparql(retry_query, preserve_uris=True)
             if verbose:
                 print(f"  Retry results: {len(results2)} rows")
             if results2:
                 results = results2
 
-        # Convert to entities
+        # Convert to entities — trust all LLM SPARQL results (no word-overlap
+        # filter). The SPARQL prompt already targets relevant relations and has
+        # LIMIT 6; downstream assemble_context() caps total chars at 12K.
         context_entities = _sparql_results_to_entities(results, seed_uris)
-
-        # Relevance filter: keep entities whose labels share words with question/seeds
-        q_words = {w.strip("?.,!:;\"'").lower() for w in question.split()
-                   if len(w.strip("?.,!:;\"'")) > 2}
-        seed_words = set()
-        for e in entities:
-            seed_words.update(w.lower() for w in e.label.split() if len(w) > 2)
-        relevance_words = q_words | seed_words
-
-        filtered = []
-        for e in context_entities:
-            if e.uri in seed_uris:
-                filtered.append(e)
-                continue
-            label_words = {w.lower().strip("(),") for w in e.label.split()
-                           if len(w.strip("(),")) > 2}
-            if label_words & relevance_words:
-                filtered.append(e)
-        if verbose and len(filtered) < len(context_entities):
-            dropped = len(context_entities) - len(filtered)
-            print(f"  Filtered: dropped {dropped} irrelevant entities")
-        context_entities = filtered
         used_llm_sparql = True
 
     # --- Tier 2: SPARQL neighbor fallback (if LLM SPARQL found no new entities) ---
@@ -600,7 +608,7 @@ def hybrid_answer(question: str, api_key: str,
                   model: str = "llama-3.3-70b-versatile",
                   verbose: bool = False,
                   llm_client=None, linker=None,
-                  kg_client=None, schema_disc=None) -> tuple[str, str]:
+                  kg_client=None, schema_disc=None) -> HybridResult:
     """Schema-routed hybrid QA: SPARQL when schema supports it, text otherwise.
 
     Args:
@@ -713,7 +721,9 @@ def hybrid_answer(question: str, api_key: str,
             answer_prompt = ANSWER_PROMPT.format(
                 question=question, results=fmt_results,
             )
-            sparql_answer = call_llm(llm_client, answer_prompt, model).strip()
+            sparql_answer = extract_final_answer(
+                call_llm(llm_client, answer_prompt, model)
+            )
             if verbose:
                 print(f"  SPARQL answer: {sparql_answer}")
 
@@ -746,8 +756,13 @@ def hybrid_answer(question: str, api_key: str,
             print("  No Wikipedia text retrieved.")
         return HybridResult("Could not find answer", method_label, route_source, sparql_fallback)
 
-    # Section extraction and context assembly
-    context, filtered_texts = assemble_context(raw_texts, question, verbose=verbose)
+    # Section extraction and context assembly (seed entities get budget priority)
+    seed_titles = {
+        uri_to_wiki_title(e.uri) for e in entities if e.uri and "/resource/" in e.uri
+    }
+    context, filtered_texts = assemble_context(
+        raw_texts, question, seed_titles=seed_titles, verbose=verbose,
+    )
 
     # LLM reasoning
     if verbose:
@@ -759,9 +774,7 @@ def hybrid_answer(question: str, api_key: str,
     prompt = TEXT_REASON_PROMPT.format(question=question, context=context)
     response = call_llm(llm_client, prompt, model)
 
-    answer = response or "Could not generate answer"
-    if "FINAL ANSWER:" in answer:
-        answer = answer.split("FINAL ANSWER:")[-1].strip()
+    answer = extract_final_answer(response) if response else "Could not generate answer"
 
     if verbose:
         fb_tag = " [sparql_fallback]" if sparql_fallback else ""
