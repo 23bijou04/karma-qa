@@ -53,7 +53,7 @@ class TestContextEntityRetention:
             None,  # no error
         )
 
-        result = _find_context_entities(
+        result, _ = _find_context_entities(
             question=question,
             entities=[seed],
             schema_ctx="Entity: Inception\n  dbo:director -> Person",
@@ -98,7 +98,7 @@ class TestContextEntityRetention:
             None,
         )
 
-        result = _find_context_entities(
+        result, _ = _find_context_entities(
             question=question,
             entities=[seed],
             schema_ctx="Entity: Inception\n  dbo:director -> Person: birthPlace",
@@ -154,7 +154,7 @@ class TestContextEntityRetention:
             }
         }
 
-        result = _find_context_entities(
+        result, _ = _find_context_entities(
             question=question,
             entities=[seed],
             schema_ctx="Entity: Inception\n  dbo:director -> Person",

@@ -31,6 +31,7 @@ class Entity:
     abstract: Optional[str] = None
     confidence: float = 1.0
     source: str = "dbpedia"  # dbpedia, spotlight, sparql
+    discovery_relation: Optional[str] = None  # predicate that discovered this entity
 
     @property
     def local_name(self) -> str:
@@ -97,6 +98,8 @@ class HybridResult:
     """Result from the hybrid QA pipeline."""
 
     answer: str
-    method: str  # "sparql" or "text"
+    method: str  # "sparql", "text", or "decomposed"
     route_source: str = ""  # "rule:*", "llm", "no_schema_fallback"
     sparql_fallback: bool = False  # True if routed SPARQL but fell back to text
+    sparql_query: Optional[str] = None  # executed SPARQL query (provenance)
+    kg_context: str = ""  # formatted KG facts injected into text prompt

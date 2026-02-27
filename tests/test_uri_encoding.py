@@ -2,7 +2,6 @@
 
 from urllib.parse import quote
 
-
 # The safe chars used in _sparql_results_to_entities and entity_to_uri
 SAFE_CHARS = "/:@!$&'()*+,;=-._~%"
 
@@ -64,7 +63,8 @@ class TestSparqlResultsToEntities:
 class TestExecuteSparqlPreserveURIs:
     def test_preserve_uris_default_false(self):
         """Default preserve_uris=False still works (backward compatibility)."""
-        from sparql_evaluation import execute_sparql
         import inspect
+
+        from sparql_evaluation import execute_sparql
         sig = inspect.signature(execute_sparql)
         assert sig.parameters["preserve_uris"].default is False

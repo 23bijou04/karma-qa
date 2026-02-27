@@ -1,7 +1,12 @@
 """Tests for 2-hop chain routing rules and comparison question detection."""
 
 from dbpedia_qa.models import Entity
-from hybrid_qa import _is_comparison_question, _parse_2hop_chains, _rule_based_route
+from hybrid_qa import (
+    ROUTE_PROMPT,
+    _is_comparison_question,
+    _parse_2hop_chains,
+    _rule_based_route,
+)
 
 SAMPLE_FILM_SCHEMA = """Entity: Inception
 URI: <http://dbpedia.org/resource/Inception>
@@ -235,3 +240,41 @@ Actual properties found:
         # The key check: if it routes, it should be a valid SPARQL route.
         if result is not None:
             assert result[0] == "SPARQL"
+
+
+class TestRoutePromptContract:
+    """Verify ROUTE_PROMPT placeholders and format contract."""
+
+    def test_prompt_has_required_placeholders(self):
+        assert "{schema}" in ROUTE_PROMPT
+        assert "{question}" in ROUTE_PROMPT
+        assert "{hint}" in ROUTE_PROMPT
+
+    def test_prompt_mentions_2hop_reasoning(self):
+        lower = ROUTE_PROMPT.lower()
+        assert "2-hop" in lower or "chain" in lower
+
+    def test_prompt_format_with_hint(self):
+        result = ROUTE_PROMPT.format(
+            schema="Entity: Foo\n  dbo: bar",
+            question="Who is Foo?",
+            hint="Schema analysis suggests: rule:direct_property (SPARQL likely feasible)",
+        )
+        assert "Who is Foo?" in result
+        assert "rule:direct_property" in result
+
+    def test_prompt_format_without_hint(self):
+        result = ROUTE_PROMPT.format(
+            schema="Entity: Foo\n  dbo: bar",
+            question="Who is Foo?",
+            hint="",
+        )
+        assert "Who is Foo?" in result
+
+    def test_prompt_format_with_escaped_braces(self):
+        """Schema or question with curly braces must be escaped before .format()."""
+        safe_schema = "Entity: {Foo}".replace("{", "{{").replace("}", "}}")
+        result = ROUTE_PROMPT.format(
+            schema=safe_schema, question="Who is Foo?", hint="",
+        )
+        assert "{Foo}" in result

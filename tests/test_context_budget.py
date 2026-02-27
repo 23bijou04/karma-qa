@@ -1,6 +1,6 @@
 """Tests for Case 11: Priority-based context budget allocation."""
 
-from graphrag_wiki import assemble_context, MAX_CONTEXT_CHARS, MAX_CHARS_PER_PAGE
+from graphrag_wiki import MAX_CHARS_PER_PAGE, assemble_context
 
 
 class TestSeedPriority:
@@ -67,3 +67,59 @@ class TestSeedPriority:
         )
         # Should work without errors
         assert len(context) > 0
+
+
+class TestBridgeBudgetFix:
+    """Tests for bridge-question budget allocation (seed_titles = bridge entities)."""
+
+    def test_bridge_seed_titles_get_priority_budget(self):
+        """When bridge entities are passed as seed_titles, they get >= MAX_CHARS_PER_PAGE."""
+        raw_texts = {
+            "Film A": "f " * 5000,       # 10K chars -- original Spotlight entity
+            "Film B": "g " * 5000,       # original Spotlight entity
+            "Director X": "d " * 5000,   # bridge entity (answer carrier)
+            "Director Y": "e " * 5000,   # bridge entity (answer carrier)
+        }
+        # After the fix, bridge entities become the seeds
+        seed_titles = {"Director X", "Director Y"}
+
+        context, filtered = assemble_context(
+            raw_texts, "Which director was born earlier?", seed_titles=seed_titles,
+        )
+        for director in ("Director X", "Director Y"):
+            assert director in filtered, f"{director} must be in filtered texts"
+            assert len(filtered[director]) >= MAX_CHARS_PER_PAGE, (
+                f"{director} should get >= {MAX_CHARS_PER_PAGE} chars, got {len(filtered[director])}"
+            )
+
+    def test_empty_seed_titles_uniform_budget(self):
+        """Empty set seed_titles produces uniform budget (no bridge entities found)."""
+        raw_texts = {
+            "Page A": "a " * 3000,
+            "Page B": "b " * 3000,
+        }
+        seed_titles = set()  # explicitly empty
+
+        context, filtered = assemble_context(
+            raw_texts, "test question", seed_titles=seed_titles,
+        )
+        assert len(context) > 0
+        # Both pages should be present (uniform budget, no priority)
+        assert len(filtered) == 2
+
+    def test_bridge_pages_ordered_before_original_seeds(self):
+        """Bridge entities (as seeds) appear before film pages in assembled context."""
+        raw_texts = {
+            "Film A": "Some film content with keyword director.",
+            "Director X": "Director biography with keyword born earlier.",
+        }
+        seed_titles = {"Director X"}  # bridge entity is the seed
+
+        context, filtered = assemble_context(
+            raw_texts, "Which director was born earlier?", seed_titles=seed_titles,
+        )
+        dir_pos = context.find("Director X")
+        film_pos = context.find("Film A")
+        assert dir_pos >= 0, "Director page must appear in context"
+        if film_pos >= 0:
+            assert dir_pos < film_pos, "Director (seed) must appear before Film (bridge)"

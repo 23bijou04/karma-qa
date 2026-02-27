@@ -4,8 +4,6 @@ from unittest.mock import MagicMock
 
 from dbpedia_qa.dbpedia.entity_linker import (
     DBpediaEntityLinker,
-    RELATION_TYPE_HINTS,
-    TYPE_HINTS,
 )
 from dbpedia_qa.models import Entity
 

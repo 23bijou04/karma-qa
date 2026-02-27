@@ -56,6 +56,25 @@ STOPWORDS = {
     "after", "before", "between", "about", "into", "through",
 }
 
+# Relation-to-section mapping: when an entity was discovered via a specific
+# predicate, paragraphs containing these header/topic keywords get 2x score.
+RELATION_SECTION_BOOST = {
+    "director": ["early life", "personal life", "career", "biography"],
+    "producer": ["early life", "career", "biography"],
+    "author": ["early life", "career", "biography", "works"],
+    "writer": ["early life", "career", "biography"],
+    "starring": ["early life", "career", "filmography"],
+    "birthPlace": ["early life", "born", "birth", "geography"],
+    "birthDate": ["early life", "born", "birth", "biography"],
+    "deathPlace": ["death", "died", "later life"],
+    "deathDate": ["death", "died", "later life"],
+    "parent": ["early life", "family", "personal life"],
+    "spouse": ["personal life", "family", "marriage"],
+    "country": ["geography", "politics", "government"],
+    "foundedBy": ["history", "founding"],
+    "award": ["awards", "honors", "career"],
+}
+
 
 class _CircuitBreaker:
     """Lightweight circuit breaker for external services."""
@@ -332,6 +351,7 @@ def explore_kg(entities: list[Entity], client: DBpediaSPARQLClient,
             label = uri_to_wiki_title(neighbor_uri)
             all_entities.append(Entity(
                 uri=neighbor_uri, label=label, source="kg_explore",
+                discovery_relation=relation_name,
             ))
             seen_uris.add(neighbor_uri)
 
@@ -371,7 +391,8 @@ def _score_chunk(chunk: str, keywords: list[str],
 
 
 def extract_relevant_sections(text: str, keywords: list[str],
-                              char_budget: int = MAX_CHARS_PER_PAGE) -> str:
+                              char_budget: int = MAX_CHARS_PER_PAGE,
+                              relation_hint: str | None = None) -> str:
     """Extract text ranked by keyword density, sentence-level for long blocks.
 
     1. Split into paragraphs (double-newline boundaries).
@@ -410,6 +431,11 @@ def extract_relevant_sections(text: str, keywords: list[str],
         # Keep if: 2+ keyword hits, or 1 rare keyword hit
         if len(hits) >= 2 or has_rare:
             score = sum(2 if kw.lower() in rare_keywords else 1 for kw in hits)
+            # Relation-guided boost: 2x for paragraphs matching discovery relation
+            if relation_hint and relation_hint in RELATION_SECTION_BOOST:
+                boost_terms = RELATION_SECTION_BOOST[relation_hint]
+                if any(term in para_lower for term in boost_terms):
+                    score *= 2
             scored.append((score, para))
 
     # Fallback: if density filter found nothing, use any single-keyword match
@@ -418,7 +444,12 @@ def extract_relevant_sections(text: str, keywords: list[str],
             para_lower = para.lower()
             hits = [kw for kw in keywords if kw.lower() in para_lower]
             if hits:
-                scored.append((len(hits), para))
+                score = len(hits)
+                if relation_hint and relation_hint in RELATION_SECTION_BOOST:
+                    boost_terms = RELATION_SECTION_BOOST[relation_hint]
+                    if any(term in para_lower for term in boost_terms):
+                        score *= 2
+                scored.append((score, para))
 
     if not scored:
         return text[:char_budget]
@@ -614,6 +645,8 @@ def assemble_context(
     raw_texts: dict[str, str],
     question: str,
     seed_titles: set[str] | None = None,
+    kg_facts: str = "",
+    relation_hints: dict | None = None,
     verbose: bool = False,
 ) -> tuple[str, dict[str, str]]:
     """Extract relevant sections, rank pages, and assemble LLM context.
@@ -622,6 +655,8 @@ def assemble_context(
         raw_texts: {page_title: full_wiki_text}
         question: The question to answer
         seed_titles: Titles of seed entity pages (get 60% budget priority)
+        kg_facts: Formatted KG facts to prepend (counted against budget)
+        relation_hints: {page_title: relation_name} for section boosting
         verbose: Print progress
 
     Returns:
@@ -653,7 +688,8 @@ def assemble_context(
     filtered_texts = {}
     for title, full_text in raw_texts.items():
         budget = seed_per_page if title in seed_pages else bridge_per_page
-        relevant = extract_relevant_sections(full_text, q_keywords, budget)
+        hint = relation_hints.get(title) if relation_hints else None
+        relevant = extract_relevant_sections(full_text, q_keywords, budget, hint)
         if relevant:
             filtered_texts[title] = relevant
         if verbose:
@@ -678,8 +714,10 @@ def assemble_context(
     )
     ranked_pages = seed_ranked + bridge_ranked
 
+    # Reserve space for kg_facts (injected by prompt template, not here)
     context_parts = []
-    total_chars = 0
+    total_chars = len(kg_facts) if kg_facts else 0
+
     for title, text in ranked_pages:
         entry = f"=== {title} ===\n{text}"
         if total_chars + len(entry) > MAX_CONTEXT_CHARS:

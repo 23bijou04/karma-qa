@@ -192,6 +192,8 @@ def main():
             record["method"] = result.method
             record["route_source"] = result.route_source
             record["sparql_fallback"] = result.sparql_fallback
+            record["sparql_query"] = getattr(result, "sparql_query", None) or ""
+            record["kg_context"] = (getattr(result, "kg_context", None) or "")[:200]
             record["error"] = ""
         except Exception as e:
             record["raw_answer"] = ""
@@ -199,6 +201,8 @@ def main():
             record["method"] = "error"
             record["route_source"] = ""
             record["sparql_fallback"] = False
+            record["sparql_query"] = ""
+            record["kg_context"] = ""
             record["error"] = str(e)
 
         # Compute metrics

@@ -34,10 +34,10 @@ if _parent not in sys.path:
 
 from groq import Groq
 
+from ablation_study_v3.wiki_utils import uri_to_wiki_title
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
 from dbpedia_qa.models import Entity, HybridResult, extract_final_answer
-from ablation_study_v3.wiki_utils import uri_to_wiki_title
 from graphrag_wiki import (
     assemble_context,
     link_entities_to_dbpedia,
@@ -60,33 +60,40 @@ logger = logging.getLogger(__name__)
 # Prompts
 # ---------------------------------------------------------------------------
 
-TEXT_REASON_PROMPT = """Answer this question using ONLY the Wikipedia text below.
+TEXT_REASON_PROMPT = """Answer this question using the sources below.
 
 Question: {question}
 
-Wikipedia text:
+{kg_facts}Wikipedia text:
 {context}
 
 Instructions:
-- Use ONLY facts from the text above
+- Knowledge graph facts (if present) are verified structured data — trust them
+- Use Wikipedia text to fill gaps not covered by KG facts
 - Show brief step-by-step reasoning
 - End with exactly: FINAL ANSWER: <answer>
 """
 
-ROUTE_PROMPT = """Given a question and DBpedia entity schemas, decide the best route.
+ROUTE_PROMPT = """You are a knowledge graph query router for DBpedia. \
+Decide if this question can be answered via SPARQL.
 
 {schema}
 
 QUESTION: {question}
-
-DECISION RULES:
-- SPARQL if the schema has properties RELATED to the question (exact match not required)
-- Comparison questions (older/younger/earlier/later/first/last) with ANY date property -> SPARQL
-- Relationship properties (director/author/spouse/parent) with matching property -> SPARQL
-- If the schema shows "2-Hop chains", use them:
-  e.g., dbo:director -> Person: birthDate means you can compare directors' birth dates via SPARQL
-- Questions about a person's relative (father/mother) + any property -> SPARQL
-- Choose TEXT only if NO relevant properties exist in the schema at all
+{hint}
+Reasoning steps:
+1. What information does this question need? \
+(a date, a name, a place, a comparison, etc.)
+2. What property or relationship provides that information? \
+(e.g., birthDate, director, foundedBy, nationality)
+3. Does the schema above contain that property, \
+or a 2-hop chain that leads to it?
+   - Direct: the property exists on the entity \
+(e.g., dbo:birthDate in "Actual properties")
+   - 2-hop: a chain exists \
+(e.g., "dbo:director -> Person: birthDate")
+4. If a complete property path exists: SPARQL
+5. If the required property is absent or the chain is incomplete: TEXT
 
 Reply with EXACTLY one word: SPARQL or TEXT"""
 
@@ -405,6 +412,266 @@ def _try_per_entity_sparql(question: str, entities: list[Entity],
     return per_entity_results
 
 
+# ---------------------------------------------------------------------------
+# Compositional decomposition (Phase 2)
+# ---------------------------------------------------------------------------
+
+_ROLE_TO_DBO = {
+    "director": "dbo:director", "producer": "dbo:producer",
+    "author": "dbo:author", "writer": "dbo:writer",
+    "composer": "dbo:musicComposer", "founder": "dbo:foundedBy",
+    "starring": "dbo:starring",
+    # Family roles
+    "father": "dbo:parent", "mother": "dbo:parent",
+    "husband": "dbo:spouse", "wife": "dbo:spouse",
+    "spouse": "dbo:spouse",
+}
+_PROP_TO_DBO = {
+    "born": "dbo:birthPlace", "birth": "dbo:birthPlace",
+    "birthplace": "dbo:birthPlace",
+    "die": "dbo:deathPlace", "died": "dbo:deathPlace",
+    "deathplace": "dbo:deathPlace",
+    "buried": "dbo:deathPlace",
+    "educated": "dbo:almaMater", "graduate": "dbo:almaMater",
+    "graduated": "dbo:almaMater",
+    "nationality": "dbo:nationality", "country": "dbo:nationality",
+    # Multi-word phrases (extracted by possessive patterns)
+    "place of birth": "dbo:birthPlace",
+    "place of death": "dbo:deathPlace",
+    "married": "dbo:spouse",
+    "work": "dbo:occupation", "worked": "dbo:occupation",
+    "live": "dbo:residence", "lived": "dbo:residence",
+}
+_PROP_DATE_DBO = {
+    "born": "dbo:birthDate", "die": "dbo:deathDate", "died": "dbo:deathDate",
+    "birthdate": "dbo:birthDate",
+    "deathdate": "dbo:deathDate",
+    "date of birth": "dbo:birthDate",
+    "date of death": "dbo:deathDate",
+}
+
+
+def _decompose_compositional(
+    question: str, entities: list,
+) -> tuple[str, str, str] | None:
+    """Decompose compositional question into (role, entity_name, property_word).
+
+    Returns None if question doesn't match known patterns.
+    """
+    q = question.strip().rstrip("?")
+    # Pattern 1: "Where/When was the director of Inception born"
+    m = re.match(
+        r"(?:where|when|how)\s+(?:was|is|did)\s+the\s+(\w+)\s+of\s+"
+        r"(?:the\s+(?:film|movie|book|novel|show|series)\s+)?"
+        r"(.+?)\s+(born|die|died|buried|educated|graduate\w*)",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1), m.group(2).strip(), m.group(3)
+    # Pattern 2: "What is the birthplace of the director of X"
+    m = re.match(
+        r"what\s+(?:is|was)\s+the\s+(\w+)\s+of\s+the\s+(\w+)\s+of\s+(.+)",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(2), m.group(3).strip(), m.group(1)
+
+    # --- Possessive patterns (X's <role>) ---
+
+    # Pattern 3: "Where/When was/did X's <role> born/die/graduate..."
+    m = re.match(
+        r"(?:where|when|how|why)\s+(?:was|is|did|were)\s+"
+        r"(.+?)'s\s+(\w+)\s+(born|die|died|buried|educated|graduate\w*"
+        r"|live\w*|married|work\w*)",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(2), m.group(1).strip(), m.group(3)
+
+    # Pattern 4: "What is/was the <prop-phrase> of X's <role>"
+    # Greedy (.+) for prop so "place of birth" isn't split at first "of"
+    m = re.match(
+        r"what\s+(?:is|was)\s+(?:the\s+)?(.+)\s+of\s+(.+?)'s\s+(\w+)\s*$",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(3), m.group(2).strip(), m.group(1).strip()
+
+    # Pattern 5: "What <noun> is X's <role>"
+    m = re.match(
+        r"what\s+(\w+)\s+(?:is|was)\s+(.+?)'s\s+(\w+)\s*$",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(3), m.group(2).strip(), m.group(1)
+
+    # Pattern 6: "Which country X's <role> is from"
+    m = re.match(
+        r"which\s+(\w+)\s+(.+?)'s\s+(\w+)\s+is\s+from",
+        q, re.IGNORECASE,
+    )
+    if m:
+        return m.group(3), m.group(2).strip(), m.group(1)
+
+    return None
+
+
+def _try_compositional_decomposition(
+    question: str, entities: list[Entity],
+    schema_ctx: str, llm_client, model: str,
+    kg_client: DBpediaSPARQLClient,
+    verbose: bool = False,
+) -> str | None:
+    """Hop-by-hop SPARQL decomposition for compositional questions.
+
+    Returns answer string if successful, None otherwise.
+    """
+    from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+
+    decomp = _decompose_compositional(question, entities)
+    if not decomp:
+        return None
+
+    role, entity_name, prop_word = decomp
+    role_lower = role.lower()
+    prop_lower = prop_word.lower()
+
+    sep = "=" * 70
+    if verbose:
+        print(f"\n{sep}")
+        print("STEP 4d: Compositional Decomposition")
+        print(sep)
+        print(f"  Role: {role}, Entity: {entity_name}, Property: {prop_word}")
+
+    # Map role to DBpedia property
+    role_dbo = _ROLE_TO_DBO.get(role_lower)
+    if not role_dbo:
+        if verbose:
+            print(f"  No DBO mapping for role '{role}', skipping decomposition")
+        return None
+
+    # Find seed entity URI
+    seed_uri = None
+    for e in entities:
+        if e.uri and (entity_name.lower() in e.label.lower()
+                      or e.label.lower() in entity_name.lower()):
+            seed_uri = e.uri
+            break
+    if not seed_uri and entities:
+        seed_uri = entities[0].uri
+
+    if not seed_uri:
+        return None
+
+    # Hop 1: find bridge entity via role relation
+    safe_uri = escape_sparql_uri(seed_uri)
+    hop1_query = (
+        f"SELECT ?bridge ?label WHERE {{ "
+        f"<{safe_uri}> {role_dbo} ?bridge . "
+        f"?bridge rdfs:label ?label . FILTER(LANG(?label) = \"en\") "
+        f"}} LIMIT 5"
+    )
+    if verbose:
+        print(f"  Hop 1 SPARQL: {hop1_query[:200]}")
+
+    hop1_results, hop1_err = execute_sparql(hop1_query, preserve_uris=True)
+    if verbose:
+        print(f"  Hop 1: {len(hop1_results)} results"
+              + (f", error: {hop1_err[:60]}" if hop1_err else ""))
+
+    if not hop1_results:
+        if verbose:
+            print("  Hop 1 failed — no bridge entity found")
+        return None
+
+    bridge_uri = None
+    bridge_label = None
+    for row in hop1_results:
+        for key in ("bridge", "entity", "uri"):
+            if key in row and row[key] and row[key].startswith("http://"):
+                bridge_uri = row[key]
+                break
+        for key in ("label", "name"):
+            if key in row and row[key]:
+                bridge_label = row[key]
+                break
+        if bridge_uri:
+            break
+
+    if not bridge_uri:
+        return None
+
+    if verbose:
+        print(f"  Bridge entity: {bridge_label} ({bridge_uri})")
+
+    # Hop 2: find property on bridge entity
+    # Try both place and date mappings
+    prop_dbo = _PROP_TO_DBO.get(prop_lower)
+    date_dbo = _PROP_DATE_DBO.get(prop_lower)
+
+    hop2_props = []
+    if prop_dbo:
+        hop2_props.append(prop_dbo)
+    if date_dbo:
+        hop2_props.append(date_dbo)
+
+    if not hop2_props:
+        if verbose:
+            print(f"  No DBO mapping for property '{prop_word}'")
+        return None
+
+    safe_bridge = escape_sparql_uri(bridge_uri)
+    for dbo_prop in hop2_props:
+        hop2_query = (
+            f"SELECT ?value WHERE {{ "
+            f"<{safe_bridge}> {dbo_prop} ?value "
+            f"}} LIMIT 5"
+        )
+        if verbose:
+            print(f"  Hop 2 SPARQL ({dbo_prop}): {hop2_query[:200]}")
+
+        hop2_results, hop2_err = execute_sparql(hop2_query)
+        if hop2_results:
+            values = []
+            for row in hop2_results:
+                for val in row.values():
+                    if val:
+                        values.append(str(val))
+            if values:
+                answer = values[0]
+                if verbose:
+                    print(f"  Hop 2 answer: {answer}")
+                return answer
+
+    # Hop 2 SPARQL failed — fall to targeted text retrieval for bridge entity
+    if verbose:
+        print("  Hop 2 SPARQL failed — trying targeted text retrieval")
+
+    hop1_facts = _format_kg_facts([{
+        "role": role, "entity": entity_name,
+        "bridge": bridge_label or bridge_uri.split("/")[-1].replace("_", " "),
+    }])
+
+    bridge_entity = Entity(
+        uri=bridge_uri,
+        label=bridge_label or bridge_uri.split("/")[-1].replace("_", " "),
+        source="decomposed",
+        discovery_relation=role_lower,
+    )
+    raw_texts = retrieve_wikipedia([bridge_entity], question, verbose=verbose)
+    if not raw_texts:
+        return None
+
+    context, _ = assemble_context(
+        raw_texts, question, kg_facts=hop1_facts, verbose=verbose,
+    )
+    prompt = TEXT_REASON_PROMPT.format(
+        question=question, context=context, kg_facts=hop1_facts,
+    )
+    response = call_llm(llm_client, prompt, model)
+    return extract_final_answer(response) if response else None
+
+
 def _sparql_neighbors(entities: list[Entity],
                       kg_client: DBpediaSPARQLClient,
                       limit_per_entity: int = 10,
@@ -453,9 +720,12 @@ def _sparql_neighbors(entities: list[Entity],
             label = b.get("label", {}).get("value", "")
             if not label:
                 label = unquote(uri.split("/")[-1]).replace("_", " ")
-            all_entities.append(Entity(uri=uri, label=label, source="sparql_neighbor"))
+            prop = b["p"]["value"].split("/")[-1]
+            all_entities.append(Entity(
+                uri=uri, label=label, source="sparql_neighbor",
+                discovery_relation=prop,
+            ))
             if verbose:
-                prop = b["p"]["value"].split("/")[-1]
                 print(f"    {entity.label} --{prop}--> {label}")
 
     return all_entities
@@ -497,31 +767,70 @@ def _sparql_results_to_entities(results: list[dict],
         if not label:
             label = unquote(uri.split("/")[-1]).replace("_", " ")
 
+        # Extract predicate for discovery_relation
+        relation = None
+        for key in ("p", "relation", "predicate", "property"):
+            if key in row and row[key]:
+                val = row[key]
+                relation = val.split("/")[-1] if "/" in val else val
+                break
+
         source = "seed" if uri in seed_uris else "sparql_context"
-        entities.append(Entity(uri=uri, label=label, source=source))
+        entities.append(Entity(
+            uri=uri, label=label, source=source,
+            discovery_relation=relation,
+        ))
 
     return entities
+
+
+def _format_kg_facts(results: list[dict], max_chars: int = 800) -> str:
+    """Format SPARQL result rows as 'Known facts from KG' text block."""
+    if not results:
+        return ""
+    lines = []
+    header = "Known facts from knowledge graph:\n"
+    total = len(header)
+    for row in results:
+        parts = []
+        for key, val in row.items():
+            if val and not key.startswith("_"):
+                if isinstance(val, str) and val.startswith("http://"):
+                    val = val.split("/")[-1].replace("_", " ")
+                parts.append(f"{key}: {val}")
+        if parts:
+            line = "- " + ", ".join(parts)
+            if total + len(line) + 1 > max_chars:
+                break
+            lines.append(line)
+            total += len(line) + 1
+    if not lines:
+        return ""
+    return header + "\n".join(lines) + "\n\n"
 
 
 # ---------------------------------------------------------------------------
 # Text fallback: LLM-generated context SPARQL
 # ---------------------------------------------------------------------------
 
-def _find_context_entities(question: str, entities: list[Entity],
-                           schema_ctx: str, llm_client, model: str,
-                           kg_client: DBpediaSPARQLClient,
-                           verbose: bool = False) -> list[Entity]:
+def _find_context_entities(
+    question: str, entities: list[Entity],
+    schema_ctx: str, llm_client, model: str,
+    kg_client: DBpediaSPARQLClient,
+    verbose: bool = False,
+) -> tuple[list[Entity], list[dict]]:
     """Find context entities for Wikipedia retrieval.
 
     Two-tier approach:
       1. LLM-generated SPARQL (targeted, may fail)
       2. Simple SPARQL neighbor query (reliable fallback)
-    Returns Entity objects whose Wikipedia pages should be fetched.
+    Returns (entities, sparql_results) — entities for page fetch, raw results for KG facts.
     """
     sep = "=" * 70
     seed_uris = {e.uri for e in entities if e.uri}
 
     context_entities = []
+    ctx_sparql_results: list[dict] = []
     used_llm_sparql = False
 
     # --- Tier 1: LLM-generated context SPARQL (only if schema available) ---
@@ -564,6 +873,7 @@ def _find_context_entities(question: str, entities: list[Entity],
         # Convert to entities — trust all LLM SPARQL results (no word-overlap
         # filter). The SPARQL prompt already targets relevant relations and has
         # LIMIT 6; downstream assemble_context() caps total chars at 12K.
+        ctx_sparql_results = results
         context_entities = _sparql_results_to_entities(results, seed_uris)
         used_llm_sparql = True
 
@@ -584,7 +894,7 @@ def _find_context_entities(question: str, entities: list[Entity],
         )
         if verbose:
             print(f"  Seed: {len(entities)}, Total: {len(context_entities)}")
-        return context_entities
+        return context_entities, []
 
     # Always include seed entities (in case SPARQL missed them)
     seen_uris = {e.uri for e in context_entities}
@@ -597,7 +907,7 @@ def _find_context_entities(question: str, entities: list[Entity],
         for e in context_entities:
             print(f"    - {e.label} [{e.source}]")
 
-    return context_entities
+    return context_entities, ctx_sparql_results
 
 
 # ---------------------------------------------------------------------------
@@ -658,26 +968,41 @@ def hybrid_answer(question: str, api_key: str,
     route = "TEXT"
     route_source = "no_schema_fallback"
     if schema_ctx:
-        # Rule-based first (saves an LLM call when rules are conclusive)
+        # Rule analysis as hint (not hard decision — LLM always makes final call)
         rule_result = _rule_based_route(question, schema_ctx)
         if rule_result:
-            route, route_source = rule_result
-            if verbose:
-                print(f"\n{sep}")
-                print(f"STEP 3: Route Decision → {route} ({route_source})")
-                print(sep)
+            hint = f"\nSchema analysis suggests: {rule_result[1]} (SPARQL likely feasible)\n"
         else:
-            route_prompt = ROUTE_PROMPT.format(schema=schema_ctx, question=question)
-            route_resp = call_llm(llm_client, route_prompt, model).strip().upper()
-            route = "SPARQL" if "SPARQL" in route_resp else "TEXT"
+            hint = ""
+
+        # Escape curly braces in dynamic content to avoid .format() crashes
+        safe_schema = schema_ctx.replace("{", "{{").replace("}", "}}")
+        safe_question = question.replace("{", "{{").replace("}", "}}")
+        route_prompt = ROUTE_PROMPT.format(
+            schema=safe_schema, question=safe_question, hint=hint,
+        )
+        route_resp = call_llm(llm_client, route_prompt, model).strip()
+        route_match = re.search(r'\b(SPARQL|TEXT)\b', route_resp, re.IGNORECASE)
+        route = route_match.group(1).upper() if route_match else "TEXT"
+
+        # Preserve rule route_source for bridge budget detection when LLM agrees
+        if rule_result and route == "SPARQL":
+            route_source = rule_result[1]
+        else:
             route_source = "llm"
-            if verbose:
-                print(f"\n{sep}")
-                print(f"STEP 3: Route Decision → {route} (llm)")
-                print(sep)
-                print(f"  LLM response: {route_resp[:80]}")
+
+        if verbose:
+            print(f"\n{sep}")
+            print(f"STEP 3: Route Decision → {route} ({route_source})")
+            print(sep)
+            if rule_result:
+                print(f"  Rule hint: {rule_result[1]}")
+            print(f"  LLM response: {route_resp[:120]}")
 
     # === Step 4: SPARQL Generation + Execution (only if routed) ===
+    sparql_partial_facts = ""  # KG facts from partial SPARQL (for text injection)
+    executed_sparql_query = ""  # provenance: the SPARQL query that produced the answer
+    decomp_attempted = False
     if route == "SPARQL" and schema_ctx:
         if verbose:
             print(f"\n{sep}")
@@ -687,6 +1012,7 @@ def hybrid_answer(question: str, api_key: str,
         sparql_prompt = SPARQL_GEN_PROMPT.format(schema=schema_ctx, question=question)
         sparql_resp = call_llm(llm_client, sparql_prompt, model)
         sparql_query = sanitize_sparql_uris(extract_sparql(sparql_resp))
+        executed_sparql_query = sparql_query
         if verbose:
             print(f"  Generated SPARQL:\n    {sparql_query[:200]}")
 
@@ -709,12 +1035,38 @@ def hybrid_answer(question: str, api_key: str,
                 print(f"  Retry results: {len(results2)} rows")
             if results2:
                 results = results2
+                executed_sparql_query = retry_query
 
         # Per-entity decomposition for comparison questions (JOIN failure recovery)
         if not results and _is_comparison_question(question, entities):
             results = _try_per_entity_sparql(
                 question, entities, schema_ctx, llm_client, model, verbose,
             )
+
+        # Compositional decomposition for non-comparison questions
+        if not results and not _is_comparison_question(question, entities):
+            decomp_attempted = True
+            decomp_answer = _try_compositional_decomposition(
+                question, entities, schema_ctx, llm_client, model,
+                kg_client, verbose,
+            )
+            if decomp_answer:
+                return HybridResult(
+                    decomp_answer, "decomposed", route_source,
+                    sparql_query="[decomposed]",
+                )
+
+        # Partial SPARQL guard: comparison with data for only 1 entity
+        if results and _is_comparison_question(question, entities):
+            entity_names_in_results = {
+                row.get("entity_name") for row in results if row.get("entity_name")
+            }
+            if len(entity_names_in_results) == 1 and len(entities) >= 2:
+                if verbose:
+                    print(f"  Partial data: only {entity_names_in_results}. "
+                          f"Injecting as KG context, falling to TEXT.")
+                sparql_partial_facts = _format_kg_facts(results)
+                results = []  # force text fallback with partial data preserved
 
         if results:
             fmt_results = json.dumps(results[:20], indent=2)
@@ -735,33 +1087,77 @@ def hybrid_answer(question: str, api_key: str,
             print(sep)
             print(f"  Question: {question}")
             print(f"  Answer:   {sparql_answer}")
-        return HybridResult(sparql_answer, "sparql", route_source)
+        return HybridResult(
+            sparql_answer, "sparql", route_source,
+            sparql_query=executed_sparql_query,
+        )
 
     # === Text Fallback — find context entities + Wikipedia ===
     method_label = "text"
     sparql_fallback = route == "SPARQL"  # originally routed SPARQL but it failed
-    all_entities = _find_context_entities(
+
+    # Compositional decomposition on TEXT route (skip if already tried on SPARQL path)
+    if not decomp_attempted and not _is_comparison_question(question, entities):
+        decomp_answer = _try_compositional_decomposition(
+            question, entities, schema_ctx, llm_client, model,
+            kg_client, verbose,
+        )
+        if decomp_answer:
+            return HybridResult(
+                decomp_answer, "decomposed", route_source,
+                sparql_fallback=sparql_fallback,
+                sparql_query="[decomposed]",
+            )
+
+    all_entities, ctx_sparql_results = _find_context_entities(
         question, entities, schema_ctx, llm_client, model,
         kg_client, verbose,
     )
+
+    # Build KG facts: prefer partial SPARQL facts, then context SPARQL results
+    kg_facts = sparql_partial_facts or _format_kg_facts(ctx_sparql_results)
+
+    # Build relation hints for section boosting (used by Phase 3 if enabled)
+    relation_hints = {}
+    for e in all_entities:
+        if e.discovery_relation and e.uri and "/resource/" in e.uri:
+            title = uri_to_wiki_title(e.uri)
+            relation_hints[title] = e.discovery_relation
 
     # === Wikipedia retrieval (shared by both methods) ===
     if verbose:
         print(f"\n{sep}")
         print("STEP 5: Wikipedia retrieval")
         print(sep)
+        if kg_facts:
+            print(f"  KG facts ({len(kg_facts)} chars) will be injected into prompt")
     raw_texts = retrieve_wikipedia(all_entities, question, verbose=verbose)
     if not raw_texts:
         if verbose:
             print("  No Wikipedia text retrieved.")
-        return HybridResult("Could not find answer", method_label, route_source, sparql_fallback)
+        return HybridResult(
+            "Could not find answer", method_label, route_source,
+            sparql_fallback, kg_context=kg_facts,
+        )
 
     # Section extraction and context assembly (seed entities get budget priority)
-    seed_titles = {
-        uri_to_wiki_title(e.uri) for e in entities if e.uri and "/resource/" in e.uri
-    }
+    if route_source in ("rule:bridge_comparison", "rule:bridge_hop2", "rule:parent_chain"):
+        # Bridge/parent questions: answer is on discovered entities (directors,
+        # parents), not the Spotlight entities (films). Prioritize bridge pages.
+        spotlight_uris = {e.uri for e in entities if e.uri}
+        # When no bridge entities found, seed_titles is empty (falsy) ->
+        # assemble_context uses uniform budget (intended fallback).
+        seed_titles = {
+            uri_to_wiki_title(e.uri) for e in all_entities
+            if e.uri and "/resource/" in e.uri and e.uri not in spotlight_uris
+        }
+    else:
+        seed_titles = {
+            uri_to_wiki_title(e.uri) for e in entities if e.uri and "/resource/" in e.uri
+        }
     context, filtered_texts = assemble_context(
-        raw_texts, question, seed_titles=seed_titles, verbose=verbose,
+        raw_texts, question, seed_titles=seed_titles,
+        kg_facts=kg_facts, relation_hints=relation_hints, verbose=verbose,
     )
 
     # LLM reasoning
@@ -770,8 +1166,12 @@ def hybrid_answer(question: str, api_key: str,
         print("STEP 6: LLM Reasoning over text")
         print(sep)
         print(f"  Context: {len(context)} chars from {len(filtered_texts)} pages")
+        if kg_facts:
+            print(f"  KG facts: {len(kg_facts)} chars injected")
 
-    prompt = TEXT_REASON_PROMPT.format(question=question, context=context)
+    prompt = TEXT_REASON_PROMPT.format(
+        question=question, context=context, kg_facts=kg_facts,
+    )
     response = call_llm(llm_client, prompt, model)
 
     answer = extract_final_answer(response) if response else "Could not generate answer"
@@ -785,7 +1185,10 @@ def hybrid_answer(question: str, api_key: str,
         print(f"  Answer:   {answer}")
         print(f"  Pages:    {len(filtered_texts)} ({', '.join(filtered_texts.keys())})")
 
-    return HybridResult(answer, method_label, route_source, sparql_fallback)
+    return HybridResult(
+        answer, method_label, route_source, sparql_fallback,
+        kg_context=kg_facts,
+    )
 
 
 def main():
