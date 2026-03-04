@@ -338,6 +338,37 @@ def _is_comparison_question(question: str, entities: list[Entity]) -> bool:
     return len(entities) >= 2 and any(w in q_lower for w in comparison_words)
 
 
+def _has_incomplete_entity_coverage(
+    question: str, entities: list[Entity], schema_ctx: str,
+) -> bool:
+    """Check if a comparison question mentions entities not in the schema.
+
+    Detects 'X or Y' / 'X and Y' patterns and checks if all mentioned names
+    have corresponding Entity blocks in the schema context.
+    """
+    q_lower = question.lower()
+    comparison_words = [
+        "earlier", "later", "older", "younger", "first", "before", "after",
+        "more recently", "longer", "shorter", "same", "both",
+    ]
+    if not any(w in q_lower for w in comparison_words):
+        return False
+
+    # Extract candidate entity names from "X or Y" pattern
+    # Match: ", X or Y?" at end of question (common 2WikiMultiHopQA pattern)
+    m = re.search(r',\s*(.+?)\s+or\s+(.+?)\s*\?', question)
+    if not m:
+        return False
+
+    candidates = [m.group(1).strip(), m.group(2).strip()]
+    linked_labels = {e.label.lower() for e in entities}
+
+    for name in candidates:
+        if name.lower() not in linked_labels:
+            return True
+    return False
+
+
 def _sparql_neighbors(entities: list[Entity],
                       kg_client: DBpediaSPARQLClient,
                       limit_per_entity: int = 10,
@@ -528,6 +559,26 @@ def hybrid_answer(question: str, api_key: str,
                 print(f"  ... ({schema_ctx.count(chr(10))} lines total)")
         else:
             print("  (no URIs to query schema for)")
+
+    # === Guard: comparison questions with incomplete entity coverage → LogicRAG ===
+    if schema_ctx and _has_incomplete_entity_coverage(question, entities, schema_ctx):
+        if verbose:
+            print(f"\n{sep}")
+            print("STEP 3: Route Decision → LogicRAG (incomplete entity coverage)")
+            print(sep)
+            linked = [e.label for e in entities]
+            print(f"  Linked entities: {linked}")
+            print("  Question mentions entities not in schema — skipping SPARQL")
+        logicrag_answer = _try_logicrag_decomposition(
+            question, entities, schema_ctx, llm_client, model,
+            linker, kg_client, schema_disc, verbose, debug=debug,
+        )
+        if logicrag_answer:
+            return HybridResult(
+                logicrag_answer, "logicrag_decomposed", "incomplete_coverage",
+                sparql_query="[logicrag_decomposed]",
+            )
+        # LogicRAG failed — fall through to normal TEXT fallback below
 
     # === Step 3: Route Decision — can SPARQL answer this? ===
     sparql_answer = ""

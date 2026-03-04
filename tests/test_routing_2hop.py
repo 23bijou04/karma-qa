@@ -3,6 +3,7 @@
 from dbpedia_qa.models import Entity
 from hybrid_qa import (
     ROUTE_PROMPT,
+    _has_incomplete_entity_coverage,
     _is_comparison_question,
     _parse_2hop_chains,
     _rule_based_route,
@@ -278,3 +279,33 @@ class TestRoutePromptContract:
             schema=safe_schema, question="Who is Foo?", hint="",
         )
         assert "{Foo}" in result
+
+
+class TestIncompleteCoverage:
+    """Tests for _has_incomplete_entity_coverage() guard."""
+
+    def test_detects_missing_entity(self):
+        entities = _make_entities("The Nice Guys")
+        q = "Which film has the director who was born first, Piccoli Fuochi or The Nice Guys?"
+        assert _has_incomplete_entity_coverage(q, entities, "Entity: The Nice Guys")
+
+    def test_complete_coverage_passes(self):
+        entities = _make_entities("Film A", "Film B")
+        q = "Which was released first, Film A or Film B?"
+        assert not _has_incomplete_entity_coverage(q, entities, "Entity: Film A\nEntity: Film B")
+
+    def test_non_comparison_skips(self):
+        entities = _make_entities("X")
+        q = "Who directed X?"
+        assert not _has_incomplete_entity_coverage(q, entities, "Entity: X")
+
+    def test_no_or_pattern_skips(self):
+        entities = _make_entities("Film A")
+        q = "Which film was released first?"
+        assert not _has_incomplete_entity_coverage(q, entities, "Entity: Film A")
+
+    def test_case_insensitive_label_match(self):
+        entities = _make_entities("the nice guys")
+        q = "Which was released first, Film X or The Nice Guys?"
+        # "Film X" is missing, so should return True
+        assert _has_incomplete_entity_coverage(q, entities, "Entity: the nice guys")
