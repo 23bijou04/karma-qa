@@ -1,7 +1,7 @@
 """Tests for 2-hop chain routing rules and comparison question detection."""
 
 from dbpedia_qa.models import Entity
-from hybrid_qa import (
+from routing import (
     ROUTE_PROMPT,
     _has_incomplete_entity_coverage,
     _is_comparison_question,

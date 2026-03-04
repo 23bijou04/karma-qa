@@ -145,9 +145,9 @@ def get_schema_for_uris(schema_disc: SchemaDiscovery,
             lines.append("Actual properties found:")
             dbo_sorted = sorted(actual["dbo"], key=_prop_priority)
             dbp_sorted = sorted(actual["dbp"], key=_prop_priority)
-            for prop in dbo_sorted[:12]:
+            for prop in dbo_sorted[:15]:
                 lines.append(f"  dbo:{prop} -> {values.get(f'dbo:{prop}', '')}")
-            for prop in dbp_sorted[:12]:
+            for prop in dbp_sorted[:15]:
                 lines.append(f"  dbp:{prop} -> {values.get(f'dbp:{prop}', '')}")
 
         sections.append("\n".join(lines))

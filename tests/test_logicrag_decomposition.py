@@ -316,10 +316,6 @@ class TestLogicragSynthesis:
                 })
             if "verified facts" in prompt.lower():
                 return "FINAL ANSWER: Alice directed X and Bob directed Y"
-            if "provide the answer" in prompt.lower():
-                return "FINAL ANSWER: Alice"
-            if "Generate" in prompt and "SPARQL" in prompt:
-                return "SELECT ?answer WHERE { dbr:X dbo:director ?answer }"
             return "FINAL ANSWER: test"
 
         mock_entity = Entity(
@@ -327,15 +323,12 @@ class TestLogicragSynthesis:
         )
 
         with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
-             patch("logicrag_decomposition.execute_sparql",
-                   return_value=([{"answer": "Alice"}], "")), \
-             patch("logicrag_decomposition.sanitize_sparql_uris", side_effect=lambda x: x), \
-             patch("logicrag_decomposition.extract_sparql", side_effect=lambda x: x), \
+             patch("sparql_solver.solve",
+                   return_value=("Alice", "SELECT ...", [])), \
              patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
-             patch("hybrid_qa._rule_based_route", return_value=("SPARQL", "test")), \
-             patch("hybrid_qa._sparql_results_to_entities", return_value=[]), \
-             patch("hybrid_qa.entities_to_schema_dicts", return_value=[]), \
-             patch("hybrid_qa._is_comparison_question", return_value=False):
+             patch("routing._rule_based_route", return_value=("SPARQL", "test")), \
+             patch("routing.entities_to_schema_dicts", return_value=[]), \
+             patch("routing._is_comparison_question", return_value=False):
             result = _try_logicrag_decomposition(
                 "Who directed Film X and who directed Film Y?",
                 [mock_entity], "schema", MagicMock(), "model",
@@ -364,10 +357,6 @@ class TestLogicragSynthesis:
                     ],
                     "dependencies": [[1, 0]],
                 })
-            if "provide the answer" in prompt.lower():
-                return "FINAL ANSWER: Christopher Nolan"
-            if "Generate" in prompt and "SPARQL" in prompt:
-                return "SELECT ?answer WHERE { dbr:X dbo:director ?answer }"
             return "FINAL ANSWER: test"
 
         mock_entity = Entity(
@@ -375,25 +364,21 @@ class TestLogicragSynthesis:
             label="Inception", source="test",
         )
 
-        exec_call_count = {"n": 0}
+        solve_call_count = {"n": 0}
 
-        def fake_execute(q, **kwargs):
-            exec_call_count["n"] += 1
-            if exec_call_count["n"] == 1:
-                return [{"answer": "Christopher Nolan"}], ""
-            return [], ""
+        def fake_solve(question, schema, entities, client, model, **kwargs):
+            solve_call_count["n"] += 1
+            if solve_call_count["n"] == 1:
+                return "Christopher Nolan", "SELECT ...", []
+            return None, "", []
 
         with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
-             patch("logicrag_decomposition.execute_sparql",
-                   side_effect=fake_execute), \
-             patch("logicrag_decomposition.sanitize_sparql_uris", side_effect=lambda x: x), \
-             patch("logicrag_decomposition.extract_sparql", side_effect=lambda x: x), \
+             patch("sparql_solver.solve", side_effect=fake_solve), \
+             patch("text_solver.solve", return_value=None), \
              patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
-             patch("logicrag_decomposition.retrieve_wikipedia", return_value={}), \
-             patch("hybrid_qa._rule_based_route", return_value=("SPARQL", "test")), \
-             patch("hybrid_qa._sparql_results_to_entities", return_value=[]), \
-             patch("hybrid_qa.entities_to_schema_dicts", return_value=[]), \
-             patch("hybrid_qa._is_comparison_question", return_value=False):
+             patch("routing._rule_based_route", return_value=("SPARQL", "test")), \
+             patch("routing.entities_to_schema_dicts", return_value=[]), \
+             patch("routing._is_comparison_question", return_value=False):
             result = _try_logicrag_decomposition(
                 "When was the director of Inception born?",
                 [mock_entity], "schema", MagicMock(), "model",

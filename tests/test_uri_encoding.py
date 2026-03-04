@@ -36,7 +36,7 @@ class TestURISafeChars:
 class TestSparqlResultsToEntities:
     def test_apostrophe_roundtrip(self):
         """Entity with apostrophe survives SPARQL result -> Entity roundtrip."""
-        from hybrid_qa import _sparql_results_to_entities
+        from routing import _sparql_results_to_entities
         results = [{"entity": "O'Brien", "label": "O'Brien"}]
         entities = _sparql_results_to_entities(results, set())
         assert len(entities) == 1
@@ -45,7 +45,7 @@ class TestSparqlResultsToEntities:
 
     def test_full_uri_preserved(self):
         """Full DBpedia URI passes through without re-encoding."""
-        from hybrid_qa import _sparql_results_to_entities
+        from routing import _sparql_results_to_entities
         full_uri = "http://dbpedia.org/resource/O'Brien"
         results = [{"entity": full_uri, "label": "O'Brien"}]
         entities = _sparql_results_to_entities(results, set())
@@ -53,7 +53,7 @@ class TestSparqlResultsToEntities:
 
     def test_comma_roundtrip(self):
         """Entity with comma survives roundtrip."""
-        from hybrid_qa import _sparql_results_to_entities
+        from routing import _sparql_results_to_entities
         results = [{"entity": "St. Louis, Missouri", "label": "St. Louis, Missouri"}]
         entities = _sparql_results_to_entities(results, set())
         assert len(entities) == 1

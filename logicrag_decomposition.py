@@ -16,23 +16,23 @@ import sys
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
-from urllib.parse import quote as url_quote, unquote
+from urllib.parse import quote as url_quote
 
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from ablation_study_v3.wiki_utils import uri_to_wiki_title
-from dbpedia_qa.models import Entity, extract_final_answer
-from graphrag_wiki import assemble_context, retrieve_wikipedia
-from sparql_evaluation import (
-    ANSWER_PROMPT,
-    SPARQL_RETRY_PROMPT,
+import sparql_solver  # noqa: E402
+import text_solver  # noqa: E402
+from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
+from routing import (  # noqa: E402
+    _is_comparison_question,
+    _rule_based_route,
+    entities_to_schema_dicts,
+)
+from sparql_evaluation import (  # noqa: E402
     call_llm,
-    execute_sparql,
-    extract_sparql,
     get_schema_for_uris,
-    sanitize_sparql_uris,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,23 +98,6 @@ Example - Simple: "Who directed Inception?"
 
 JSON only, no explanation:"""
 
-SUBQ_SPARQL_PROMPT = """Generate a SPARQL query to answer this sub-question about DBpedia entities.
-
-{schema}
-
-Known facts (from previous steps):
-{known_facts}
-
-SUB-QUESTION: {sub_question}
-
-Rules:
-- Use EXACT URIs from the schema
-- Use known facts to resolve entity references
-- Return a simple SELECT query with ?answer as the result variable
-- If the question asks about a known entity's property, query that property directly
-
-Generate ONLY the SPARQL query:"""
-
 SYNTHESIS_PROMPT = """Answer the original question using ONLY the verified facts below.
 
 QUESTION: {question}
@@ -128,21 +111,6 @@ Instructions:
 - Combine the facts to answer the question step-by-step
 - If facts are insufficient, say what is missing
 - End with exactly: FINAL ANSWER: <answer>"""
-
-TEXT_SUBQ_PROMPT = """Answer this sub-question using the sources below.
-
-Sub-question: {question}
-
-{kg_facts}Wikipedia text:
-{context}
-
-Instructions:
-- Knowledge graph facts (if present) are verified structured data -- trust them
-- Use Wikipedia text to fill gaps not covered by KG facts
-- Give a brief, factual answer
-- End with exactly: FINAL ANSWER: <answer>
-"""
-
 
 # ---------------------------------------------------------------------------
 # Topological sort
@@ -359,13 +327,6 @@ def _resolve_subquestion(
     Returns (answer, method, discovered_entities).
     answer is None if resolution fails.
     """
-    # Lazy import to avoid circular dependency
-    from hybrid_qa import (
-        _rule_based_route,
-        _sparql_results_to_entities,
-        entities_to_schema_dicts,
-    )
-
     # Step 1: Substitute known answers into sub-question text
     resolved_text = _substitute_answers(sub_q.text, known_facts)
     if verbose:
@@ -412,9 +373,9 @@ def _resolve_subquestion(
         tag = route_result[1] if route_result else "no rule match"
         print(f"    [DEBUG] Route: {tag}, attempt_sparql={attempt_sparql}")
 
-    # Step 5a: Try SPARQL
+    # Step 5a: Try SPARQL via unified solver
     if attempt_sparql and combined_schema:
-        # Build facts with entity URIs for accurate SPARQL generation
+        # Build known_facts string with entity URIs for SPARQL generation
         facts_parts = []
         for k, v in known_facts.items():
             line = f"Q{k}: {v}"
@@ -423,94 +384,33 @@ def _resolve_subquestion(
                 if uris:
                     line += f" (URI: <{uris[0]}>)"
             facts_parts.append(line)
-        facts_text = "\n".join(facts_parts) or "None"
-        sparql_prompt = SUBQ_SPARQL_PROMPT.format(
-            schema=combined_schema, known_facts=facts_text,
-            sub_question=resolved_text,
+        facts_text = "\n".join(facts_parts) or ""
+
+        answer, query, discovered = sparql_solver.solve(
+            resolved_text, combined_schema, all_entities,
+            llm_client, model,
+            known_facts=facts_text,
+            verbose=debug, debug=debug,
+            preserve_uris=True,
         )
-        sparql_resp = call_llm(llm_client, sparql_prompt, model)
-        sparql_query = sanitize_sparql_uris(extract_sparql(sparql_resp))
+        if answer:
+            if verbose:
+                print(f"    -> SPARQL answer: {answer}")
+            return answer, "sparql", discovered
 
-        if debug and sparql_query:
-            print(f"    [DEBUG] SPARQL query:\n      {sparql_query}")
-        if sparql_query:
-            results, err = execute_sparql(sparql_query, preserve_uris=True)
-            if debug:
-                if results:
-                    print(f"    [DEBUG] SPARQL -> {len(results)} rows")
-                elif err:
-                    print(f"    [DEBUG] SPARQL failed: {err}")
-                else:
-                    print("    [DEBUG] SPARQL -> empty results")
-
-            # Retry on failure (matching hybrid_qa.py pattern)
-            if not results and sparql_query:
-                problem = f"an error: {err}" if err else "empty results (no rows)"
-                retry_prompt = SPARQL_RETRY_PROMPT.format(
-                    problem=problem, sparql=sparql_query,
-                    schema=combined_schema, question=resolved_text,
-                )
-                retry_resp = call_llm(llm_client, retry_prompt, model)
-                retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
-                if debug:
-                    print(f"    [DEBUG] Retry SPARQL:\n      {retry_query}")
-                if retry_query:
-                    results2, err2 = execute_sparql(retry_query, preserve_uris=True)
-                    if results2:
-                        results = results2
-                        if debug:
-                            print(f"    [DEBUG] Retry -> {len(results2)} rows")
-                    elif debug:
-                        print(f"    [DEBUG] Retry failed: {err2 or 'empty results'}")
-
-            if results:
-                # Human-readable results for LLM (strip URIs to local names)
-                readable = []
-                for row in results[:10]:
-                    rr = {}
-                    for k, v in row.items():
-                        if isinstance(v, str) and v.startswith("http://"):
-                            rr[k] = unquote(v.split("/")[-1]).replace("_", " ")
-                        else:
-                            rr[k] = v
-                    readable.append(rr)
-                fmt_results = json.dumps(readable, indent=2)
-                answer_prompt = ANSWER_PROMPT.format(
-                    question=resolved_text, results=fmt_results,
-                )
-                answer = extract_final_answer(call_llm(llm_client, answer_prompt, model))
-                if answer and answer.lower() not in ("", "could not", "n/a", "unknown"):
-                    discovered = _sparql_results_to_entities(
-                        results, {e.uri for e in all_entities if e.uri},
-                    )
-                    if verbose:
-                        print(f"    -> SPARQL answer: {answer}")
-                    return answer, "sparql", discovered
-
-    # Step 5b: TEXT fallback
+    # Step 5b: TEXT fallback via unified solver
     if debug:
         print(f"    [DEBUG] TEXT fallback, entities: {[e.label for e in all_entities]}")
-    raw_texts = retrieve_wikipedia(all_entities, resolved_text, verbose=False)
-    if not raw_texts:
-        if verbose:
-            print("    -> No Wikipedia text, resolution failed")
-        return None, "text", []
 
     kg_facts_lines = "\n".join(f"- Q{k}: {v}" for k, v in known_facts.items())
     kg_facts_block = f"Known facts:\n{kg_facts_lines}\n\n" if kg_facts_lines else ""
-    seed_titles = {
-        uri_to_wiki_title(e.uri) for e in all_entities
-        if e.uri and "/resource/" in e.uri
-    }
-    context, _ = assemble_context(
-        raw_texts, resolved_text, seed_titles=seed_titles,
-        verbose=False,
+
+    answer = text_solver.solve(
+        resolved_text, all_entities,
+        known_facts=kg_facts_block,
+        llm_client=llm_client, model=model,
+        verbose=False, is_subquestion=True,
     )
-    prompt = TEXT_SUBQ_PROMPT.format(
-        question=resolved_text, context=context, kg_facts=kg_facts_block,
-    )
-    response = call_llm(llm_client, prompt, model)
-    answer = extract_final_answer(response) if response else None
 
     if verbose:
         print(f"    -> TEXT answer: {answer}")
@@ -548,7 +448,6 @@ def _try_logicrag_decomposition(
         print(sep)
 
     # Detect comparison pattern for type hint
-    from hybrid_qa import _is_comparison_question
     is_comparison = _is_comparison_question(question, entities)
 
     sub_questions = _decompose_subquestions(

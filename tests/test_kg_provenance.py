@@ -50,38 +50,6 @@ class TestHybridResultProvenance:
         assert r.sparql_fallback is True
 
 
-class TestFormatKgFacts:
-    def test_empty_results(self):
-        from hybrid_qa import _format_kg_facts
-        assert _format_kg_facts([]) == ""
-
-    def test_basic_formatting(self):
-        from hybrid_qa import _format_kg_facts
-        results = [
-            {"entity_name": "Christopher Nolan", "birthDate": "1970-07-30"},
-            {"entity_name": "Steven Spielberg", "birthDate": "1946-12-18"},
-        ]
-        text = _format_kg_facts(results)
-        assert text.startswith("Known facts from knowledge graph:\n")
-        assert "Christopher Nolan" in text
-        assert "Steven Spielberg" in text
-
-    def test_truncates_uris(self):
-        from hybrid_qa import _format_kg_facts
-        results = [
-            {"entity": "http://dbpedia.org/resource/Christopher_Nolan", "x": "val"},
-        ]
-        text = _format_kg_facts(results)
-        assert "Christopher Nolan" in text
-        assert "http://" not in text
-
-    def test_respects_max_chars(self):
-        from hybrid_qa import _format_kg_facts
-        results = [{"key": f"value_{i}" * 20} for i in range(50)]
-        text = _format_kg_facts(results, max_chars=200)
-        assert len(text) <= 250  # header + some slack
-
-
 class TestAssembleContextKgFacts:
     def test_kg_facts_reserves_budget_not_prepended(self):
         """kg_facts reserves budget space but is NOT prepended (prompt handles it)."""
