@@ -309,3 +309,28 @@ class TestIncompleteCoverage:
         q = "Which was released first, Film X or The Nice Guys?"
         # "Film X" is missing, so should return True
         assert _has_incomplete_entity_coverage(q, entities, "Entity: the nice guys")
+
+    def test_and_pattern_detects_missing(self):
+        """'both X and Y' should detect entity names."""
+        entities = _make_entities("X")
+        q = "Are both X and Y located in the same country?"
+        assert _has_incomplete_entity_coverage(q, entities, "Entity: X")
+
+    def test_comma_and_pattern(self):
+        """', X and Y?' should detect entity names."""
+        entities = _make_entities("X")
+        q = "Which was released first, X and Y?"
+        assert _has_incomplete_entity_coverage(q, entities, "Entity: X")
+
+
+class TestParse2HopChainsHyphenated:
+    def test_hyphenated_property_parsed(self):
+        schema = "2-Hop chains:\n- dbo:music-composer -> Person: birthDate, deathDate\n"
+        chains = _parse_2hop_chains(schema)
+        assert "music-composer" in chains
+        assert chains["music-composer"] == ("Person", ["birthDate", "deathDate"])
+
+    def test_camelcase_still_works(self):
+        schema = "2-Hop chains:\n- dbo:director -> Person: birthDate, deathDate\n"
+        chains = _parse_2hop_chains(schema)
+        assert "director" in chains

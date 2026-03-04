@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
-from urllib.parse import quote as url_quote
+from urllib.parse import quote as url_quote, unquote
 
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
@@ -27,6 +27,7 @@ from dbpedia_qa.models import Entity, extract_final_answer
 from graphrag_wiki import assemble_context, retrieve_wikipedia
 from sparql_evaluation import (
     ANSWER_PROMPT,
+    SPARQL_RETRY_PROMPT,
     call_llm,
     execute_sparql,
     extract_sparql,
@@ -206,6 +207,62 @@ def _substitute_answers(text: str, known_facts: dict[int, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Bridge entity resolution
+# ---------------------------------------------------------------------------
+
+def _split_compound_answer(answer: str) -> list[str]:
+    """Split compound answers like 'A and B' into candidate names."""
+    parts = re.split(r'\s+and\s+', answer, maxsplit=2)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _make_fallback_entity(name: str, verbose: bool = False) -> Entity:
+    """Construct unverified Entity from name (fallback when SPARQL linking fails)."""
+    local_name = url_quote(name.replace(' ', '_'), safe="_")
+    uri = f"http://dbpedia.org/resource/{local_name}"
+    if verbose:
+        print(f"    Guessed bridge entity URI: {uri}")
+    return Entity(uri=uri, label=name, source="logicrag_guessed")
+
+
+def _resolve_answer_entities(
+    answer_val: str, kg_client, verbose: bool = False,
+) -> list[Entity]:
+    """Resolve a sub-Q answer string to validated DBpedia entities.
+
+    Strategy: try-unsplit-first, then split on ' and ', validate each.
+    Falls back to blind URI construction if SPARQL linking fails.
+    """
+    if not answer_val or re.match(r'^[\d,.\-/\s]+$', answer_val.strip()):
+        return []
+
+    answer_val = answer_val.strip().rstrip('.')
+
+    # Try full answer as single entity first ("Simon and Garfunkel" case)
+    linked = kg_client.search_entity_by_name(answer_val)
+    if linked:
+        if verbose:
+            print(f"    Linked bridge entity: '{answer_val}' -> {linked.uri}")
+        return [linked]
+
+    # Split on " and " and try each fragment
+    parts = _split_compound_answer(answer_val)
+    if len(parts) <= 1:
+        return [_make_fallback_entity(answer_val, verbose)]
+
+    entities = []
+    for part in parts:
+        linked = kg_client.search_entity_by_name(part)
+        if linked:
+            entities.append(linked)
+            if verbose:
+                print(f"    Linked bridge entity: '{part}' -> {linked.uri}")
+        else:
+            entities.append(_make_fallback_entity(part, verbose))
+    return entities
+
+
+# ---------------------------------------------------------------------------
 # Decomposition (Phase 1)
 # ---------------------------------------------------------------------------
 
@@ -326,21 +383,15 @@ def _resolve_subquestion(
                 if e not in all_entities:
                     all_entities.append(e)
 
-    # Lightweight entity linking: construct URI directly from answer text
-    # Skip dates, numbers, and short non-entity answers
+    # Bridge entity linking: resolve answer text to validated DBpedia entities
     for dep_idx in sub_q.depends_on:
         if dep_idx in known_facts:
-            answer_val = known_facts[dep_idx]
-            if answer_val and not re.match(r'^[\d,.\-/\s]+$', answer_val.strip()):
-                local_name = url_quote(
-                    answer_val.replace(' ', '_'), safe="_"
-                )
-                candidate_uri = f"http://dbpedia.org/resource/{local_name}"
-                if not any(e.uri == candidate_uri for e in all_entities):
-                    all_entities.append(Entity(
-                        uri=candidate_uri, label=answer_val,
-                        source="logicrag_resolved",
-                    ))
+            resolved = _resolve_answer_entities(
+                known_facts[dep_idx], kg_client, verbose=verbose,
+            )
+            for e in resolved:
+                if not any(ex.uri == e.uri for ex in all_entities):
+                    all_entities.append(e)
 
     # Step 3: Build schema context (reuse parent + extend for new entities)
     new_entities = [
@@ -349,7 +400,7 @@ def _resolve_subquestion(
     ]
     if new_entities:
         new_schema_dicts = entities_to_schema_dicts(new_entities)
-        new_schema = get_schema_for_uris(schema_disc, new_schema_dicts) if new_schema_dicts else ""
+        new_schema = get_schema_for_uris(schema_disc, new_schema_dicts, question=resolved_text) if new_schema_dicts else ""
         combined_schema = parent_schema_ctx + "\n" + new_schema if new_schema else parent_schema_ctx
     else:
         combined_schema = parent_schema_ctx
@@ -363,7 +414,16 @@ def _resolve_subquestion(
 
     # Step 5a: Try SPARQL
     if attempt_sparql and combined_schema:
-        facts_text = "\n".join(f"Q{k}: {v}" for k, v in known_facts.items()) or "None"
+        # Build facts with entity URIs for accurate SPARQL generation
+        facts_parts = []
+        for k, v in known_facts.items():
+            line = f"Q{k}: {v}"
+            if k in known_entities and known_entities[k]:
+                uris = [e.uri for e in known_entities[k] if e.uri]
+                if uris:
+                    line += f" (URI: <{uris[0]}>)"
+            facts_parts.append(line)
+        facts_text = "\n".join(facts_parts) or "None"
         sparql_prompt = SUBQ_SPARQL_PROMPT.format(
             schema=combined_schema, known_facts=facts_text,
             sub_question=resolved_text,
@@ -374,7 +434,7 @@ def _resolve_subquestion(
         if debug and sparql_query:
             print(f"    [DEBUG] SPARQL query:\n      {sparql_query}")
         if sparql_query:
-            results, err = execute_sparql(sparql_query)
+            results, err = execute_sparql(sparql_query, preserve_uris=True)
             if debug:
                 if results:
                     print(f"    [DEBUG] SPARQL -> {len(results)} rows")
@@ -382,8 +442,39 @@ def _resolve_subquestion(
                     print(f"    [DEBUG] SPARQL failed: {err}")
                 else:
                     print("    [DEBUG] SPARQL -> empty results")
+
+            # Retry on failure (matching hybrid_qa.py pattern)
+            if not results and sparql_query:
+                problem = f"an error: {err}" if err else "empty results (no rows)"
+                retry_prompt = SPARQL_RETRY_PROMPT.format(
+                    problem=problem, sparql=sparql_query,
+                    schema=combined_schema, question=resolved_text,
+                )
+                retry_resp = call_llm(llm_client, retry_prompt, model)
+                retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
+                if debug:
+                    print(f"    [DEBUG] Retry SPARQL:\n      {retry_query}")
+                if retry_query:
+                    results2, err2 = execute_sparql(retry_query, preserve_uris=True)
+                    if results2:
+                        results = results2
+                        if debug:
+                            print(f"    [DEBUG] Retry -> {len(results2)} rows")
+                    elif debug:
+                        print(f"    [DEBUG] Retry failed: {err2 or 'empty results'}")
+
             if results:
-                fmt_results = json.dumps(results[:10], indent=2)
+                # Human-readable results for LLM (strip URIs to local names)
+                readable = []
+                for row in results[:10]:
+                    rr = {}
+                    for k, v in row.items():
+                        if isinstance(v, str) and v.startswith("http://"):
+                            rr[k] = unquote(v.split("/")[-1]).replace("_", " ")
+                        else:
+                            rr[k] = v
+                    readable.append(rr)
+                fmt_results = json.dumps(readable, indent=2)
                 answer_prompt = ANSWER_PROMPT.format(
                     question=resolved_text, results=fmt_results,
                 )
@@ -497,13 +588,6 @@ def _try_logicrag_decomposition(
             sub_q.entities = discovered
 
         methods_used.append(method)
-
-        # Early termination: final sub-Q resolved via SPARQL
-        if (answer and method == "sparql"
-                and loop_idx == len(sub_questions) - 1):
-            if verbose:
-                print("  Final sub-Q resolved via SPARQL, using directly")
-            return answer
 
     # --- Step 3: Synthesize final answer from accumulated facts ---
     if not known_facts:

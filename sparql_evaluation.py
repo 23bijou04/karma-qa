@@ -93,8 +93,22 @@ def load_completed_ids(results_file: str) -> tuple[set[str], list[dict]]:
 # ---------------------------------------------------------------------------
 
 def get_schema_for_uris(schema_disc: SchemaDiscovery,
-                        entities: list[dict]) -> str:
-    """Build combined schema context for pre-resolved entity URIs."""
+                        entities: list[dict],
+                        question: str = "") -> str:
+    """Build combined schema context for pre-resolved entity URIs.
+
+    Args:
+        question: Optional question text. When provided, properties matching
+            question keywords are prioritized in the truncated list.
+    """
+    q_lower = question.lower() if question else ""
+
+    def _prop_priority(prop_name: str) -> int:
+        """0 = keyword match (show first), 1 = no match."""
+        if q_lower and re.search(rf'\b{re.escape(prop_name.lower())}\b', q_lower):
+            return 0
+        return 1
+
     sections = []
     for ent in entities:
         uri = ent.get("uri", "")
@@ -125,13 +139,15 @@ def get_schema_for_uris(schema_disc: SchemaDiscovery,
             lines.extend(format_2hop_lines(cached))
             lines.append("")
 
-        # Actual properties with sample values
+        # Actual properties with sample values (keyword-prioritized)
         values = actual.get("values", {})
         if actual["dbo"] or actual["dbp"]:
             lines.append("Actual properties found:")
-            for prop in actual["dbo"][:8]:
+            dbo_sorted = sorted(actual["dbo"], key=_prop_priority)
+            dbp_sorted = sorted(actual["dbp"], key=_prop_priority)
+            for prop in dbo_sorted[:12]:
                 lines.append(f"  dbo:{prop} -> {values.get(f'dbo:{prop}', '')}")
-            for prop in actual["dbp"][:8]:
+            for prop in dbp_sorted[:12]:
                 lines.append(f"  dbp:{prop} -> {values.get(f'dbp:{prop}', '')}")
 
         sections.append("\n".join(lines))
@@ -249,8 +265,12 @@ def sanitize_sparql_uris(query: str) -> str:
         trail = ""
         while local:
             ch = local[-1]
-            if ch == ')' and '(' in local[:-1]:
-                break  # balanced parens — part of the entity name
+            # Count balanced parentheses — only strip unmatched trailing ')'
+            if ch == ')':
+                open_count = local.count('(')
+                close_count = local.count(')')
+                if open_count >= close_count:
+                    break  # parens are balanced, stop stripping
             if ch in '.;},)':
                 trail = ch + trail
                 local = local[:-1]
@@ -384,7 +404,7 @@ def evaluate_question(q: dict, client: Groq, model: str,
 
     try:
         # Step 1: Schema discovery
-        schema_ctx = get_schema_for_uris(schema_disc, entities)
+        schema_ctx = get_schema_for_uris(schema_disc, entities, question=question)
         trace["schema_context"] = schema_ctx
         record["schema_context"] = schema_ctx[:500]  # truncated in JSONL
 

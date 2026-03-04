@@ -8,6 +8,9 @@ import pytest
 from dbpedia_qa.models import Entity
 from logicrag_decomposition import (
     SubQuestion,
+    _make_fallback_entity,
+    _resolve_answer_entities,
+    _split_compound_answer,
     _substitute_answers,
     _topological_sort_indices,
 )
@@ -191,6 +194,216 @@ class TestComparisonDecomposition:
         order = _topological_sort_indices(len(sub_qs), deps)
         assert order.index(0) < order.index(2)
         assert order.index(1) < order.index(3)
+
+
+# ---------------------------------------------------------------------------
+# Bridge entity resolution (helpers — no network)
+# ---------------------------------------------------------------------------
+
+
+class TestSplitCompoundAnswer:
+    def test_two_names(self):
+        assert _split_compound_answer("Alice and Bob") == ["Alice", "Bob"]
+
+    def test_three_names(self):
+        parts = _split_compound_answer("A and B and C")
+        assert len(parts) == 3
+
+    def test_no_and(self):
+        assert _split_compound_answer("Christopher Nolan") == ["Christopher Nolan"]
+
+    def test_empty(self):
+        assert _split_compound_answer("") == []
+
+
+class TestMakeFallbackEntity:
+    def test_creates_uri(self):
+        e = _make_fallback_entity("Christopher Nolan")
+        assert e.uri == "http://dbpedia.org/resource/Christopher_Nolan"
+        assert e.source == "logicrag_guessed"
+        assert e.label == "Christopher Nolan"
+
+
+# ---------------------------------------------------------------------------
+# Bridge entity resolution (live DBpedia SPARQL)
+# ---------------------------------------------------------------------------
+
+HAS_NETWORK = True
+try:
+    from dbpedia_qa.dbpedia.client import DBpediaSPARQLClient
+    _test_client = DBpediaSPARQLClient()
+    _test_client.search_entity_by_name("Christopher Nolan")
+except Exception:
+    HAS_NETWORK = False
+
+
+@pytest.mark.skipif(not HAS_NETWORK, reason="DBpedia SPARQL unreachable")
+class TestBridgeEntityResolution:
+    """Live tests for _resolve_answer_entities against DBpedia SPARQL."""
+
+    @pytest.fixture(autouse=True)
+    def setup_client(self):
+        from dbpedia_qa.dbpedia.client import DBpediaSPARQLClient
+        self.kg_client = DBpediaSPARQLClient()
+
+    def test_single_entity(self):
+        """'Christopher Nolan' should resolve to a single validated entity."""
+        entities = _resolve_answer_entities("Christopher Nolan", self.kg_client)
+        assert len(entities) == 1
+        assert "Christopher_Nolan" in entities[0].uri
+        assert entities[0].source != "logicrag_guessed"
+
+    def test_compound_answer_splits_and_resolves(self):
+        """'Fridrikh Ermler and Eduard Ioganson' should split and resolve both."""
+        entities = _resolve_answer_entities(
+            "Fridrikh Ermler and Eduard Ioganson", self.kg_client,
+        )
+        assert len(entities) == 2
+        uris = [e.uri for e in entities]
+        assert any("Ermler" in u for u in uris)
+
+    def test_numeric_returns_empty(self):
+        """Dates and numbers should return empty list (no SPARQL call)."""
+        assert _resolve_answer_entities("1926-05-13", self.kg_client) == []
+        assert _resolve_answer_entities("42", self.kg_client) == []
+
+    def test_unsplit_entity_with_and(self):
+        """'Simon and Garfunkel' should resolve as single entity (try-unsplit-first)."""
+        entities = _resolve_answer_entities("Simon and Garfunkel", self.kg_client)
+        assert len(entities) == 1
+        assert "Simon_and_Garfunkel" in entities[0].uri
+
+    def test_nonexistent_falls_back(self):
+        """Completely unknown entity should fall back to URI construction."""
+        entities = _resolve_answer_entities(
+            "Xyzzy Nonexistent Entity 12345", self.kg_client,
+        )
+        assert len(entities) == 1
+        assert entities[0].source == "logicrag_guessed"
+
+    def test_trailing_period_stripped(self):
+        """Answer with trailing period should still resolve."""
+        entities = _resolve_answer_entities("Christopher Nolan.", self.kg_client)
+        assert len(entities) == 1
+        assert "Christopher_Nolan" in entities[0].uri
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Composition synthesis vs bridge single-fact
+# ---------------------------------------------------------------------------
+
+
+class TestLogicragSynthesis:
+    """Verify early exit removal: composition synthesizes, bridge returns directly."""
+
+    def test_composition_uses_synthesis_when_multiple_facts(self):
+        """When 2+ sub-Qs resolve, synthesis prompt should be called."""
+        from unittest.mock import MagicMock, patch
+
+        from logicrag_decomposition import _try_logicrag_decomposition
+
+        llm_calls = []
+
+        def fake_call_llm(client, prompt, model):
+            llm_calls.append(prompt[:200])
+            if "Decompose" in prompt:
+                return json.dumps({
+                    "sub_questions": [
+                        "Who directed Film X?",
+                        "Who directed Film Y?",
+                    ],
+                    "dependencies": [],
+                })
+            if "verified facts" in prompt.lower():
+                return "FINAL ANSWER: Alice directed X and Bob directed Y"
+            if "provide the answer" in prompt.lower():
+                return "FINAL ANSWER: Alice"
+            if "Generate" in prompt and "SPARQL" in prompt:
+                return "SELECT ?answer WHERE { dbr:X dbo:director ?answer }"
+            return "FINAL ANSWER: test"
+
+        mock_entity = Entity(
+            uri="http://dbpedia.org/resource/X", label="X", source="test",
+        )
+
+        with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
+             patch("logicrag_decomposition.execute_sparql",
+                   return_value=([{"answer": "Alice"}], "")), \
+             patch("logicrag_decomposition.sanitize_sparql_uris", side_effect=lambda x: x), \
+             patch("logicrag_decomposition.extract_sparql", side_effect=lambda x: x), \
+             patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
+             patch("hybrid_qa._rule_based_route", return_value=("SPARQL", "test")), \
+             patch("hybrid_qa._sparql_results_to_entities", return_value=[]), \
+             patch("hybrid_qa.entities_to_schema_dicts", return_value=[]), \
+             patch("hybrid_qa._is_comparison_question", return_value=False):
+            result = _try_logicrag_decomposition(
+                "Who directed Film X and who directed Film Y?",
+                [mock_entity], "schema", MagicMock(), "model",
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+        assert result is not None
+        # Synthesis prompt should have been called (contains "verified facts")
+        assert any("verified facts" in c.lower() for c in llm_calls)
+
+    def test_bridge_single_fact_returns_directly(self):
+        """When only 1 sub-Q resolves, return directly without synthesis."""
+        from unittest.mock import MagicMock, patch
+
+        from logicrag_decomposition import _try_logicrag_decomposition
+
+        llm_calls = []
+
+        def fake_call_llm(client, prompt, model):
+            llm_calls.append(prompt[:200])
+            if "Decompose" in prompt:
+                return json.dumps({
+                    "sub_questions": [
+                        "Who directed Inception?",
+                        "When was [director] born?",
+                    ],
+                    "dependencies": [[1, 0]],
+                })
+            if "provide the answer" in prompt.lower():
+                return "FINAL ANSWER: Christopher Nolan"
+            if "Generate" in prompt and "SPARQL" in prompt:
+                return "SELECT ?answer WHERE { dbr:X dbo:director ?answer }"
+            return "FINAL ANSWER: test"
+
+        mock_entity = Entity(
+            uri="http://dbpedia.org/resource/Inception",
+            label="Inception", source="test",
+        )
+
+        exec_call_count = {"n": 0}
+
+        def fake_execute(q, **kwargs):
+            exec_call_count["n"] += 1
+            if exec_call_count["n"] == 1:
+                return [{"answer": "Christopher Nolan"}], ""
+            return [], ""
+
+        with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
+             patch("logicrag_decomposition.execute_sparql",
+                   side_effect=fake_execute), \
+             patch("logicrag_decomposition.sanitize_sparql_uris", side_effect=lambda x: x), \
+             patch("logicrag_decomposition.extract_sparql", side_effect=lambda x: x), \
+             patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
+             patch("logicrag_decomposition.retrieve_wikipedia", return_value={}), \
+             patch("hybrid_qa._rule_based_route", return_value=("SPARQL", "test")), \
+             patch("hybrid_qa._sparql_results_to_entities", return_value=[]), \
+             patch("hybrid_qa.entities_to_schema_dicts", return_value=[]), \
+             patch("hybrid_qa._is_comparison_question", return_value=False):
+            result = _try_logicrag_decomposition(
+                "When was the director of Inception born?",
+                [mock_entity], "schema", MagicMock(), "model",
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+        assert result is not None
+        # Only 1 sub-Q resolved -> returned directly, no synthesis
+        assert "verified facts" not in " ".join(llm_calls).lower()
+        assert result == "Christopher Nolan"
 
 
 # ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ def _parse_2hop_chains(schema_ctx: str) -> dict[str, tuple[str, list[str]]]:
                 in_section = False
                 continue
             m = re.match(
-                r'-\s*dbo:(\w+)\s*->\s*(\w+):\s*(\w+(?:,\s*\w+)*)', stripped
+                r'-\s*dbo:([\w-]+)\s*->\s*([\w-]+):\s*([\w-]+(?:,\s*[\w-]+)*)', stripped
             )
             if m:
                 chains[m.group(1)] = (
@@ -138,7 +138,7 @@ def _rule_based_route(question: str, schema_ctx: str,
     #   Format 1: "dbo:prop -> value" (actual properties section)
     actual_props = set(re.findall(r'(?:dbo|dbp):\w+', schema_ctx))
     #   Format 2: "  dbo: prop1, prop2, ..." (cached ontology list, may be truncated)
-    for m in re.finditer(r'^\s+(dbo|dbp): ([\w]+(?:,\s*[\w]+)*)', schema_ctx, re.MULTILINE):
+    for m in re.finditer(r'^\s+(dbo|dbp): ([\w-]+(?:,\s*[\w-]+)*)', schema_ctx, re.MULTILINE):
         prefix = m.group(1)
         for name in m.group(2).split(','):
             name = name.strip()
@@ -354,9 +354,14 @@ def _has_incomplete_entity_coverage(
     if not any(w in q_lower for w in comparison_words):
         return False
 
-    # Extract candidate entity names from "X or Y" pattern
+    # Extract candidate entity names from "X or Y" / "X and Y" patterns
     # Match: ", X or Y?" at end of question (common 2WikiMultiHopQA pattern)
     m = re.search(r',\s*(.+?)\s+or\s+(.+?)\s*\?', question)
+    if not m:
+        m = re.search(r',\s*(.+?)\s+and\s+(.+?)\s*\?', question)
+    if not m:
+        # "Are both X and Y ..." pattern (no comma)
+        m = re.search(r'\bboth\s+(.+?)\s+and\s+(.+?)[\s?]', question)
     if not m:
         return False
 
@@ -431,8 +436,6 @@ def _sparql_neighbors(entities: list[Entity],
 def _sparql_results_to_entities(results: list[dict],
                                 seed_uris: set[str]) -> list[Entity]:
     """Convert SPARQL context query results to Entity objects."""
-    from urllib.parse import quote
-
     entities = []
     seen = set()
     for row in results:
@@ -446,10 +449,9 @@ def _sparql_results_to_entities(results: list[dict],
                     uri = val  # full URI — use directly, no re-encoding
                 elif "/" not in val and val.strip():
                     # Reconstructed local name from execute_sparql's deconstruction
+                    # DBpedia uses literal special chars (', parens) — no quoting
                     local_name = val.replace(" ", "_")
-                    # DBpedia convention: keep (), ', , unencoded (RFC 2396 §2.4.3)
-                    encoded = quote(local_name, safe="/:@!$&'()*+,;=-._~%")
-                    uri = f"http://dbpedia.org/resource/{encoded}"
+                    uri = f"http://dbpedia.org/resource/{local_name}"
                 if uri:
                     break
         for key in ("label", "entityLabel", "name"):
@@ -547,7 +549,7 @@ def hybrid_answer(question: str, api_key: str,
 
     # === Step 2: Schema Discovery ===
     schema_dicts = entities_to_schema_dicts(entities)
-    schema_ctx = get_schema_for_uris(schema_disc, schema_dicts) if schema_dicts else ""
+    schema_ctx = get_schema_for_uris(schema_disc, schema_dicts, question=question) if schema_dicts else ""
     if verbose:
         print(f"\n{sep}")
         print("STEP 2: Schema Discovery")

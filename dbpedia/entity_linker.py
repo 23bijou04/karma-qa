@@ -202,12 +202,12 @@ class DBpediaEntityLinker:
         words_alt = "|".join(relation_words)
         # Match both "X of Y" form and verb "Xed Y" / "X Y" form
         obj_match = re.search(
-            rf'(?:{words_alt})\s+of\s+(.+?)(?:\?|,|$)', question, re.IGNORECASE,
+            rf'(?:{words_alt})\s+of\s+(.+?)\s*(?:[?!,]|$)', question, re.IGNORECASE,
         )
         if not obj_match:
             # Verb form: "directed Polish-Russian War", "wrote Harry Potter"
             obj_match = re.search(
-                rf'(?:{words_alt})\s+(.+?)(?:\?|,|$)', question, re.IGNORECASE,
+                rf'(?:{words_alt})\s+(.+?)\s*(?:[?!,]|$)', question, re.IGNORECASE,
             )
         if not obj_match:
             return entities
