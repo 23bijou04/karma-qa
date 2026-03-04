@@ -98,7 +98,7 @@ class HybridResult:
     """Result from the hybrid QA pipeline."""
 
     answer: str
-    method: str  # "sparql", "text", or "decomposed"
+    method: str  # "sparql", "text", or "logicrag_decomposed"
     route_source: str = ""  # "rule:*", "llm", "no_schema_fallback"
     sparql_fallback: bool = False  # True if routed SPARQL but fell back to text
     sparql_query: Optional[str] = None  # executed SPARQL query (provenance)
