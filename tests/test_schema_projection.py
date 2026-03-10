@@ -2,7 +2,7 @@
 
 from entity_profile import EntityProfile
 from question_analysis import analyze_question
-from schema_projection import _score_class, project
+from schema_projection import SchemaProjection, _score_class, project
 
 
 def _film_profile(**overrides):
@@ -49,6 +49,49 @@ def _person_profile(**overrides):
     return EntityProfile(**defaults)
 
 
+def _book_profile(**overrides):
+    """Helper: build a Book EntityProfile."""
+    defaults = dict(
+        uri="http://dbpedia.org/resource/Harry_Potter_and_the_Philosopher's_Stone",
+        label="Harry Potter",
+        all_classes=["Book"],
+        cached_classes=["Book"],
+        actual_properties={
+            "dbo": ["author", "publicationDate"],
+            "dbp": ["author"],
+            "values": {"dbo:author": "J. K. Rowling", "dbo:publicationDate": "1997-06-26"},
+        },
+        actual_property_set=frozenset({"dbo:author", "dbo:publicationDate", "dbp:author"}),
+        all_2hop_chains={
+            "author": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+        },
+    )
+    defaults.update(overrides)
+    return EntityProfile(**defaults)
+
+
+def _place_profile(**overrides):
+    """Helper: build a Place EntityProfile."""
+    defaults = dict(
+        uri="http://dbpedia.org/resource/France",
+        label="France",
+        all_classes=["Place"],
+        cached_classes=["Place"],
+        actual_properties={
+            "dbo": ["capital", "populationTotal"],
+            "dbp": ["capital"],
+            "values": {"dbo:capital": "Paris", "dbo:populationTotal": "67390000"},
+        },
+        actual_property_set=frozenset({"dbo:capital", "dbo:populationTotal", "dbp:capital"}),
+        all_2hop_chains={
+            "capital": ("Place", ["populationTotal", "country"]),
+            "country": ("Place", ["capital", "populationTotal", "leader"]),
+        },
+    )
+    defaults.update(overrides)
+    return EntityProfile(**defaults)
+
+
 class TestClassScoring:
     def test_film_scores_higher_for_director(self):
         analysis = analyze_question("Where was the director of Inception born?")
@@ -60,6 +103,16 @@ class TestClassScoring:
         analysis = analyze_question("When was Albert Einstein born?")
         score = _score_class("Person", analysis)
         assert score >= 1
+
+    def test_unknown_class_scores_zero(self):
+        analysis = analyze_question("Who directed Inception?")
+        score = _score_class("UnknownClass", analysis)
+        assert score == 0
+
+    def test_no_keywords_all_zero(self):
+        analysis = analyze_question("What is the meaning of life?")
+        for cls in ("Person", "Film", "Place"):
+            assert _score_class(cls, analysis) == 0
 
 
 class TestCompleteness:
@@ -101,6 +154,334 @@ class TestCompleteness:
         proj = project(profile, analysis)
         assert proj.completeness == "complete"
 
+    def test_completeness_detail_populated(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        assert isinstance(proj.completeness_detail, dict)
+        assert "birthDate" in proj.completeness_detail
+        assert proj.completeness_detail["birthDate"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: Prefix deduplication in render_for_sparql()
+# ---------------------------------------------------------------------------
+
+class TestPrefixDedup:
+    def test_default_includes_prefixes(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "PREFIX dbr:" in output
+        assert "PREFIX dbo:" in output
+        assert "PREFIX dbp:" in output
+        assert "PREFIX rdfs:" in output
+
+    def test_include_prefixes_false_excludes_all(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql(include_prefixes=False)
+        assert "PREFIX" not in output
+        assert "SPARQL Prefixes:" not in output
+
+    def test_no_prefix_still_has_entity_info(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql(include_prefixes=False)
+        assert "Entity: Inception" in output
+        assert "URI: <http://dbpedia.org/resource/Inception>" in output
+        assert "Class: dbo:Film" in output
+
+    def test_no_prefix_still_has_properties(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql(include_prefixes=False)
+        assert "dbo: birthDate" in output
+        assert "Actual properties found:" in output
+
+    def test_multi_entity_join_prefix_once(self):
+        """When joining multiple projections, prefix appears only once."""
+        p1 = _person_profile()
+        p2 = _person_profile(
+            uri="http://dbpedia.org/resource/Nikola_Tesla",
+            label="Nikola Tesla",
+        )
+        analysis = analyze_question("Who was born first, Einstein or Tesla?")
+        proj1 = project(p1, analysis)
+        proj2 = project(p2, analysis)
+        joined = "\n\n---\n\n".join(
+            p.render_for_sparql(include_prefixes=(i == 0))
+            for i, p in enumerate([proj1, proj2])
+        )
+        assert joined.count("PREFIX dbr:") == 1
+        assert joined.count("PREFIX dbo:") == 1
+        assert joined.count("PREFIX dbp:") == 1
+
+    def test_multi_entity_join_both_entities_present(self):
+        p1 = _person_profile()
+        p2 = _person_profile(
+            uri="http://dbpedia.org/resource/Nikola_Tesla",
+            label="Nikola Tesla",
+        )
+        analysis = analyze_question("Who was born first?")
+        proj1 = project(p1, analysis)
+        proj2 = project(p2, analysis)
+        joined = "\n\n---\n\n".join(
+            p.render_for_sparql(include_prefixes=(i == 0))
+            for i, p in enumerate([proj1, proj2])
+        )
+        assert "Entity: Albert Einstein" in joined
+        assert "Entity: Nikola Tesla" in joined
+
+    def test_single_entity_has_prefix_by_default(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert output.startswith("SPARQL Prefixes:")
+
+    def test_three_entity_join_prefix_once(self):
+        """Three entities: prefix only on the first."""
+        profiles = [
+            _person_profile(uri="http://dbpedia.org/resource/A", label="A"),
+            _person_profile(uri="http://dbpedia.org/resource/B", label="B"),
+            _person_profile(uri="http://dbpedia.org/resource/C", label="C"),
+        ]
+        analysis = analyze_question("Who was born first?")
+        projs = [project(p, analysis) for p in profiles]
+        joined = "\n\n---\n\n".join(
+            p.render_for_sparql(include_prefixes=(i == 0))
+            for i, p in enumerate(projs)
+        )
+        assert joined.count("PREFIX dbr:") == 1
+        assert "Entity: A" in joined
+        assert "Entity: B" in joined
+        assert "Entity: C" in joined
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: Filtered property hints
+# ---------------------------------------------------------------------------
+
+class TestFilteredHints:
+    def test_born_question_shows_birthdate_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "birthDate: date of birth" in output
+
+    def test_born_question_hides_father_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "father of the person" not in output
+
+    def test_born_question_hides_mother_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "mother of the person" not in output
+
+    def test_born_question_hides_parent_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "generic parent" not in output
+
+    def test_born_question_hides_death_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "date of death" not in output
+
+    def test_director_question_shows_director_hint(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "director: film director" in output
+
+    def test_director_question_hides_producer_hint(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "film producer" not in output
+
+    def test_director_question_hides_starring_hint(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "lead actors" not in output
+
+    def test_bridge_director_born_shows_director_hint(self):
+        """Bridge question: director + born → show director hint."""
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "director: film director" in output
+
+    def test_bridge_director_born_hides_irrelevant_hints(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "film producer" not in output
+        assert "lead actors" not in output
+
+    def test_no_keywords_fallback_shows_hints(self):
+        """No keyword match → fallback to first 5 hints."""
+        profile = _film_profile()
+        analysis = analyze_question("What is the meaning of life?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        # With no relevant keywords, should fall back to showing some hints
+        assert "Property hints:" in output
+
+    def test_no_keywords_fallback_limit_5(self):
+        """Fallback mode shows at most 5 hints."""
+        profile = _person_profile()
+        analysis = analyze_question("What is the meaning of life?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        hint_lines = [line for line in output.splitlines() if line.strip().startswith("- ")]
+        assert len(hint_lines) <= 5
+
+    def test_death_question_shows_death_hint(self):
+        """Must use 'died' keyword (not 'die') for keyword matching."""
+        profile = _person_profile()
+        analysis = analyze_question("When did Albert Einstein died?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "deathDate: date of death" in output
+
+    def test_death_question_hides_birth_hint(self):
+        profile = _person_profile()
+        analysis = analyze_question("When did Albert Einstein died?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "date of birth" not in output
+
+    def test_father_question_shows_parent_hint(self):
+        """'father' keyword → parent property → parent hint shown."""
+        profile = _person_profile()
+        analysis = analyze_question("Who is the father of Prince William?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        # "father" maps to "parent" property, check parent-related hints
+        assert "parent" in output.lower()
+
+    def test_author_shows_author_hint(self):
+        profile = _book_profile()
+        analysis = analyze_question("Who wrote Harry Potter?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "author: book author" in output
+
+    def test_author_hides_publisher_hint(self):
+        profile = _book_profile()
+        analysis = analyze_question("Who wrote Harry Potter?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "publishing company" not in output
+
+    def test_capital_question_shows_capital_hint(self):
+        profile = _place_profile()
+        analysis = analyze_question("What is the capital of France?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "capital" in output
+
+    def test_full_cached_property_lists_always_shown(self):
+        """Even with filtered hints, full dbo/dbp property lists remain."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        # Full property list still present
+        assert "dbo: birthDate, deathDate, birthPlace" in output
+        assert "dbp: father, mother, birthDate" in output
+
+
+# ---------------------------------------------------------------------------
+# _relevant_property_names() unit tests
+# ---------------------------------------------------------------------------
+
+class TestRelevantPropertyNames:
+    def test_direct_question(self):
+        """Direct 'born' → {birthDate, birthPlace}."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert "birthDate" in names
+        assert "birthPlace" in names
+
+    def test_bridge_includes_bridge_property(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert "director" in names
+
+    def test_bridge_includes_chain_target_properties(self):
+        """Bridge chains like director → Person: birthDate, deathDate..."""
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert "birthDate" in names
+        assert "deathDate" in names
+        assert "birthPlace" in names
+
+    def test_bridge_includes_hop2_properties(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        # hop2 "born" → birthDate, birthPlace
+        assert "birthDate" in names
+        assert "birthPlace" in names
+
+    def test_no_keywords_returns_empty(self):
+        profile = _film_profile()
+        analysis = analyze_question("What is the meaning of life?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert names == set()
+
+    def test_direct_director_includes_director(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert "director" in names
+
+    def test_no_irrelevant_properties_in_names(self):
+        """Direct 'born' should NOT include director, producer, etc."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        names = proj._relevant_property_names()
+        assert "director" not in names
+        assert "producer" not in names
+        assert "starring" not in names
+
+
+# ---------------------------------------------------------------------------
+# Standard rendering tests
+# ---------------------------------------------------------------------------
 
 class TestRendering:
     def test_render_for_routing_token_count(self):
@@ -144,7 +525,6 @@ class TestRendering:
         analysis = analyze_question("Where was the director of Inception born?")
         proj = project(profile, analysis)
         output = proj.render_for_text()
-        # expected_target_type derived from property votes; should be some valid class
         assert "Expect:" in output
         assert "Discovery:" in output
 
@@ -154,6 +534,154 @@ class TestRendering:
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
         assert "http://dbpedia.org/resource/Inception" in output
+
+    def test_render_for_sparql_includes_class(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "Class: dbo:Film" in output
+
+    def test_render_for_sparql_includes_actual_values(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "dbo:director -> Christopher Nolan" in output
+
+    def test_render_for_sparql_includes_chains(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "2-Hop chains:" in output
+        assert "dbo:director -> Person" in output
+
+    def test_render_for_routing_shows_completeness(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_routing()
+        assert "Completeness:" in output
+
+    def test_render_for_routing_shows_chains(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_routing()
+        assert "Chains:" in output
+
+    def test_render_for_routing_shows_missing(self):
+        profile = _film_profile(
+            actual_properties={"dbo": ["releaseDate"], "dbp": [], "values": {}},
+            actual_property_set=frozenset({"dbo:releaseDate"}),
+        )
+        analysis = analyze_question("Where was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_routing()
+        assert "Missing:" in output
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 through rendering: TEXT view bridge target type
+# ---------------------------------------------------------------------------
+
+class TestTextViewTargetType:
+    def test_bridge_text_view_shows_person(self):
+        """Bridge 'director + born' → TEXT view should show Person, not MusicalArtist."""
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "Person" in output
+        assert "MusicalArtist" not in output
+
+    def test_bridge_text_view_shows_via_bridge(self):
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "via director" in output
+
+    def test_bridge_text_view_type_filter(self):
+        """TEXT view should use expected_target_type in discovery filter."""
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "dbo:Person" in output
+
+    def test_author_bridge_text_view_shows_person(self):
+        profile = _book_profile()
+        analysis = analyze_question("Where was the author of Harry Potter born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "Person" in output
+
+    def test_no_bridge_text_view_no_via(self):
+        """Direct question → no 'via' in TEXT view."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "via" not in output
+
+    def test_no_keywords_text_view_unknown(self):
+        profile = _film_profile()
+        analysis = analyze_question("What is the meaning of life?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "unknown type" in output
+        assert "unfiltered" in output
+
+
+# ---------------------------------------------------------------------------
+# No class / edge cases
+# ---------------------------------------------------------------------------
+
+class TestNoClassEntity:
+    def test_no_cached_class_no_hints(self):
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/SomeThing",
+            label="SomeThing",
+            all_classes=["SomethingElse"],
+            cached_classes=[],
+            actual_properties={"dbo": ["foo"], "dbp": [], "values": {"dbo:foo": "bar"}},
+            actual_property_set=frozenset({"dbo:foo"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("What is foo?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        # No cached class → no hints section
+        assert "Property hints:" not in output
+        # But actual properties still shown
+        assert "dbo:foo -> bar" in output
+
+    def test_no_cached_class_no_class_line(self):
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=[],
+            cached_classes=[],
+            actual_properties={"dbo": [], "dbp": [], "values": {}},
+            actual_property_set=frozenset(),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("What is X?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "Class:" not in output
+
+    def test_empty_actual_properties(self):
+        profile = _film_profile(
+            actual_properties={"dbo": [], "dbp": [], "values": {}},
+            actual_property_set=frozenset(),
+        )
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "Actual properties found:" not in output
 
 
 class TestMultiClassEntity:
