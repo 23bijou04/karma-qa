@@ -41,15 +41,12 @@ from dbpedia_qa.dbpedia import (  # noqa: E402
     SchemaDiscovery,
 )
 from dbpedia_qa.models import Entity, HybridResult  # noqa: E402
+from entity_profile import build_entity_profile  # noqa: E402
 from graphrag_wiki import link_entities_to_dbpedia  # noqa: E402
 from logicrag_decomposition import _try_logicrag_decomposition  # noqa: E402
-from routing import (  # noqa: E402
-    entities_to_schema_dicts,
-    route_question,
-)
-from sparql_evaluation import (  # noqa: E402
-    get_schema_for_uris,
-)
+from question_analysis import analyze_question  # noqa: E402
+from routing import route_question  # noqa: E402
+from schema_projection import project  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -157,24 +154,29 @@ def hybrid_answer(question: str, api_key: str,
         if not entities:
             print("  (none found)")
 
-    # === Step 2: Schema Discovery ===
-    schema_dicts = entities_to_schema_dicts(entities)
-    schema_ctx = get_schema_for_uris(schema_disc, schema_dicts, question=question) if schema_dicts else ""
+    # === Step 2: Build EntityProfiles ===
+    profiles = [build_entity_profile(e.uri, e.label, schema_disc) for e in entities if e.uri]
+    analysis = analyze_question(question, profiles)
+    projections = [project(p, analysis) for p in profiles]
+    # Render schema for SPARQL gen and LogicRAG
+    schema_ctx = (
+        "\n\n---\n\n".join(p.render_for_sparql() for p in projections)
+        if projections else ""
+    )
     if verbose:
         print(f"\n{sep}")
-        print("STEP 2: Schema Discovery")
+        print("STEP 2: Schema Discovery (EntityProfile + Projection)")
         print(sep)
-        if schema_ctx:
-            for line in schema_ctx.split("\n")[:20]:
-                print(f"  {line}")
-            if schema_ctx.count("\n") > 20:
-                print(f"  ... ({schema_ctx.count(chr(10))} lines total)")
-        else:
+        for p in projections:
+            print(f"  {p.entity_profile.label}: class={p.primary_class}, "
+                  f"completeness={p.completeness}")
+        if not projections:
             print("  (no URIs to query schema for)")
 
     # === Step 3: Route Decision — rules + ASK verification + LLM fallback ===
     route, route_source = route_question(
-        question, schema_ctx, entities, kg_client, llm_client, model, debug=debug,
+        question, entities, kg_client, llm_client, model,
+        projections=projections, schema_ctx=schema_ctx, debug=debug,
     )
     if verbose:
         print(f"\n{sep}")
@@ -220,14 +222,21 @@ def hybrid_answer(question: str, api_key: str,
             sparql_query="[logicrag_decomposed]",
         )
 
-    # === Step 6: Text Fallback — neighbors + Wikipedia + LLM (last resort) ===
+    # === Step 6: Text Fallback — type-guided discovery + Wikipedia + LLM ===
+    from entity_discovery import discover_context_entities
+
     if verbose:
         print(f"\n{sep}")
-        print("STEP 6a: Context entities — SPARQL neighbors")
+        print("STEP 6a: Context entities — type-guided discovery")
         print(sep)
-    all_entities = _sparql_neighbors(entities, kg_client, verbose=verbose)
+    all_entities = discover_context_entities(
+        entities, projections, kg_client, question=question,
+    )
     if verbose:
-        print(f"  Seed: {len(entities)}, Total: {len(all_entities)}")
+        print(f"  Seed: {len(entities)}, Discovered: {len(all_entities) - len(entities)}")
+        for e in all_entities:
+            if e.source == "sparql_neighbor":
+                print(f"    + {e.label} ({e.discovery_relation})")
 
     # Build minimal KG facts from neighbor relations
     kg_lines = []

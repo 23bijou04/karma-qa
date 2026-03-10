@@ -1,0 +1,165 @@
+"""QuestionAnalysis: deterministic keyword matching for question routing.
+
+Consolidates 6 scattered keyword-to-property maps into KEYWORD_TO_PROPERTIES
+and provides analyze_question() for structured question metadata.
+No LLM calls — purely regex + dictionary lookup.
+"""
+
+import re
+from dataclasses import dataclass, field
+
+from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+
+# Consolidated keyword -> property names (without prefix).
+KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
+    # Roles (bridge patterns)
+    "director": ["director"], "directed": ["director"], "direct": ["director"],
+    "producer": ["producer"], "produced": ["producer"],
+    "writer": ["writer", "author"], "wrote": ["writer", "author"],
+    "written": ["writer", "author"],
+    "author": ["author"],
+    "composer": ["musicComposer"],
+    "starring": ["starring"], "actor": ["starring"], "actress": ["starring"],
+    "founded": ["foundedBy", "foundingDate", "foundingYear"],
+    "founder": ["foundedBy"],
+    # Family
+    "father": ["parent"], "mother": ["parent"],
+    "spouse": ["spouse"], "married": ["spouse"],
+    "parent": ["parent"], "paternal": ["parent"], "maternal": ["parent"],
+    # Life events
+    "born": ["birthDate", "birthPlace"],
+    "birth": ["birthDate", "birthPlace"],
+    "died": ["deathDate", "deathPlace"],
+    "death": ["deathDate", "deathPlace"],
+    # Geography
+    "capital": ["capital"],
+    "population": ["populationTotal"],
+    "nationality": ["nationality", "citizenship"],
+    "country": ["country", "nationality"],
+    # Career/recognition
+    "award": ["award"], "awarded": ["award"],
+    "occupation": ["occupation"],
+    "genre": ["genre"],
+}
+
+COMPARISON_WORDS: set[str] = {
+    "earlier", "later", "older", "younger", "first", "before", "after",
+    "same", "both", "more", "less", "longer", "shorter",
+}
+
+# Bridge keywords that can serve as hop-1 in a 2-hop chain.
+_BRIDGE_KEYWORDS: set[str] = {
+    "director", "directed", "direct", "producer", "produced",
+    "writer", "wrote", "written", "author", "composer",
+    "starring", "actor", "actress",
+    "founded", "founder",
+    "father", "mother", "parent", "paternal", "maternal",
+}
+
+# Hop-2 keywords that indicate the question asks about a property of the hop-1 target.
+_HOP2_KEYWORDS: set[str] = {
+    "born", "birth", "died", "death", "country", "nationality", "capital",
+}
+
+
+@dataclass
+class QuestionAnalysis:
+    """Per-question analysis: what properties/types are needed."""
+
+    target_keywords: list[str]
+    target_properties: frozenset[str]  # {"dbo:director", "dbp:director", ...}
+    expected_target_type: str | None  # "Person" (from PROPERTY_TO_CLASSES)
+    hop_structure: str  # "direct" | "bridge" | "comparison" | "compositional"
+    is_comparison: bool
+    bridge_keyword: str | None  # "director" for "who directed X"
+    bridge_property: str | None  # "director" (property name, no prefix)
+    hop2_keyword: str | None  # "born" for "where was director born"
+    hop2_properties: frozenset[str] | None  # {"dbo:birthDate", "dbo:birthPlace"}
+    target_keywords_set: frozenset[str] = field(default_factory=frozenset)
+
+
+def analyze_question(
+    question: str,
+    entity_profiles: list | None = None,
+) -> QuestionAnalysis:
+    """Analyze question to extract target properties and hop structure.
+
+    No LLM calls — purely deterministic keyword matching + regex.
+
+    Args:
+        question: Raw question text
+        entity_profiles: Optional EntityProfiles (reserved for future use)
+
+    Returns:
+        QuestionAnalysis with structured question metadata.
+    """
+    q_lower = question.lower()
+
+    # 1. Keyword extraction (longest-first to avoid partial matches)
+    sorted_keywords = sorted(KEYWORD_TO_PROPERTIES.keys(), key=len, reverse=True)
+    matched_keywords: list[str] = []
+    for kw in sorted_keywords:
+        if re.search(rf"\b{re.escape(kw)}\b", q_lower):
+            matched_keywords.append(kw)
+
+    # 2. Property expansion
+    all_property_names: set[str] = set()
+    target_props: set[str] = set()
+    for kw in matched_keywords:
+        for prop_name in KEYWORD_TO_PROPERTIES[kw]:
+            all_property_names.add(prop_name)
+            target_props.add(f"dbo:{prop_name}")
+            target_props.add(f"dbp:{prop_name}")
+
+    # 3. Expected target type via PROPERTY_TO_CLASSES
+    type_votes: dict[str, int] = {}
+    for prop_name in all_property_names:
+        for cls in PROPERTY_TO_CLASSES.get(prop_name, []):
+            type_votes[cls] = type_votes.get(cls, 0) + 1
+    expected_type = max(type_votes, key=type_votes.get) if type_votes else None
+
+    # 4. Hop structure detection
+    is_comparison = any(re.search(rf"\b{w}\b", q_lower) for w in COMPARISON_WORDS)
+
+    # Bridge detection: keyword in _BRIDGE_KEYWORDS AND a hop2 keyword also matched
+    bridge_keyword = None
+    bridge_property = None
+    hop2_keyword = None
+    hop2_properties = None
+
+    matched_bridge = [kw for kw in matched_keywords if kw in _BRIDGE_KEYWORDS]
+    matched_hop2 = [kw for kw in matched_keywords if kw in _HOP2_KEYWORDS]
+
+    if matched_bridge and matched_hop2:
+        bridge_keyword = matched_bridge[0]
+        bridge_props = KEYWORD_TO_PROPERTIES[bridge_keyword]
+        bridge_property = bridge_props[0]  # primary property name
+        hop2_keyword = matched_hop2[0]
+        h2_props: set[str] = set()
+        for prop_name in KEYWORD_TO_PROPERTIES[hop2_keyword]:
+            h2_props.add(f"dbo:{prop_name}")
+            h2_props.add(f"dbp:{prop_name}")
+        hop2_properties = frozenset(h2_props)
+
+    # Determine hop_structure
+    if bridge_keyword and hop2_keyword:
+        hop_structure = "bridge"
+    elif is_comparison:
+        hop_structure = "comparison"
+    elif len(matched_keywords) <= 1:
+        hop_structure = "direct"
+    else:
+        hop_structure = "compositional"
+
+    return QuestionAnalysis(
+        target_keywords=matched_keywords,
+        target_properties=frozenset(target_props),
+        expected_target_type=expected_type,
+        hop_structure=hop_structure,
+        is_comparison=is_comparison,
+        bridge_keyword=bridge_keyword,
+        bridge_property=bridge_property,
+        hop2_keyword=hop2_keyword,
+        hop2_properties=hop2_properties,
+        target_keywords_set=frozenset(matched_keywords),
+    )

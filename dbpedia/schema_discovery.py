@@ -206,6 +206,15 @@ PROPERTY_RANGES: dict[str, str] = {
     "dbo:associatedMusicalArtist": "MusicalArtist",
 }
 
+# Auto-generated reverse index: property name -> list of cached class names
+PROPERTY_TO_CLASSES: dict[str, list[str]] = {}
+for _cls_name, _schema in CACHED_CLASS_SCHEMAS.items():
+    for _prop in _schema.get("dbo", []):
+        PROPERTY_TO_CLASSES.setdefault(_prop, []).append(_cls_name)
+    for _prop in _schema.get("dbp", []):
+        PROPERTY_TO_CLASSES.setdefault(_prop, []).append(_cls_name)
+PROPERTY_TO_CLASSES = {k: sorted(set(v)) for k, v in PROPERTY_TO_CLASSES.items()}
+
 
 def format_2hop_lines(cached: dict, max_chains: int = 5, max_props: int = 4) -> list[str]:
     """Format 2-hop chain info from a cached class schema entry.
@@ -421,6 +430,36 @@ class SchemaDiscovery:
         except Exception as e:
             logger.warning(f"Error getting entity class: {e}")
         return None
+
+    def get_all_cached_classes(self, entity_uri: str) -> tuple[list[str], list[str]]:
+        """Get ALL dbo: types and filter to cached classes.
+
+        Returns:
+            (all_dbo_classes, cached_classes) where cached_classes
+            is the subset present in CACHED_CLASS_SCHEMAS.
+        """
+        safe_uri = escape_sparql_uri(entity_uri)
+        query = f"""
+        SELECT ?type WHERE {{
+            <{safe_uri}> a ?type .
+            FILTER(STRSTARTS(STR(?type), "http://dbpedia.org/ontology/"))
+        }}
+        """
+        all_classes = []
+        cached_classes = []
+        try:
+            self.sparql.setQuery(query)
+            results = self.sparql.query().convert()
+            bindings = results.get("results", {}).get("bindings", [])
+            for row in bindings:
+                class_name = row["type"]["value"].split("/")[-1]
+                if class_name not in all_classes:
+                    all_classes.append(class_name)
+                if class_name in CACHED_CLASS_SCHEMAS and class_name not in cached_classes:
+                    cached_classes.append(class_name)
+        except Exception as e:
+            logger.warning(f"Error getting all cached classes: {e}")
+        return all_classes, cached_classes
 
     def get_actual_properties(self, entity_uri: str,
                               property_filter: Optional[list[str]] = None) -> dict[str, list[str]]:

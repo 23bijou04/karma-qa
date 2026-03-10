@@ -25,15 +25,14 @@ if _parent not in sys.path:
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
 from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
+from entity_profile import build_entity_profile  # noqa: E402
+from question_analysis import analyze_question as qa_analyze  # noqa: E402
 from routing import (  # noqa: E402
     _is_comparison_question,
     _rule_based_route,
-    entities_to_schema_dicts,
 )
-from sparql_evaluation import (  # noqa: E402
-    call_llm,
-    get_schema_for_uris,
-)
+from schema_projection import project as sp_project  # noqa: E402
+from sparql_evaluation import call_llm  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -354,20 +353,20 @@ def _resolve_subquestion(
                 if not any(ex.uri == e.uri for ex in all_entities):
                     all_entities.append(e)
 
-    # Step 3: Build schema context (reuse parent + extend for new entities)
-    new_entities = [
-        e for e in all_entities
-        if e.uri and e.uri not in {pe.uri for pe in parent_entities if pe.uri}
+    # Step 3: Build schema context via projections
+    sub_profiles = [
+        build_entity_profile(e.uri, e.label, schema_disc)
+        for e in all_entities if e.uri
     ]
-    if new_entities:
-        new_schema_dicts = entities_to_schema_dicts(new_entities)
-        new_schema = get_schema_for_uris(schema_disc, new_schema_dicts, question=resolved_text) if new_schema_dicts else ""
-        combined_schema = parent_schema_ctx + "\n" + new_schema if new_schema else parent_schema_ctx
-    else:
-        combined_schema = parent_schema_ctx
+    sub_analysis = qa_analyze(resolved_text)
+    sub_projections = [sp_project(p, sub_analysis) for p in sub_profiles]
+    combined_schema = (
+        "\n\n---\n\n".join(p.render_for_sparql() for p in sub_projections)
+        if sub_projections else parent_schema_ctx
+    )
 
     # Step 4: Route decision (rule-based only, no LLM route prompt)
-    route_result = _rule_based_route(resolved_text, combined_schema, debug=debug)
+    route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
     attempt_sparql = route_result is not None or bool(combined_schema)
     if debug:
         tag = route_result[1] if route_result else "no rule match"
@@ -398,7 +397,13 @@ def _resolve_subquestion(
                 print(f"    -> SPARQL answer: {answer}")
             return answer, "sparql", discovered
 
-    # Step 5b: TEXT fallback via unified solver
+    # Step 5b: TEXT fallback via unified solver — enhanced entity discovery
+    if sub_projections:
+        from entity_discovery import discover_context_entities
+        all_entities = discover_context_entities(
+            all_entities, sub_projections, kg_client, question=resolved_text,
+        )
+
     if debug:
         print(f"    [DEBUG] TEXT fallback, entities: {[e.label for e in all_entities]}")
 

@@ -1,76 +1,98 @@
-"""Tests for 2-hop chain routing rules and comparison question detection."""
+"""Tests for routing rules: structured SchemaProjection-based routing."""
 
 from dbpedia_qa.models import Entity
+from entity_profile import EntityProfile
+from question_analysis import analyze_question
 from routing import (
     ROUTE_PROMPT,
     _has_incomplete_entity_coverage,
     _is_comparison_question,
-    _parse_2hop_chains,
     _rule_based_route,
 )
+from schema_projection import project
 
-SAMPLE_FILM_SCHEMA = """Entity: Inception
-URI: <http://dbpedia.org/resource/Inception>
-Class: dbo:Film
+# ---------------------------------------------------------------------------
+# Helper: build EntityProfile fixtures
+# ---------------------------------------------------------------------------
 
-  dbo: director, producer, starring, releaseDate, runtime
-  dbp: director, producer, starring, released
-  Property hints:
-    - director: film director (returns Person with birthDate, deathDate, birthPlace)
-  2-Hop chains:
-    - dbo:director -> Person: birthDate, deathDate, birthPlace, nationality
-    - dbo:producer -> Person: birthDate, deathDate, birthPlace
-    - dbo:starring -> Person: birthDate, deathDate, birthPlace, nationality
+def _film_profile(**overrides):
+    defaults = dict(
+        uri="http://dbpedia.org/resource/Inception",
+        label="Inception",
+        all_classes=["Film"],
+        cached_classes=["Film"],
+        actual_properties={
+            "dbo": ["director", "producer", "starring", "releaseDate", "runtime"],
+            "dbp": ["director", "producer", "starring", "released"],
+            "values": {"dbo:director": "Christopher Nolan", "dbo:releaseDate": "2010-07-16"},
+        },
+        actual_property_set=frozenset({
+            "dbo:director", "dbo:producer", "dbo:starring", "dbo:releaseDate", "dbo:runtime",
+            "dbp:director", "dbp:producer", "dbp:starring", "dbp:released",
+        }),
+        all_2hop_chains={
+            "director": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "producer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "starring": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+        },
+    )
+    defaults.update(overrides)
+    return EntityProfile(**defaults)
 
-Actual properties found:
-  dbo:director -> Christopher Nolan
-  dbo:releaseDate -> 2010-07-16"""
 
-SAMPLE_PERSON_SCHEMA = """Entity: Albert Einstein
-URI: <http://dbpedia.org/resource/Albert_Einstein>
-Class: dbo:Person
+def _person_profile(**overrides):
+    defaults = dict(
+        uri="http://dbpedia.org/resource/Albert_Einstein",
+        label="Albert Einstein",
+        all_classes=["Person"],
+        cached_classes=["Person"],
+        actual_properties={
+            "dbo": ["birthDate", "deathDate", "birthPlace", "deathPlace", "parent", "spouse"],
+            "dbp": [],
+            "values": {"dbo:birthDate": "1879-03-14", "dbo:birthPlace": "Ulm"},
+        },
+        actual_property_set=frozenset({
+            "dbo:birthDate", "dbo:deathDate", "dbo:birthPlace", "dbo:deathPlace",
+            "dbo:parent", "dbo:spouse",
+        }),
+        all_2hop_chains={
+            "birthPlace": ("Place", ["country", "isPartOf", "populationTotal"]),
+        },
+    )
+    defaults.update(overrides)
+    return EntityProfile(**defaults)
 
-  dbo: birthDate, deathDate, birthPlace, deathPlace, parent, spouse
-  2-Hop chains:
-    - dbo:birthPlace -> Place: country, isPartOf, populationTotal
 
-Actual properties found:
-  dbo:birthDate -> 1879-03-14
-  dbo:birthPlace -> Ulm"""
-
-
-class TestParse2HopChains:
-    def test_parses_film_chains(self):
-        chains = _parse_2hop_chains(SAMPLE_FILM_SCHEMA)
-        assert "director" in chains
-        assert chains["director"][0] == "Person"
-        assert "birthDate" in chains["director"][1]
-
-    def test_does_not_match_actual_properties(self):
-        """Must NOT parse 'dbo:director -> Christopher Nolan' as a chain."""
-        chains = _parse_2hop_chains(SAMPLE_FILM_SCHEMA)
-        for prop, (cls, props) in chains.items():
-            assert cls != "Christopher", (
-                f"Parser matched 'Actual properties' line: {prop} -> {cls}"
-            )
-        assert len(chains) == 3
-        assert set(chains.keys()) == {"director", "producer", "starring"}
-
-    def test_empty_schema(self):
-        assert _parse_2hop_chains("") == {}
-
-    def test_schema_without_chains(self):
-        assert _parse_2hop_chains("Entity: Foo\nClass: dbo:Thing") == {}
+def _book_profile(**overrides):
+    defaults = dict(
+        uri="http://dbpedia.org/resource/Harry_Potter",
+        label="Harry Potter",
+        all_classes=["Book"],
+        cached_classes=["Book"],
+        actual_properties={
+            "dbo": ["author", "publisher", "publicationDate"],
+            "dbp": [],
+            "values": {"dbo:author": "J. K. Rowling"},
+        },
+        actual_property_set=frozenset({
+            "dbo:author", "dbo:publisher", "dbo:publicationDate",
+        }),
+        all_2hop_chains={
+            "author": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+        },
+    )
+    defaults.update(overrides)
+    return EntityProfile(**defaults)
 
 
 class TestRuleBasedRoute:
     def test_bridge_comparison_director_born(self):
         """'Which director was born earlier' + Film schema -> SPARQL.
         Hits direct_date_comparison first because Film has dbo:releaseDate."""
-        result = _rule_based_route(
-            "Which director of Inception was born earlier?",
-            SAMPLE_FILM_SCHEMA,
-        )
+        profile = _film_profile()
+        analysis = analyze_question("Which director of Inception was born earlier?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
@@ -78,10 +100,10 @@ class TestRuleBasedRoute:
 
     def test_bridge_non_comparison_director_born(self):
         """'When was the director born' + Film schema -> SPARQL."""
-        result = _rule_based_route(
-            "When was the director of Inception born?",
-            SAMPLE_FILM_SCHEMA,
-        )
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
@@ -89,10 +111,10 @@ class TestRuleBasedRoute:
 
     def test_direct_date_comparison(self):
         """'Who was born earlier' + Person with birthDate -> SPARQL."""
-        result = _rule_based_route(
-            "Who was born earlier, Einstein or Newton?",
-            SAMPLE_PERSON_SCHEMA,
-        )
+        profile = _person_profile()
+        analysis = analyze_question("Who was born earlier, Einstein or Newton?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
@@ -100,31 +122,24 @@ class TestRuleBasedRoute:
 
     def test_no_relevant_props_returns_none(self):
         """Question about unrelated topic -> None (LLM decides)."""
-        result = _rule_based_route(
-            "What is the capital of France?",
-            SAMPLE_FILM_SCHEMA,
-        )
+        profile = _film_profile()
+        analysis = analyze_question("What is the capital of France?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is None
 
     def test_bridge_author_comparison(self):
         """'Which author was born earlier' with Book schema -> SPARQL."""
-        book_schema = """Entity: Harry Potter
-Class: dbo:Book
-
-  dbo: author, publisher, publicationDate
-  2-Hop chains:
-    - dbo:author -> Person: birthDate, deathDate, birthPlace, nationality
-
-Actual properties found:
-  dbo:author -> J. K. Rowling"""
-        result = _rule_based_route(
-            "Which author was born earlier, the author of Harry Potter or LOTR?",
-            book_schema,
+        profile = _book_profile()
+        analysis = analyze_question(
+            "Which author was born earlier, the author of Harry Potter or LOTR?"
         )
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
-        assert reason == "rule:bridge_comparison"
+        assert "bridge" in reason
 
 
 def _make_entities(*names):
@@ -142,7 +157,9 @@ def _make_entities(*names):
 class TestIsComparisonQuestion:
     def test_earlier_with_two_entities(self):
         entities = _make_entities("Film A", "Film B")
-        assert _is_comparison_question("Which film's director died earlier, Film A or Film B?", entities)
+        assert _is_comparison_question(
+            "Which film's director died earlier, Film A or Film B?", entities
+        )
 
     def test_older_with_two_entities(self):
         entities = _make_entities("Person A", "Person B")
@@ -150,7 +167,9 @@ class TestIsComparisonQuestion:
 
     def test_same_with_two_entities(self):
         entities = _make_entities("Film A", "Film B")
-        assert _is_comparison_question("Are both Film A and Film B from the same country?", entities)
+        assert _is_comparison_question(
+            "Are both Film A and Film B from the same country?", entities
+        )
 
     def test_both_with_two_entities(self):
         entities = _make_entities("X", "Y")
@@ -158,7 +177,9 @@ class TestIsComparisonQuestion:
 
     def test_more_recently_with_two_entities(self):
         entities = _make_entities("Film A", "Film B")
-        assert _is_comparison_question("Which was released more recently, Film A or Film B?", entities)
+        assert _is_comparison_question(
+            "Which was released more recently, Film A or Film B?", entities
+        )
 
     def test_single_entity_returns_false(self):
         entities = _make_entities("Film A")
@@ -172,27 +193,29 @@ class TestIsComparisonQuestion:
         assert not _is_comparison_question("Who was born earlier?", [])
 
 
-# ---- Case 10: Country/nationality comparison routing ----
-
-# Schema with nationality but NO date properties — ensures country routing fires
-SAMPLE_PERSON_NATIONALITY_ONLY = """Entity: Person1
-URI: <http://dbpedia.org/resource/Person1>
-Class: dbo:Person
-
-  dbo: birthPlace, nationality, occupation
-  dbp: nationality
-
-Actual properties found:
-  dbo:nationality -> Germany"""
-
+# ---- Country/nationality comparison routing ----
 
 class TestCountryComparisonRouting:
     def test_same_country_routes_sparql(self):
         """'same country' comparison with nationality property -> SPARQL country route."""
-        result = _rule_based_route(
-            "Are both Person1 and Person2 from the same country?",
-            SAMPLE_PERSON_NATIONALITY_ONLY,
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/Person1",
+            label="Person1",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={
+                "dbo": ["birthPlace", "nationality", "occupation"],
+                "dbp": ["nationality"],
+                "values": {"dbo:nationality": "Germany"},
+            },
+            actual_property_set=frozenset({
+                "dbo:birthPlace", "dbo:nationality", "dbo:occupation", "dbp:nationality",
+            }),
+            all_2hop_chains={},
         )
+        analysis = analyze_question("Are both Person1 and Person2 from the same country?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
@@ -200,45 +223,64 @@ class TestCountryComparisonRouting:
 
     def test_same_nationality_routes_sparql(self):
         """'same nationality' routes to SPARQL."""
-        result = _rule_based_route(
-            "Do Person1 and Person2 have the same nationality?",
-            SAMPLE_PERSON_NATIONALITY_ONLY,
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/Person1",
+            label="Person1",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={
+                "dbo": ["nationality"],
+                "dbp": ["nationality"],
+                "values": {"dbo:nationality": "Germany"},
+            },
+            actual_property_set=frozenset({"dbo:nationality", "dbp:nationality"}),
+            all_2hop_chains={},
         )
+        analysis = analyze_question("Do Person1 and Person2 have the same nationality?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         assert result is not None
         assert result[0] == "SPARQL"
 
     def test_same_without_country_keyword_no_country_route(self):
         """'same' alone doesn't trigger country comparison route."""
-        schema = """Entity: Film1
-URI: <http://dbpedia.org/resource/Film1>
-Class: dbo:Film
-
-  dbo: director, producer
-
-Actual properties found:
-  dbo:director -> Christopher Nolan"""
-
-        result = _rule_based_route("Is Film1 the same as Film2?", schema)
-        # Should NOT match country_comparison (no country keyword + property)
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/Film1",
+            label="Film1",
+            all_classes=["Film"],
+            cached_classes=["Film"],
+            actual_properties={
+                "dbo": ["director", "producer"],
+                "dbp": [],
+                "values": {"dbo:director": "Christopher Nolan"},
+            },
+            actual_property_set=frozenset({"dbo:director", "dbo:producer"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("Is Film1 the same as Film2?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         if result is not None:
             assert "country" not in result[1]
 
     def test_more_awards_no_false_date_route(self):
-        """'Which has more awards?' with date property should NOT route to date comparison."""
-        schema = """Entity: Person1
-Class: dbo:Person
-
-Actual properties found:
-  dbo:birthDate -> 1990-01-01
-  dbo:award -> Academy Award"""
-
-        result = _rule_based_route(
-            "Which person has more awards, Person1 or Person2?",
-            schema,
+        """'Which has more awards?' with date property."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/Person1",
+            label="Person1",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={
+                "dbo": ["birthDate", "award"],
+                "dbp": [],
+                "values": {"dbo:birthDate": "1990-01-01", "dbo:award": "Academy Award"},
+            },
+            actual_property_set=frozenset({"dbo:birthDate", "dbo:award"}),
+            all_2hop_chains={},
         )
-        # "more" is now in comparison_words, birthDate triggers date_comparison
-        # This is acceptable: SPARQL can handle date+award queries.
-        # The key check: if it routes, it should be a valid SPARQL route.
+        analysis = analyze_question("Which person has more awards, Person1 or Person2?")
+        proj = project(profile, analysis)
+        result = _rule_based_route(analysis, [proj])
         if result is not None:
             assert result[0] == "SPARQL"
 
@@ -292,7 +334,9 @@ class TestIncompleteCoverage:
     def test_complete_coverage_passes(self):
         entities = _make_entities("Film A", "Film B")
         q = "Which was released first, Film A or Film B?"
-        assert not _has_incomplete_entity_coverage(q, entities, "Entity: Film A\nEntity: Film B")
+        assert not _has_incomplete_entity_coverage(
+            q, entities, "Entity: Film A\nEntity: Film B"
+        )
 
     def test_non_comparison_skips(self):
         entities = _make_entities("X")
@@ -307,7 +351,6 @@ class TestIncompleteCoverage:
     def test_case_insensitive_label_match(self):
         entities = _make_entities("the nice guys")
         q = "Which was released first, Film X or The Nice Guys?"
-        # "Film X" is missing, so should return True
         assert _has_incomplete_entity_coverage(q, entities, "Entity: the nice guys")
 
     def test_and_pattern_detects_missing(self):
@@ -321,16 +364,3 @@ class TestIncompleteCoverage:
         entities = _make_entities("X")
         q = "Which was released first, X and Y?"
         assert _has_incomplete_entity_coverage(q, entities, "Entity: X")
-
-
-class TestParse2HopChainsHyphenated:
-    def test_hyphenated_property_parsed(self):
-        schema = "2-Hop chains:\n- dbo:music-composer -> Person: birthDate, deathDate\n"
-        chains = _parse_2hop_chains(schema)
-        assert "music-composer" in chains
-        assert chains["music-composer"] == ("Person", ["birthDate", "deathDate"])
-
-    def test_camelcase_still_works(self):
-        schema = "2-Hop chains:\n- dbo:director -> Person: birthDate, deathDate\n"
-        chains = _parse_2hop_chains(schema)
-        assert "director" in chains

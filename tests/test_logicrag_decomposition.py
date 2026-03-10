@@ -322,13 +322,27 @@ class TestLogicragSynthesis:
             uri="http://dbpedia.org/resource/X", label="X", source="test",
         )
 
+        mock_profile = MagicMock()
+        mock_profile.actual_property_set = frozenset()
+        mock_projection = MagicMock()
+        mock_projection.render_for_sparql.return_value = "mock schema"
+        mock_projection.entity_profile = mock_profile
+        mock_projection.completeness = "complete"
+
         with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
              patch("sparql_solver.solve",
                    return_value=("Alice", "SELECT ...", [])), \
-             patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
-             patch("routing._rule_based_route", return_value=("SPARQL", "test")), \
-             patch("routing.entities_to_schema_dicts", return_value=[]), \
-             patch("routing._is_comparison_question", return_value=False):
+             patch("logicrag_decomposition.build_entity_profile", return_value=mock_profile), \
+             patch("logicrag_decomposition.qa_analyze", return_value=MagicMock(
+                 target_properties=frozenset(), is_comparison=False, bridge_keyword=None,
+                 bridge_property=None, hop2_keyword=None, hop2_properties=None,
+                 target_keywords=[], target_keywords_set=frozenset(),
+                 hop_structure="direct",
+             )), \
+             patch("logicrag_decomposition.sp_project", return_value=mock_projection), \
+             patch("logicrag_decomposition._rule_based_route",
+                   return_value=("SPARQL", "test")), \
+             patch("logicrag_decomposition._is_comparison_question", return_value=False):
             result = _try_logicrag_decomposition(
                 "Who directed Film X and who directed Film Y?",
                 [mock_entity], "schema", MagicMock(), "model",
@@ -372,13 +386,27 @@ class TestLogicragSynthesis:
                 return "Christopher Nolan", "SELECT ...", []
             return None, "", []
 
+        mock_profile = MagicMock()
+        mock_profile.actual_property_set = frozenset()
+        mock_projection = MagicMock()
+        mock_projection.render_for_sparql.return_value = "mock schema"
+        mock_projection.entity_profile = mock_profile
+        mock_projection.completeness = "complete"
+
         with patch("logicrag_decomposition.call_llm", side_effect=fake_call_llm), \
              patch("sparql_solver.solve", side_effect=fake_solve), \
              patch("text_solver.solve", return_value=None), \
-             patch("logicrag_decomposition.get_schema_for_uris", return_value=""), \
-             patch("routing._rule_based_route", return_value=("SPARQL", "test")), \
-             patch("routing.entities_to_schema_dicts", return_value=[]), \
-             patch("routing._is_comparison_question", return_value=False):
+             patch("logicrag_decomposition.build_entity_profile", return_value=mock_profile), \
+             patch("logicrag_decomposition.qa_analyze", return_value=MagicMock(
+                 target_properties=frozenset(), is_comparison=False, bridge_keyword=None,
+                 bridge_property=None, hop2_keyword=None, hop2_properties=None,
+                 target_keywords=[], target_keywords_set=frozenset(),
+                 hop_structure="direct",
+             )), \
+             patch("logicrag_decomposition.sp_project", return_value=mock_projection), \
+             patch("logicrag_decomposition._rule_based_route",
+                   return_value=("SPARQL", "test")), \
+             patch("logicrag_decomposition._is_comparison_question", return_value=False):
             result = _try_logicrag_decomposition(
                 "When was the director of Inception born?",
                 [mock_entity], "schema", MagicMock(), "model",
