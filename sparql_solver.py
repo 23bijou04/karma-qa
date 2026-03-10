@@ -10,11 +10,11 @@ import json
 import logging
 
 from dbpedia_qa.models import Entity, extract_final_answer
+from llm_provider import call_llm
 from routing import _sparql_results_to_entities
 from sparql_evaluation import (
     ANSWER_PROMPT,
     SPARQL_RETRY_PROMPT,
-    call_llm,
     execute_sparql,
     extract_sparql,
     sanitize_sparql_uris,
@@ -63,7 +63,7 @@ def solve(
         question: The question to answer via SPARQL.
         schema_ctx: Schema context string for the entities.
         entities: Linked entities (used for seed URI tracking).
-        llm_client: Groq LLM client.
+        llm_client: OpenAI-compatible LLM client.
         model: LLM model name.
         known_facts: Optional accumulated facts from prior sub-questions.
             Empty string for direct queries, populated for LogicRAG sub-Qs.

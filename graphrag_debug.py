@@ -3,11 +3,11 @@
 
 Usage:
   python3 graphrag_debug.py "Who destroys the last Horcrux of Voldemort?"
-  python3 graphrag_debug.py "Who directed Inception?" --api-key gsk_...
+  python3 graphrag_debug.py "Who directed Inception?" --api-key $GROQ_API_KEY
+  python3 graphrag_debug.py "Who directed Inception?" --provider github --model gpt-4o
 """
 
 import argparse
-import os
 import re
 import sys
 from pathlib import Path
@@ -17,9 +17,6 @@ _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from groq import Groq
-
-from ablation_study_v3.wiki_utils import llm_call_with_retry
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from dbpedia_qa.models import extract_final_answer
 from graphrag_wiki import (
@@ -43,16 +40,13 @@ def main():
         description="GraphRAG debug: show all intermediate results"
     )
     parser.add_argument("question", type=str, help="The question to answer")
-    parser.add_argument(
-        "--api-key",
-        default=os.environ.get("GROQ_API_KEY"),
-        help="Groq API key (or set GROQ_API_KEY env var)",
-    )
+    parser.add_argument("--api-key", default=None,
+                        help="API key (default: provider-specific env var)")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
+    parser.add_argument("--model", default="llama-3.3-70b-versatile",
+                        help="LLM model name")
     args = parser.parse_args()
-
-    if not args.api_key:
-        print("Error: provide --api-key or set GROQ_API_KEY env var")
-        sys.exit(1)
 
     question = args.question
     sep = "=" * 80
@@ -152,8 +146,9 @@ Instructions:
     print(f"\n{sep}")
     print("STEP 6: LLM RESPONSE")
     print(sep)
-    llm_client = Groq(api_key=args.api_key)
-    response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
+    from llm_provider import call_llm, create_llm_client
+    llm_client = create_llm_client(args.provider, api_key=args.api_key)
+    response = call_llm(llm_client, prompt, args.model, max_tokens=500)
     print(response)
 
     if response:

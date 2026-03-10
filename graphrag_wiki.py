@@ -6,7 +6,7 @@ Pipeline:
   2. Explore KG: follow 1-hop relations to discover related entities
   3. Retrieve Wikipedia text for all entities (URI-based + web search)
   4. Extract relevant sections using question keywords
-  5. LLM reasoning over assembled context (Groq)
+  5. LLM reasoning over assembled context
 
 Usage:
   python3 graphrag_wiki.py "Who destroys the last Horcrux of Voldemort?" --api-key $GROQ_API_KEY
@@ -15,7 +15,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import re
 import sys
 import time
@@ -30,16 +29,15 @@ if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
 from ddgs import DDGS
-from groq import Groq
 
 from ablation_study_v3.wiki_utils import (
     get_wikipedia_text_by_title,
-    llm_call_with_retry,
     uri_to_wiki_title,
 )
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
 from dbpedia_qa.models import Entity, extract_final_answer
+from llm_provider import call_llm, create_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -637,6 +635,48 @@ def retrieve_wikipedia(entities: list[Entity], question: str,
     return raw_texts
 
 
+def retrieve_and_chunk_wikipedia(entities: list[Entity], question: str,
+                                 cache=None,
+                                 verbose: bool = False):
+    """Fetch Wikipedia pages and chunk them for RAG retrieval.
+
+    Reuses existing retrieve_wikipedia() for page fetching, then applies
+    section-aware chunking. Checks cache before re-chunking.
+
+    Args:
+        entities: Entities to retrieve Wikipedia pages for.
+        question: Question (passed through to retrieve_wikipedia).
+        cache: Optional WikiRAGCache instance for chunk persistence.
+        verbose: Print progress.
+
+    Returns:
+        List of WikiChunk objects from all retrieved pages.
+    """
+    from rag.chunker import WikiChunk, chunk_wikipedia_page
+
+    raw_texts = retrieve_wikipedia(entities, question, verbose=verbose)
+    if not raw_texts:
+        return []
+
+    all_chunks: list[WikiChunk] = []
+    for title, text in raw_texts.items():
+        if cache:
+            cached = cache.get_chunks(title)
+            if cached:
+                if verbose:
+                    print(f"    {title}: {len(cached)} chunks (cached)")
+                all_chunks.extend(cached)
+                continue
+        chunks = chunk_wikipedia_page(title, text)
+        if cache:
+            cache.store_chunks(title, chunks)
+        if verbose:
+            print(f"    {title}: {len(chunks)} chunks")
+        all_chunks.extend(chunks)
+
+    return all_chunks
+
+
 # ---------------------------------------------------------------------------
 # 3b. Context assembly (shared with hybrid_qa.py)
 # ---------------------------------------------------------------------------
@@ -736,10 +776,12 @@ def assemble_context(
 # 4. Main pipeline
 # ---------------------------------------------------------------------------
 
-def answer_question(question: str, api_key: str,
-                    verbose: bool = False) -> str:
+def answer_question(question: str, api_key: str = None,
+                    verbose: bool = False,
+                    provider: str = "groq",
+                    model: str = "llama-3.3-70b-versatile") -> str:
     """Answer any question using DBpedia Spotlight + KG exploration + Wikipedia + LLM."""
-    llm_client = Groq(api_key=api_key)
+    llm_client = create_llm_client(provider, api_key=api_key)
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
     schema = SchemaDiscovery()
@@ -808,7 +850,7 @@ Instructions:
         print(f"  Context: {len(context)} chars from {len(filtered_texts)} pages")
         print("  Sending to LLM...")
 
-    response = llm_call_with_retry(llm_client, prompt, max_tokens=500)
+    response = call_llm(llm_client, prompt, model, max_tokens=500)
 
     if verbose and response:
         print("\n  LLM Response:\n")
@@ -836,17 +878,24 @@ def main():
         description="GraphRAG: Answer questions via DBpedia + Wikipedia + LLM"
     )
     parser.add_argument("question", type=str, help="The question to answer")
-    parser.add_argument("--api-key", default=os.environ.get("GROQ_API_KEY"),
-                        help="Groq API key (or set GROQ_API_KEY env var)")
+    parser.add_argument("--api-key", default=None,
+                        help="API key (default: provider-specific env var)")
+    parser.add_argument("--model", default="llama-3.3-70b-versatile",
+                        help="LLM model (default: llama-3.3-70b-versatile)")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show step-by-step pipeline output")
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("Error: provide --api-key or set GROQ_API_KEY env var")
+    try:
+        answer_question(
+            args.question, api_key=args.api_key, verbose=args.verbose,
+            provider=args.provider, model=args.model,
+        )
+    except ValueError as e:
+        print(f"Error: {e}")
         sys.exit(1)
-
-    answer_question(args.question, args.api_key, verbose=args.verbose)
 
 
 if __name__ == "__main__":

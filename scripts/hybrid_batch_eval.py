@@ -27,7 +27,8 @@ if _parent not in sys.path:
 
 from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
 from dbpedia_qa.models import extract_final_answer
-from groq import Groq
+
+from llm_provider import create_llm_client
 
 # Load metrics directly to avoid evaluation/__init__.py heavy imports
 _spec = importlib.util.spec_from_file_location(
@@ -116,19 +117,17 @@ def main():
     from sparql_evaluation import force_ipv4
     force_ipv4()
     parser = argparse.ArgumentParser(description="Hybrid QA batch evaluation")
-    parser.add_argument("--api-key", default=os.environ.get("GROQ_API_KEY"),
-                        help="Groq API key (or set GROQ_API_KEY)")
+    parser.add_argument("--api-key", default=None,
+                        help="API key (default: provider-specific env var)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE)
     parser.add_argument("--output-file", default=DEFAULT_OUTPUT)
     parser.add_argument("--limit", type=int, default=0, help="Max questions (0=all)")
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds between questions (default: 2)")
     args = parser.parse_args()
-
-    if not args.api_key:
-        print("Error: provide --api-key or set GROQ_API_KEY")
-        sys.exit(1)
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -148,9 +147,13 @@ def main():
         print("All questions already processed.")
         return
 
-    # Create shared clients once
+    # Create shared clients once (also validates API key early)
     print("Creating shared clients...")
-    llm_client = Groq(api_key=args.api_key)
+    try:
+        llm_client = create_llm_client(args.provider, api_key=args.api_key)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()

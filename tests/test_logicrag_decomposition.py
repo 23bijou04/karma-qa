@@ -294,10 +294,10 @@ class TestBridgeEntityResolution:
 
 
 class TestLogicragSynthesis:
-    """Verify early exit removal: composition synthesizes, bridge returns directly."""
+    """Verify final answer generation: composition uses FINAL_ANSWER_PROMPT."""
 
-    def test_composition_uses_synthesis_when_multiple_facts(self):
-        """When 2+ sub-Qs resolve, synthesis prompt should be called."""
+    def test_composition_uses_final_answer_prompt(self):
+        """When 2+ sub-Qs resolve, FINAL_ANSWER_PROMPT should be called."""
         from unittest.mock import MagicMock, patch
 
         from logicrag_decomposition import _try_logicrag_decomposition
@@ -305,8 +305,8 @@ class TestLogicragSynthesis:
         llm_calls = []
 
         def fake_call_llm(client, prompt, model):
-            llm_calls.append(prompt[:200])
-            if "Decompose" in prompt:
+            llm_calls.append(prompt[:300])
+            if prompt.startswith("Decompose this"):
                 return json.dumps({
                     "sub_questions": [
                         "Who directed Film X?",
@@ -314,7 +314,12 @@ class TestLogicragSynthesis:
                     ],
                     "dependencies": [],
                 })
-            if "verified facts" in prompt.lower():
+            if "We pre-parsed" in prompt:
+                return json.dumps({
+                    "can_answer": False,
+                    "current_understanding": "need more info",
+                })
+            if "concise" in prompt.lower():
                 return "FINAL ANSWER: Alice directed X and Bob directed Y"
             return "FINAL ANSWER: test"
 
@@ -350,8 +355,8 @@ class TestLogicragSynthesis:
             )
 
         assert result is not None
-        # Synthesis prompt should have been called (contains "verified facts")
-        assert any("verified facts" in c.lower() for c in llm_calls)
+        # FINAL_ANSWER_PROMPT should have been called (contains "concise")
+        assert any("concise" in c.lower() for c in llm_calls)
 
     def test_bridge_single_fact_returns_directly(self):
         """When only 1 sub-Q resolves, return directly without synthesis."""
@@ -428,15 +433,14 @@ HAS_API_KEY = bool(os.environ.get("GROQ_API_KEY"))
 
 @pytest.mark.skipif(not HAS_API_KEY, reason="GROQ_API_KEY not set")
 class TestLogicragIntegration:
-    """Live integration tests against Groq API + DBpedia."""
+    """Live integration tests against LLM API + DBpedia."""
 
     def test_bridge_question_decomposes(self):
         """Multi-hop bridge question should decompose into 2+ sub-Qs."""
-        from groq import Groq
-
+        from llm_provider import create_llm_client
         from logicrag_decomposition import _decompose_subquestions
 
-        client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        client = create_llm_client("groq", api_key=os.environ["GROQ_API_KEY"])
         entities = [Entity(
             uri="http://dbpedia.org/resource/Inception",
             label="Inception", source="test",
@@ -452,11 +456,10 @@ class TestLogicragIntegration:
 
     def test_single_hop_returns_none(self):
         """Single-hop question should NOT decompose."""
-        from groq import Groq
-
+        from llm_provider import create_llm_client
         from logicrag_decomposition import _decompose_subquestions
 
-        client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        client = create_llm_client("groq", api_key=os.environ["GROQ_API_KEY"])
         entities = [Entity(
             uri="http://dbpedia.org/resource/Inception",
             label="Inception", source="test",
@@ -483,11 +486,10 @@ class TestLogicragIntegration:
 
     def test_comparison_question_decomposes(self):
         """Comparison question should decompose into parallel sub-Qs."""
-        from groq import Groq
-
+        from llm_provider import create_llm_client
         from logicrag_decomposition import _decompose_subquestions
 
-        client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        client = create_llm_client("groq", api_key=os.environ["GROQ_API_KEY"])
         entities = [
             Entity(uri="http://dbpedia.org/resource/Albert_Einstein",
                    label="Albert Einstein", source="test"),

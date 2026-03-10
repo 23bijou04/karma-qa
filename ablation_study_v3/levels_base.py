@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from groq import Groq
+from openai import OpenAI
 from SPARQLWrapper import SPARQLWrapper
 
 from .wiki_utils import (
@@ -51,7 +51,7 @@ def _get_all_entity_names(evidences: list) -> list[str]:
     return names
 
 
-def answer_level_0(question: dict, client: Groq, **kwargs) -> LevelResult:
+def answer_level_0(question: dict, client: OpenAI, **kwargs) -> LevelResult:
     """Level 0: No KG. Pure Wikipedia search + LLM answer."""
     start = time.time()
     result = LevelResult(
@@ -103,7 +103,7 @@ Answer:"""
 
 
 def _answer_via_wiki_extraction(
-    question: dict, client: Groq, entity_texts: dict[str, Optional[str]],
+    question: dict, client: OpenAI, entity_texts: dict[str, Optional[str]],
 ) -> tuple[Optional[str], int]:
     """Answer a question by extracting facts from Wikipedia texts.
 
@@ -196,7 +196,7 @@ def _answer_via_wiki_extraction(
 
 
 def answer_level_1(
-    question: dict, client: Groq, sparql: Optional[SPARQLWrapper] = None, **kwargs,
+    question: dict, client: OpenAI, sparql: Optional[SPARQLWrapper] = None, **kwargs,
 ) -> LevelResult:
     """Level 1: Entity-Only KG. DBpedia for entity linking, Wikipedia for answers."""
     start = time.time()
@@ -239,7 +239,7 @@ def answer_level_1(
     return result
 
 
-def answer_level_4(question: dict, client: Groq, **kwargs) -> LevelResult:
+def answer_level_4(question: dict, client: OpenAI, **kwargs) -> LevelResult:
     """Level 4: Oracle KG. Use ground-truth evidence triples directly."""
     start = time.time()
     result = LevelResult(

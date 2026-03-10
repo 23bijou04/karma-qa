@@ -5,7 +5,7 @@ import re
 import time
 from typing import Optional
 
-from groq import Groq
+from openai import OpenAI
 from SPARQLWrapper import JSON, SPARQLWrapper
 
 from .levels_base import LevelResult, _answer_via_wiki_extraction, _get_all_entity_names
@@ -113,7 +113,7 @@ def _sparql_get_value(
 
 def _answer_comparison_with_values(
     question: dict, entity1: str, val1: str, entity2: str, val2: str,
-    client: Optional[Groq] = None,
+    client: Optional[OpenAI] = None,
 ) -> tuple[Optional[str], int]:
     """Answer a comparison question given two values. Returns (answer, llm_calls)."""
     q_lower = question["question"].lower()
@@ -144,7 +144,7 @@ def _answer_comparison_with_values(
 
 
 def answer_level_2(
-    question: dict, client: Groq, sparql: Optional[SPARQLWrapper] = None, **kwargs,
+    question: dict, client: OpenAI, sparql: Optional[SPARQLWrapper] = None, **kwargs,
 ) -> LevelResult:
     """Level 2: Entity + Important Relations. KG for high-coverage props, Wikipedia fallback."""
     start = time.time()
@@ -212,7 +212,7 @@ def answer_level_2(
 
 
 def _assemble_answer_from_hops(
-    question: dict, hop_values: dict, client: Groq, result: LevelResult,
+    question: dict, hop_values: dict, client: OpenAI, result: LevelResult,
 ) -> Optional[str]:
     """Assemble the final answer from per-hop extracted values."""
     qtype = question["type"]
@@ -265,7 +265,7 @@ def _assemble_answer_from_hops(
 
 
 def answer_level_3(
-    question: dict, client: Groq, sparql: Optional[SPARQLWrapper] = None, **kwargs,
+    question: dict, client: OpenAI, sparql: Optional[SPARQLWrapper] = None, **kwargs,
 ) -> LevelResult:
     """Level 3: Full KG + Wikipedia Fallback. Try all property mappings first."""
     start = time.time()

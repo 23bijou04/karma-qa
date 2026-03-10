@@ -2,14 +2,15 @@
 """LLM judge for hybrid evaluation results.
 
 Reads a JSONL file from hybrid_batch_eval.py and adds a 'judge_correct'
-boolean field using Groq LLM semantic equivalence check.
+boolean field using LLM semantic equivalence check.
 Resume-safe: skips already-judged question IDs.
 
 Usage:
-    GROQ_API_KEY=$KEY python3 scripts/judge_hybrid_eval.py \
-        data/eval_1000q/hybrid_eval_346_revised.jsonl
+    python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid_eval_1000.jsonl
+    python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider github --model gpt-4o
 """
 
+import argparse
 import json
 import os
 import sys
@@ -18,7 +19,7 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from groq import Groq  # noqa: E402
+from llm_provider import create_llm_client  # noqa: E402
 
 JUDGE_PROMPT = """Judge if predicted answer is semantically equivalent to gold answer.
 Question: {question}
@@ -44,18 +45,24 @@ def judge(client, question, gold, pred, model="llama-3.3-70b-versatile"):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 scripts/judge_hybrid_eval.py <input.jsonl>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="LLM judge for hybrid evaluation results")
+    parser.add_argument("input_file", help="Input JSONL file from hybrid_batch_eval.py")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
+    parser.add_argument("--model", default="llama-3.3-70b-versatile",
+                        help="LLM model name")
+    parser.add_argument("--api-key", default=None,
+                        help="API key (default: provider-specific env var)")
+    args = parser.parse_args()
 
-    input_path = sys.argv[1]
+    input_path = args.input_file
     output_path = input_path.replace(".jsonl", "_judged.jsonl")
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        print("Error: set GROQ_API_KEY environment variable")
-        sys.exit(1)
 
-    client = Groq(api_key=api_key)
+    try:
+        client = create_llm_client(args.provider, api_key=args.api_key)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
     # Load already-judged IDs for resume (crash-resilient)
     done = set()
@@ -91,7 +98,7 @@ def main():
             try:
                 rec["judge_correct"] = judge(
                     client, rec["question"], rec["gold_answer"],
-                    rec["predicted_answer"],
+                    rec["predicted_answer"], model=args.model,
                 )
             except Exception as e:
                 print(f"  Error judging {rec['question_id']}: {e}")

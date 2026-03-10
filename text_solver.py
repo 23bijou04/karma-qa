@@ -9,9 +9,59 @@ import logging
 from ablation_study_v3.wiki_utils import uri_to_wiki_title
 from dbpedia_qa.models import Entity, extract_final_answer
 from graphrag_wiki import assemble_context, retrieve_wikipedia
-from sparql_evaluation import call_llm
+from llm_provider import call_llm
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# RAG import guard — falls back to keyword path if deps not installed
+# ---------------------------------------------------------------------------
+try:
+    from rag.cache import WikiRAGCache
+    from rag.reranker import Reranker
+    from rag.vector_store import RAGIndex
+
+    _RAG_AVAILABLE = True
+except ImportError:
+    _RAG_AVAILABLE = False
+
+# Module-level singletons (lazy-initialized on first RAG call)
+_rag_cache: "WikiRAGCache | None" = None
+_reranker: "Reranker | None" = None
+
+
+def _get_rag_cache():
+    global _rag_cache
+    if _rag_cache is None:
+        _rag_cache = WikiRAGCache()
+    return _rag_cache
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        _reranker = Reranker()
+    return _reranker
+
+
+def _assemble_from_chunks(chunks, kg_facts: str = "",
+                          max_chars: int = 12_000) -> str:
+    """Build LLM context string from reranked WikiChunks within char budget."""
+    parts: list[str] = []
+    total = 0
+    if kg_facts:
+        parts.append(kg_facts)
+        total += len(kg_facts)
+
+    for chunk in chunks:
+        entry = f"=== {chunk.page_title} / {chunk.section_header} ===\n{chunk.text}"
+        if total + len(entry) > max_chars:
+            break
+        parts.append(entry)
+        total += len(entry)
+
+    return "\n\n".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -59,26 +109,23 @@ def solve(
 ) -> str | None:
     """Retrieve Wikipedia text, assemble context, LLM reasoning.
 
+    Uses RAG (bi-encoder + cross-encoder) if dependencies installed,
+    otherwise falls back to legacy keyword-scored extraction.
+
     Args:
         question: The question to answer.
         entities: Entities to retrieve Wikipedia pages for.
         known_facts: Pre-formatted KG facts or accumulated sub-Q answers.
-        relation_hints: Title->relation map for section boosting.
-        llm_client: Groq LLM client.
+        relation_hints: Title->relation map for section boosting / query augmentation.
+        llm_client: OpenAI-compatible LLM client.
         model: LLM model name.
         verbose: Print pipeline steps.
         is_subquestion: Use sub-question prompt (shorter, more direct).
-        seed_titles: Override seed titles for budget allocation.
+        seed_titles: Override seed titles for budget allocation / score boost.
 
     Returns:
         Answer string if successful, None if resolution fails.
     """
-    raw_texts = retrieve_wikipedia(entities, question, verbose=verbose and not is_subquestion)
-    if not raw_texts:
-        if verbose:
-            print("  No Wikipedia text retrieved.")
-        return None
-
     # Build seed titles if not provided
     if seed_titles is None:
         seed_titles = {
@@ -86,11 +133,19 @@ def solve(
             if e.uri and "/resource/" in e.uri
         }
 
-    context, _ = assemble_context(
-        raw_texts, question, seed_titles=seed_titles,
-        kg_facts=known_facts, relation_hints=relation_hints or {},
-        verbose=verbose and not is_subquestion,
-    )
+    if _RAG_AVAILABLE:
+        context = _solve_rag(
+            question, entities, known_facts, relation_hints or {},
+            seed_titles, verbose and not is_subquestion,
+        )
+    else:
+        context = _solve_keyword(
+            question, entities, known_facts, relation_hints or {},
+            seed_titles, verbose and not is_subquestion,
+        )
+
+    if context is None:
+        return None
 
     # Choose prompt
     if is_subquestion:
@@ -109,3 +164,52 @@ def solve(
         print(f"  TEXT answer: {answer}")
 
     return answer
+
+
+def _solve_rag(question, entities, known_facts, relation_hints,
+               seed_titles, verbose) -> str | None:
+    """RAG path: bi-encoder retrieval → cross-encoder reranking → context assembly."""
+    from graphrag_wiki import retrieve_and_chunk_wikipedia
+
+    cache = _get_rag_cache()
+    chunks = retrieve_and_chunk_wikipedia(entities, question, cache=cache, verbose=verbose)
+    if not chunks:
+        if verbose:
+            print("  No Wikipedia chunks retrieved (RAG path).")
+        return None
+
+    rag_index = RAGIndex()
+    rag_index.index_chunks(chunks)
+    top_chunks = rag_index.retrieve(question, top_k=20, seed_titles=seed_titles)
+
+    if not top_chunks:
+        if verbose:
+            print("  RAG retrieval returned no results.")
+        return None
+
+    reranker = _get_reranker()
+    reranked = reranker.rerank(
+        question, top_chunks, top_k=8, relation_hints=relation_hints,
+    )
+
+    context = _assemble_from_chunks(reranked, known_facts, max_chars=12_000)
+    if verbose:
+        print(f"  RAG context: {len(reranked)} chunks, {len(context)} chars")
+    return context
+
+
+def _solve_keyword(question, entities, known_facts, relation_hints,
+                   seed_titles, verbose) -> str | None:
+    """Legacy keyword path: keyword-scored paragraph extraction."""
+    raw_texts = retrieve_wikipedia(entities, question, verbose=verbose)
+    if not raw_texts:
+        if verbose:
+            print("  No Wikipedia text retrieved.")
+        return None
+
+    context, _ = assemble_context(
+        raw_texts, question, seed_titles=seed_titles,
+        kg_facts=known_facts, relation_hints=relation_hints,
+        verbose=verbose,
+    )
+    return context
