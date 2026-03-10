@@ -158,9 +158,12 @@ def hybrid_answer(question: str, api_key: str,
     profiles = [build_entity_profile(e.uri, e.label, schema_disc) for e in entities if e.uri]
     analysis = analyze_question(question, profiles)
     projections = [project(p, analysis) for p in profiles]
-    # Render schema for SPARQL gen and LogicRAG
+    # Render schema for SPARQL gen and LogicRAG (prefixes once at top)
     schema_ctx = (
-        "\n\n---\n\n".join(p.render_for_sparql() for p in projections)
+        "\n\n---\n\n".join(
+            p.render_for_sparql(include_prefixes=(i == 0))
+            for i, p in enumerate(projections)
+        )
         if projections else ""
     )
     if verbose:

@@ -8,7 +8,7 @@ No LLM calls — purely regex + dictionary lookup.
 import re
 from dataclasses import dataclass, field
 
-from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_RANGES, PROPERTY_TO_CLASSES
 
 # Consolidated keyword -> property names (without prefix).
 KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
@@ -140,6 +140,15 @@ def analyze_question(
             h2_props.add(f"dbo:{prop_name}")
             h2_props.add(f"dbp:{prop_name}")
         hop2_properties = frozenset(h2_props)
+
+    # For bridge questions, override expected_type with the PROPERTY_RANGES target
+    # of the bridge property. E.g., "When was the director born?" -> bridge is
+    # "director", PROPERTY_RANGES["dbo:director"] = "Person", so target = Person
+    # (not MusicalArtist from raw vote count).
+    if bridge_keyword and hop2_keyword:
+        bridge_range_key = f"dbo:{bridge_props[0]}" if bridge_props else None
+        if bridge_range_key and bridge_range_key in PROPERTY_RANGES:
+            expected_type = PROPERTY_RANGES[bridge_range_key]
 
     # Determine hop_structure
     if bridge_keyword and hop2_keyword:

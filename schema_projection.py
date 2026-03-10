@@ -49,19 +49,21 @@ class SchemaProjection:
             lines.append(f"Missing: {', '.join(self.missing_hops)}")
         return "\n".join(lines)
 
-    def render_for_sparql(self) -> str:
+    def render_for_sparql(self, include_prefixes: bool = True) -> str:
         """~300 token detail for SPARQL generation."""
         profile = self.entity_profile
-        lines = [
-            "SPARQL Prefixes:",
-            "  PREFIX dbr: <http://dbpedia.org/resource/>",
-            "  PREFIX dbo: <http://dbpedia.org/ontology/>",
-            "  PREFIX dbp: <http://dbpedia.org/property/>",
-            "  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>",
-            "",
-            f"Entity: {profile.label}",
-            f"URI: <{profile.uri}>",
-        ]
+        lines = []
+        if include_prefixes:
+            lines.extend([
+                "SPARQL Prefixes:",
+                "  PREFIX dbr: <http://dbpedia.org/resource/>",
+                "  PREFIX dbo: <http://dbpedia.org/ontology/>",
+                "  PREFIX dbp: <http://dbpedia.org/property/>",
+                "  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>",
+                "",
+            ])
+        lines.append(f"Entity: {profile.label}")
+        lines.append(f"URI: <{profile.uri}>")
         if self.primary_class:
             lines.append(f"Class: dbo:{self.primary_class}")
 
@@ -72,10 +74,17 @@ class SchemaProjection:
                 lines.append(f"  dbo: {', '.join(cached['dbo'][:10])}")
             if cached.get("dbp"):
                 lines.append(f"  dbp: {', '.join(cached['dbp'][:10])}")
+            # Filter property hints to question-relevant properties only
             if cached.get("descriptions"):
-                lines.append("  Property hints:")
-                for prop, desc in list(cached["descriptions"].items())[:5]:
-                    lines.append(f"    - {prop}: {desc}")
+                relevant_names = self._relevant_property_names()
+                filtered = {
+                    k: v for k, v in cached["descriptions"].items()
+                    if k in relevant_names
+                } if relevant_names else dict(list(cached["descriptions"].items())[:5])
+                if filtered:
+                    lines.append("  Property hints:")
+                    for prop, desc in filtered.items():
+                        lines.append(f"    - {prop}: {desc}")
             # Only include relevant chains
             if self.relevant_chains:
                 chain_lines = format_2hop_lines(
@@ -99,6 +108,19 @@ class SchemaProjection:
                 lines.append(f"  dbp:{prop} -> {val}")
 
         return "\n".join(lines)
+
+    def _relevant_property_names(self) -> set[str]:
+        """Property names (without prefix) relevant to this question."""
+        names = {p.split(":")[-1] for p in self.relevant_properties}
+        for prop, (_, tprops) in self.relevant_chains.items():
+            names.add(prop)
+            names.update(tprops)
+        analysis = self.question_analysis
+        if analysis.hop2_properties:
+            names.update(p.split(":")[-1] for p in analysis.hop2_properties)
+        if analysis.bridge_property:
+            names.add(analysis.bridge_property)
+        return names
 
     def render_for_text(self) -> str:
         """~50 token hint for TEXT route entity discovery."""

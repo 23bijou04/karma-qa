@@ -361,7 +361,10 @@ def _resolve_subquestion(
     sub_analysis = qa_analyze(resolved_text)
     sub_projections = [sp_project(p, sub_analysis) for p in sub_profiles]
     combined_schema = (
-        "\n\n---\n\n".join(p.render_for_sparql() for p in sub_projections)
+        "\n\n---\n\n".join(
+            p.render_for_sparql(include_prefixes=(i == 0))
+            for i, p in enumerate(sub_projections)
+        )
         if sub_projections else parent_schema_ctx
     )
 

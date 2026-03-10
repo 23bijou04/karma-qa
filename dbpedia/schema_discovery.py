@@ -492,6 +492,7 @@ class SchemaDiscovery:
             FILTER(!CONTAINS(STR(?property), "abstract"))
             FILTER(!CONTAINS(STR(?property), "thumbnail"))
             FILTER(!CONTAINS(STR(?property), "isPrimaryTopicOf"))
+            FILTER(!CONTAINS(STR(?property), "description"))
             {filter_clause}
         }}
         LIMIT 50

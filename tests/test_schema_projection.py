@@ -120,6 +120,25 @@ class TestRendering:
         assert "PREFIX dbr:" in output
         assert "PREFIX dbo:" in output
 
+    def test_render_for_sparql_no_prefix(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql(include_prefixes=False)
+        assert "PREFIX" not in output
+        assert "Entity: Inception" in output
+
+    def test_render_for_sparql_hints_filtered(self):
+        """Property hints should only show question-relevant properties."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Albert Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        # birthDate is relevant to "born", should be in hints
+        assert "birthDate" in output
+        # father/mother are NOT relevant to "born", should be filtered out of hints
+        assert "father of the person" not in output
+
     def test_render_for_text_includes_type(self):
         profile = _film_profile()
         analysis = analyze_question("Where was the director of Inception born?")

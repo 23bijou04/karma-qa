@@ -58,6 +58,13 @@ class TestAnalyzeQuestion:
         result = analyze_question("When was the director of Inception born?")
         assert result.bridge_property == "director"
 
+    def test_bridge_expected_target_type_is_range(self):
+        """Bridge question: expected_target_type should be the PROPERTY_RANGES target
+        of the bridge property, not raw vote winner."""
+        result = analyze_question("When was the director of Inception born?")
+        # bridge_property="director", PROPERTY_RANGES["dbo:director"]="Person"
+        assert result.expected_target_type == "Person"
+
     def test_compositional_multiple_keywords(self):
         """Multiple keywords without clear bridge -> compositional."""
         result = analyze_question("What is the capital of the country where Einstein was born?")
