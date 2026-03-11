@@ -165,18 +165,33 @@ python grasp_evaluation.py --limit 5
 
 # LLM-SPARQL evaluation
 python sparql_evaluation.py --limit 5
-
-# Offline re-evaluation of GRASP results
-python grasp_evaluate_results.py data/grasp_eval_dbpedia.jsonl
-
-# Failure analysis (questions where both systems fail)
-python graphrag_eval_failures.py
 ```
 
 ### Ablation Study
 
 ```bash
 python -m ablation_study_v3.runner --api-key $GROQ_API_KEY --n-per-type 5 --levels 0 1 4
+```
+
+### Utility Scripts
+
+All utility scripts live in `scripts/`. See [Scripts](#scripts) for full descriptions.
+
+```bash
+# Hybrid batch evaluation (full 1000q run)
+python scripts/hybrid_batch_eval.py --api-key $GROQ_API_KEY --limit 5
+
+# LLM judge for hybrid results
+python scripts/judge_hybrid_eval.py data/eval_1000q/hybrid_eval_1000.jsonl
+
+# Unified comparison across all systems
+python scripts/unified_comparison.py
+
+# Offline re-evaluation of GRASP results
+python scripts/grasp_evaluate_results.py data/grasp_eval_dbpedia.jsonl
+
+# Failure analysis (questions where both systems fail)
+python scripts/graphrag_eval_failures.py
 ```
 
 ## Configuration
@@ -195,14 +210,17 @@ export GROQ_API_KEY="your-key-here"
 ```
 dbpedia_qa/
 +-- __init__.py              # Package exports (Entity, Triple)
-+-- models.py                # Data models (Entity, Triple)
++-- models.py                # Data models (Entity, Triple, HybridResult)
++-- llm_provider.py          # Unified LLM provider factory (Groq, GitHub Models)
 +-- graphrag_wiki.py         # GraphRAG pipeline: Spotlight -> KG -> Wikipedia -> LLM
 +-- graphrag_debug.py        # Debug script showing all intermediate results
 +-- hybrid_qa.py             # Main pipeline: schema-routed SPARQL + text fallback
++-- logicrag_decomposition.py# LogicRAG sub-question decomposition for multi-hop
++-- routing.py               # Two-stage routing (deterministic rules + LLM fallback)
++-- sparql_solver.py         # SPARQL query generation and execution
++-- text_solver.py           # Text retrieval path (KG explore + Wikipedia + LLM)
 +-- sparql_evaluation.py     # LLM-SPARQL evaluation pipeline
 +-- grasp_evaluation.py      # GRASP WebSocket evaluation client
-+-- grasp_evaluate_results.py# Offline re-evaluation of GRASP results
-+-- graphrag_eval_failures.py# Failure analysis across systems
 +-- dbpedia/
 |   +-- client.py            # SPARQL client (queries, neighbors, type-aware)
 |   +-- entity_linker.py     # DBpedia Spotlight integration + fallback
@@ -210,6 +228,12 @@ dbpedia_qa/
 |   +-- cache.py             # In-memory cache manager
 +-- evaluation/
 |   +-- metrics.py           # Official EM/F1 computation
++-- rag/                     # Semantic retrieval (bi-encoder + cross-encoder)
+|   +-- chunker.py           # Section-aware Wikipedia text splitting
+|   +-- vector_store.py      # FAISS index + sentence-transformers
+|   +-- reranker.py          # Cross-encoder reranking with relation hints
+|   +-- cache.py             # SQLite persistence (data/wiki_cache.db)
++-- scripts/                 # Utility scripts (see Scripts section below)
 +-- ablation_study_v3/
 |   +-- runner.py            # Ablation study runner
 |   +-- sampling.py          # Stratified sampling (50/type, seed=42)
@@ -219,15 +243,12 @@ dbpedia_qa/
 |   +-- wiki_utils.py        # Wikipedia text utilities
 |   +-- reporting.py         # Report generation
 +-- data/
-|   +-- coverage_analysis_800.json   # 276 answerable questions
+|   +-- dev_full.json                # 12,576 questions (gitignored)
+|   +-- eval_1000q/                  # 1000-question evaluation set
 |   +-- grasp_eval_dbpedia*.jsonl    # GRASP evaluation results
 |   +-- sparql_eval*.jsonl           # SPARQL evaluation results
-|   +-- graphrag_eval_failures*.jsonl# Failure analysis data
-|   +-- both_systems_failures.json   # Cross-system failure comparison
 +-- docs/
     +-- wikimultihop-dbpedia-answerability.md  # Coverage analysis
-    +-- evaluation-section.md                  # Comparative evaluation
-    +-- hybrid-pipeline-report.md              # Hybrid pipeline design
 ```
 
 ## Ablation Study
@@ -241,6 +262,29 @@ The `ablation_study_v3/` module evaluates 5 levels of KG detail to measure the i
 | 2 | Entity + Important Relations | Key properties from schema discovery |
 | 3 | Full KG + Wikipedia Fallback | Complete KG triples + Wikipedia text |
 | 4 | Oracle KG | Ground truth evidence triples |
+
+## Scripts
+
+All utility scripts live in `scripts/` and are organized by purpose.
+
+### Benchmark Preparation
+
+| Script | Purpose |
+|--------|---------|
+| `extract_linearrag_1k.py` | Extract LinearRAG's 1K question subset from `dev_full.json` and run DBpedia coverage analysis. Outputs `data/coverage_analysis_1000_linearrag.json`. |
+| `check_answer_sources.py` | Check whether gold answers are reachable via DBpedia properties or Wikipedia text. Two-phase: offline property check + API-based Wikipedia retrieval. Outputs `data/eval_1000q/answer_source_analysis_1000.json`. |
+| `classify_1000q_scenarios.py` | Classify questions into KG coverage scenarios (A-F: KG_COMPLETE through ENTITY_NOT_FOUND_PLUS_PROP). Outputs `data/eval_1000q/scenario_classification_1000.json`. |
+
+### Evaluation
+
+| Script | Purpose |
+|--------|---------|
+| `hybrid_batch_eval.py` | Batch evaluation of Hybrid QA on all 1,000 questions. JSONL append-only with resume. |
+| `judge_hybrid_eval.py` | LLM judge for hybrid results — adds `judge_correct` field via semantic equivalence check. Resume-safe. |
+| `grasp_evaluate_results.py` | Offline re-scoring of GRASP results with heuristic cleaning, containment check, LLM judge, and error analysis. |
+| `graphrag_eval_failures.py` | Evaluate hybrid pipeline on the 19 questions that defeat both SPARQL and GRASP. Saves verbose output per question. |
+| `unified_comparison.py` | Unified comparison across Hybrid, SPARQL, GRASP, and LinearRAG with Wilson CIs and McNemar tests. |
+| `compare_evals_statistical.py` | McNemar test + per-type breakdown comparing two judged JSONL files (baseline vs revised). |
 
 ## Key Technical Decisions
 
