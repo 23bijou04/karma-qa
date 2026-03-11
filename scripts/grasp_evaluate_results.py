@@ -17,11 +17,16 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from collections import defaultdict
 
-from evaluation.metrics import compute_containment, compute_em, compute_f1
-from grasp_evaluation import clean_verbose_answer
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from evaluation.metrics import compute_containment, compute_em, compute_f1  # noqa: E402
+from grasp_evaluation import clean_verbose_answer  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Data loading
