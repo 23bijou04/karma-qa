@@ -1,5 +1,5 @@
 """Tests for 2-hop chain inference data structures and property filtering."""
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -176,3 +176,97 @@ class TestDescriptionFilter:
         # Both description filter and custom filter present
         assert 'FILTER(!CONTAINS(STR(?property), "description"))' in query
         assert 'CONTAINS(LCASE(STR(?property)), "birth")' in query
+
+
+# ---------------------------------------------------------------------------
+# Additional format_2hop_lines tests
+# ---------------------------------------------------------------------------
+
+class TestFormat2HopLinesDeep:
+    def test_max_props_limit(self):
+        """max_props=1 limits each chain line to 1 property."""
+        lines = format_2hop_lines(CACHED_CLASS_SCHEMAS["Film"], max_props=1)
+        for line in lines[1:]:  # skip header
+            # Each line: "    - dbo:prop -> Class: prop1"
+            colon_parts = line.split(": ", 1)
+            if len(colon_parts) > 1:
+                props_str = colon_parts[-1]
+                assert "," not in props_str, f"Expected 1 prop, got: {props_str}"
+
+    def test_max_props_default_is_4(self):
+        """Default max_props=4 allows up to 4 properties per chain."""
+        # Film.director -> Person has 4 props: birthDate, deathDate, birthPlace, nationality
+        lines = format_2hop_lines(CACHED_CLASS_SCHEMAS["Film"])
+        director_line = [ln for ln in lines if "director" in ln]
+        assert len(director_line) == 1
+        props = director_line[0].split(": ")[-1].split(", ")
+        assert len(props) == 4
+
+    def test_person_chains_rendered(self):
+        lines = format_2hop_lines(CACHED_CLASS_SCHEMAS["Person"])
+        assert lines[0] == "  2-Hop chains:"
+        assert any("parent" in line for line in lines)
+        assert any("birthPlace" in line for line in lines)
+
+    def test_company_chains_rendered(self):
+        lines = format_2hop_lines(CACHED_CLASS_SCHEMAS["Company"])
+        assert any("foundedBy" in line for line in lines)
+        assert any("locationCity" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# PROPERTY_TO_CLASSES: dbp properties coverage
+# ---------------------------------------------------------------------------
+
+class TestPropertyToClassesDbp:
+    def test_father_maps_to_person(self):
+        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        assert "father" in PROPERTY_TO_CLASSES
+        assert "Person" in PROPERTY_TO_CLASSES["father"]
+
+    def test_mother_maps_to_person(self):
+        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        assert "mother" in PROPERTY_TO_CLASSES
+        assert "Person" in PROPERTY_TO_CLASSES["mother"]
+
+    def test_founder_maps_to_company(self):
+        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        assert "founder" in PROPERTY_TO_CLASSES
+        assert "Company" in PROPERTY_TO_CLASSES["founder"]
+
+    def test_all_dbp_properties_indexed(self):
+        """Every dbp property in CACHED_CLASS_SCHEMAS is in PROPERTY_TO_CLASSES."""
+        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        for cls_name, schema in CACHED_CLASS_SCHEMAS.items():
+            for prop in schema.get("dbp", []):
+                assert prop in PROPERTY_TO_CLASSES, (
+                    f"dbp prop '{prop}' from {cls_name} missing"
+                )
+                assert cls_name in PROPERTY_TO_CLASSES[prop]
+
+
+# ---------------------------------------------------------------------------
+# CACHED_CLASS_SCHEMAS structural integrity
+# ---------------------------------------------------------------------------
+
+class TestCachedClassSchemasIntegrity:
+    @pytest.mark.parametrize("cls_name", list(CACHED_CLASS_SCHEMAS.keys()))
+    def test_has_descriptions(self, cls_name):
+        """Every cached class should have a descriptions dict."""
+        schema = CACHED_CLASS_SCHEMAS[cls_name]
+        assert "descriptions" in schema
+
+    @pytest.mark.parametrize("cls_name", list(CACHED_CLASS_SCHEMAS.keys()))
+    def test_dbo_and_dbp_are_lists(self, cls_name):
+        """dbo and dbp entries must be lists of strings."""
+        schema = CACHED_CLASS_SCHEMAS[cls_name]
+        assert isinstance(schema.get("dbo", []), list)
+        assert isinstance(schema.get("dbp", []), list)
+        for prop in schema.get("dbo", []):
+            assert isinstance(prop, str)
+        for prop in schema.get("dbp", []):
+            assert isinstance(prop, str)
+
+    def test_all_six_classes_present(self):
+        expected = {"Person", "Film", "Company", "Place", "MusicalArtist", "Book"}
+        assert set(CACHED_CLASS_SCHEMAS.keys()) == expected

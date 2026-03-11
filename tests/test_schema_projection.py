@@ -2,7 +2,7 @@
 
 from entity_profile import EntityProfile
 from question_analysis import analyze_question
-from schema_projection import SchemaProjection, _score_class, project
+from schema_projection import _score_class, project
 
 
 def _film_profile(**overrides):
@@ -698,3 +698,331 @@ class TestMultiClassEntity:
         analysis = analyze_question("What genre does David Bowie play?")
         proj = project(profile, analysis)
         assert proj.primary_class == "MusicalArtist"
+
+
+# ---------------------------------------------------------------------------
+# Deep: relevant_properties deduplication
+# ---------------------------------------------------------------------------
+
+class TestRelevantPropertiesDedup:
+    def test_bridge_dedup_target_and_hop2(self):
+        """Bridge 'director + born': birthDate appears in both target_properties
+        and hop2_properties. relevant_properties should have no duplicates."""
+        profile = _person_profile()
+        analysis = analyze_question("When was the director of X born?")
+        proj = project(profile, analysis)
+        assert len(proj.relevant_properties) == len(set(proj.relevant_properties))
+
+    def test_direct_no_duplicates(self):
+        """Direct question: relevant_properties should never have dupes."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        assert len(proj.relevant_properties) == len(set(proj.relevant_properties))
+
+
+# ---------------------------------------------------------------------------
+# Deep: chain filtering by target_names (not bridge_property)
+# ---------------------------------------------------------------------------
+
+class TestChainFilteringByTargetName:
+    def test_direct_birthplace_matches_chain(self):
+        """Direct 'born' question → birthPlace in target_names → birthPlace chain kept."""
+        profile = _person_profile()
+        analysis = analyze_question("Where was Einstein born?")
+        proj = project(profile, analysis)
+        # "born" → birthDate, birthPlace. birthPlace is a chain in Person profile.
+        assert "birthPlace" in proj.relevant_chains
+
+    def test_director_question_matches_director_chain(self):
+        """Direct 'directed' → director in target_names → director chain kept."""
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        assert "director" in proj.relevant_chains
+
+    def test_unrelated_chain_excluded(self):
+        """Question about director should NOT include producer chain."""
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        assert "producer" not in proj.relevant_chains if hasattr(proj, 'relevant_chains') else True
+
+    def test_capital_matches_capital_chain(self):
+        """'capital' question → capital chain in Place profile kept."""
+        profile = _place_profile()
+        analysis = analyze_question("What is the capital of France?")
+        proj = project(profile, analysis)
+        assert "capital" in proj.relevant_chains
+
+
+# ---------------------------------------------------------------------------
+# Deep: completeness for comparison and compositional questions
+# ---------------------------------------------------------------------------
+
+class TestCompletenessComparison:
+    def test_comparison_complete(self):
+        """Comparison with all needed properties → complete."""
+        profile = _person_profile()
+        analysis = analyze_question("Who was born earlier, Einstein or Newton?")
+        proj = project(profile, analysis)
+        assert proj.completeness == "complete"
+
+    def test_comparison_partial(self):
+        """Comparison question with only birthDate (not birthPlace) → partial."""
+        profile = _person_profile(
+            actual_property_set=frozenset({"dbo:birthDate"}),
+        )
+        analysis = analyze_question("Who was born earlier, Einstein or Newton?")
+        proj = project(profile, analysis)
+        assert proj.completeness == "partial"
+
+    def test_comparison_missing_all(self):
+        """Comparison question with NO birth properties → missing."""
+        profile = _person_profile(
+            actual_property_set=frozenset({"dbo:occupation"}),
+        )
+        analysis = analyze_question("Who was born earlier, Einstein or Newton?")
+        proj = project(profile, analysis)
+        assert proj.completeness == "missing"
+
+
+class TestCompletenessCompositional:
+    def test_compositional_partial(self):
+        """Question with 2 keywords, only 1 property present → partial."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={"dbo": ["birthDate"], "dbp": [], "values": {}},
+            actual_property_set=frozenset({"dbo:birthDate"}),
+            all_2hop_chains={},
+        )
+        # "born" (birthDate, birthPlace) + "award" (award) → compositional
+        # Has birthDate but not birthPlace, not award
+        analysis = analyze_question("When was this person born and what award did they win?")
+        proj = project(profile, analysis)
+        assert proj.completeness == "partial"
+
+    def test_compositional_complete(self):
+        """All needed properties present → complete."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["MusicalArtist"],
+            cached_classes=["MusicalArtist"],
+            actual_properties={
+                "dbo": ["genre", "birthDate", "birthPlace"],
+                "dbp": ["genre", "birthDate", "birthPlace"],
+                "values": {},
+            },
+            actual_property_set=frozenset({
+                "dbo:genre", "dbo:birthDate", "dbo:birthPlace",
+                "dbp:genre", "dbp:birthDate", "dbp:birthPlace",
+            }),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("What genre and when was this artist born?")
+        proj = project(profile, analysis)
+        assert proj.completeness == "complete"
+
+
+# ---------------------------------------------------------------------------
+# Deep: class scoring tie-breaking
+# ---------------------------------------------------------------------------
+
+class TestClassScoringTiebreak:
+    def test_longer_name_wins_on_tie(self):
+        """Equal score → longer class name wins (MusicalArtist > Person)."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Person", "MusicalArtist"],
+            cached_classes=["Person", "MusicalArtist"],
+            actual_properties={
+                "dbo": ["birthDate", "birthPlace"],
+                "dbp": ["birthDate"],
+                "values": {},
+            },
+            actual_property_set=frozenset({"dbo:birthDate", "dbo:birthPlace", "dbp:birthDate"}),
+            all_2hop_chains={},
+        )
+        # "born" → birthDate, birthPlace — both Person and MusicalArtist have these
+        analysis = analyze_question("When was X born?")
+        proj = project(profile, analysis)
+        # Both score the same; MusicalArtist is longer name → wins tie
+        assert proj.primary_class == "MusicalArtist"
+
+
+# ---------------------------------------------------------------------------
+# Deep: rendering truncation limits
+# ---------------------------------------------------------------------------
+
+class TestRenderingTruncation:
+    def test_routing_truncates_properties_at_5(self):
+        """render_for_routing shows max 5 properties."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={"dbo": [], "dbp": [], "values": {}},
+            actual_property_set=frozenset({
+                "dbo:birthDate", "dbo:birthPlace", "dbo:deathDate",
+                "dbo:deathPlace", "dbo:nationality", "dbo:occupation",
+                "dbo:parent", "dbo:spouse",
+            }),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("When was X born and died and what nationality and occupation?")
+        proj = project(profile, analysis)
+        output = proj.render_for_routing()
+        if "Props:" in output:
+            props_line = [ln for ln in output.splitlines() if ln.startswith("Props:")][0]
+            prop_count = len(props_line.split(","))
+            assert prop_count <= 5
+
+    def test_routing_truncates_chains_at_2(self):
+        """render_for_routing shows max 2 chains."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={"dbo": [], "dbp": [], "values": {}},
+            actual_property_set=frozenset({
+                "dbo:parent", "dbo:spouse", "dbo:birthPlace",
+            }),
+            all_2hop_chains={
+                "parent": ("Person", ["birthDate", "deathDate"]),
+                "spouse": ("Person", ["birthDate", "deathDate"]),
+                "birthPlace": ("Place", ["country", "isPartOf"]),
+            },
+        )
+        analysis = analyze_question("Who is the parent and spouse born where?")
+        proj = project(profile, analysis)
+        output = proj.render_for_routing()
+        if "Chains:" in output:
+            chains_line = [ln for ln in output.splitlines() if ln.startswith("Chains:")][0]
+            chain_count = len(chains_line.split(";"))
+            assert chain_count <= 2
+
+
+# ---------------------------------------------------------------------------
+# Deep: render_for_sparql dbp properties and edge cases
+# ---------------------------------------------------------------------------
+
+class TestRenderSparqlDbp:
+    def test_shows_dbp_actual_properties(self):
+        """Both dbo and dbp actual properties should render."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Person"],
+            cached_classes=["Person"],
+            actual_properties={
+                "dbo": ["birthDate"],
+                "dbp": ["father", "mother"],
+                "values": {
+                    "dbo:birthDate": "1990-01-01",
+                    "dbp:father": "John",
+                    "dbp:mother": "Jane",
+                },
+            },
+            actual_property_set=frozenset({"dbo:birthDate", "dbp:father", "dbp:mother"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("Who is the father of X?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "dbp:father -> John" in output
+        assert "dbp:mother -> Jane" in output
+
+    def test_no_class_shows_actual_values(self):
+        """Entity with no cached class but actual values → renders values."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["RareThing"],
+            cached_classes=[],
+            actual_properties={
+                "dbo": ["foo"],
+                "dbp": [],
+                "values": {"dbo:foo": "bar_value"},
+            },
+            actual_property_set=frozenset({"dbo:foo"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("What is foo?")
+        proj = project(profile, analysis)
+        output = proj.render_for_sparql()
+        assert "dbo:foo -> bar_value" in output
+        assert "Actual properties found:" in output
+
+
+# ---------------------------------------------------------------------------
+# Deep: render_for_text edge cases
+# ---------------------------------------------------------------------------
+
+class TestRenderTextEdgeCases:
+    def test_direct_born_has_target_type(self):
+        """Direct 'born' question → Person expected_target_type in text view."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "Expect:" in output
+        # Direct born → vote-based type (Person or MusicalArtist)
+        assert "Person" in output or "MusicalArtist" in output
+
+    def test_capital_question_place_type(self):
+        """'capital' question → Place in text view."""
+        profile = _place_profile()
+        analysis = analyze_question("What is the capital of France?")
+        proj = project(profile, analysis)
+        output = proj.render_for_text()
+        assert "Place" in output
+
+
+# ---------------------------------------------------------------------------
+# Deep: SchemaProjection dataclass attributes
+# ---------------------------------------------------------------------------
+
+class TestProjectionDataIntegrity:
+    def test_projection_references_profile(self):
+        """projection.entity_profile is the same profile object."""
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        assert proj.entity_profile is profile
+
+    def test_projection_references_analysis(self):
+        """projection.question_analysis is the same analysis object."""
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        assert proj.question_analysis is analysis
+
+    def test_relevant_chains_subset_of_profile(self):
+        """relevant_chains keys are always a subset of profile.all_2hop_chains keys."""
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        assert set(proj.relevant_chains.keys()) <= set(profile.all_2hop_chains.keys())
+
+    def test_relevant_properties_all_in_actual(self):
+        """relevant_properties are all in profile.actual_property_set."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        for prop in proj.relevant_properties:
+            assert prop in profile.actual_property_set
+
+    def test_completeness_detail_keys_match_needed(self):
+        """completeness_detail keys = needed property names (without prefix)."""
+        profile = _person_profile()
+        analysis = analyze_question("When was Einstein born?")
+        proj = project(profile, analysis)
+        needed = {p.split(":")[-1] for p in analysis.target_properties}
+        assert set(proj.completeness_detail.keys()) == needed

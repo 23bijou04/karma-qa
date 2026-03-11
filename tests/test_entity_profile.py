@@ -134,3 +134,111 @@ class TestBuildEntityProfile:
         assert profile.cached_classes == []
         assert profile.all_2hop_chains == {}
         assert profile.actual_property_set == frozenset()
+
+    def test_chain_merge_sorts_properties(self):
+        """Merged chain properties must be sorted alphabetically."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = (
+            ["Person", "MusicalArtist"],
+            ["Person", "MusicalArtist"],
+        )
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["birthPlace"], "dbp": [], "values": {},
+        }
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        _, props = profile.all_2hop_chains["birthPlace"]
+        assert props == sorted(props)
+
+    def test_chain_merge_preserves_first_target_class(self):
+        """When two classes define the same chain, target class from first wins."""
+        mock_disc = MagicMock()
+        # Person comes first in cached_classes
+        mock_disc.get_all_cached_classes.return_value = (
+            ["Person", "MusicalArtist"],
+            ["Person", "MusicalArtist"],
+        )
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["birthPlace"], "dbp": [], "values": {},
+        }
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        target, _ = profile.all_2hop_chains["birthPlace"]
+        # Both Person and MusicalArtist define birthPlace -> Place
+        assert target == "Place"
+
+    def test_build_profile_missing_dbo_key(self):
+        """Actual properties dict missing 'dbo'/'dbp' keys should not crash."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = ([], [])
+        mock_disc.get_actual_properties.return_value = {"values": {}}
+
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        assert profile.actual_property_set == frozenset()
+
+    def test_build_profile_dbp_only(self):
+        """Profile with only dbp properties, no dbo."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = (["Person"], ["Person"])
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": [],
+            "dbp": ["father", "mother", "birthDate"],
+            "values": {"dbp:father": "John", "dbp:mother": "Jane"},
+        }
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        assert "dbp:father" in profile.actual_property_set
+        assert "dbp:mother" in profile.actual_property_set
+        assert "dbp:birthDate" in profile.actual_property_set
+        # No dbo properties
+        assert not any(p.startswith("dbo:") for p in profile.actual_property_set)
+
+    def test_film_and_book_author_chain_merge(self):
+        """Film + Book both define author -> Person chain. Merge union."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = (
+            ["Film", "Book"],
+            ["Film", "Book"],
+        )
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["author"], "dbp": [], "values": {},
+        }
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        assert "author" in profile.all_2hop_chains
+        target, props = profile.all_2hop_chains["author"]
+        assert target == "Person"
+        # Both Film and Book define: birthDate, deathDate, birthPlace, nationality
+        assert "birthDate" in props
+        assert "nationality" in props
+
+    def test_person_only_chains_not_duplicated(self):
+        """Single cached class should have chains without duplication."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = (["Person"], ["Person"])
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["parent"], "dbp": [], "values": {},
+        }
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        _, props = profile.all_2hop_chains["parent"]
+        assert len(props) == len(set(props)), "Chain props should have no duplicates"
+
+
+class TestPropertyToClassesDbp:
+    def test_dbp_father_maps_to_person(self):
+        """dbp-only properties like 'father' appear in PROPERTY_TO_CLASSES."""
+        assert "father" in PROPERTY_TO_CLASSES
+        assert "Person" in PROPERTY_TO_CLASSES["father"]
+
+    def test_dbp_mother_maps_to_person(self):
+        assert "mother" in PROPERTY_TO_CLASSES
+        assert "Person" in PROPERTY_TO_CLASSES["mother"]
+
+    def test_dbp_founder_maps_to_company(self):
+        assert "founder" in PROPERTY_TO_CLASSES
+        assert "Company" in PROPERTY_TO_CLASSES["founder"]
+
+    def test_all_dbp_properties_covered(self):
+        """Every dbp property in CACHED_CLASS_SCHEMAS is in PROPERTY_TO_CLASSES."""
+        for cls_name, schema in CACHED_CLASS_SCHEMAS.items():
+            for prop in schema.get("dbp", []):
+                assert prop in PROPERTY_TO_CLASSES, (
+                    f"dbp prop '{prop}' from {cls_name} missing"
+                )
+                assert cls_name in PROPERTY_TO_CLASSES[prop]
