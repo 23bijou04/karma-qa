@@ -21,7 +21,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -29,8 +28,6 @@ from urllib.parse import unquote
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
-
-from groq import Groq  # noqa: E402
 
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
@@ -43,6 +40,7 @@ from dbpedia_qa.dbpedia import (  # noqa: E402
 from dbpedia_qa.models import Entity, HybridResult  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from graphrag_wiki import link_entities_to_dbpedia  # noqa: E402
+from llm_provider import create_llm_client  # noqa: E402
 from logicrag_decomposition import _try_logicrag_decomposition  # noqa: E402
 from question_analysis import analyze_question  # noqa: E402
 from routing import route_question  # noqa: E402
@@ -119,11 +117,12 @@ def _sparql_neighbors(entities: list[Entity],
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def hybrid_answer(question: str, api_key: str,
+def hybrid_answer(question: str, api_key: str = None,
                   model: str = "llama-3.3-70b-versatile",
                   verbose: bool = False, debug: bool = False,
                   llm_client=None, linker=None,
-                  kg_client=None, schema_disc=None) -> HybridResult:
+                  kg_client=None, schema_disc=None,
+                  provider: str = "groq") -> HybridResult:
     """Schema-routed hybrid QA with 3-path architecture.
 
     Paths:
@@ -136,7 +135,7 @@ def hybrid_answer(question: str, api_key: str,
     if debug:
         verbose = True
     sep = "=" * 70
-    llm_client = llm_client or Groq(api_key=api_key)
+    llm_client = llm_client or create_llm_client(provider, api_key=api_key)
     linker = linker or DBpediaEntityLinker(min_confidence=0.5)
     kg_client = kg_client or DBpediaSPARQLClient()
     schema_disc = schema_disc or SchemaDiscovery()
@@ -307,14 +306,17 @@ def main():
     )
     parser.add_argument("question", type=str, help="The question to answer")
     parser.add_argument(
-        "--api-key",
-        default=os.environ.get("GROQ_API_KEY"),
-        help="Groq API key (or set GROQ_API_KEY env var)",
+        "--api-key", default=None,
+        help="API key (default: provider-specific env var)",
     )
     parser.add_argument(
         "--model",
         default="llama-3.3-70b-versatile",
         help="LLM model (default: llama-3.3-70b-versatile)",
+    )
+    parser.add_argument(
+        "--provider", default="groq", choices=["groq", "github"],
+        help="LLM provider (default: groq)",
     )
     parser.add_argument("--verbose", action="store_true", help="Show pipeline steps")
     parser.add_argument(
@@ -323,14 +325,14 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("Error: provide --api-key or set GROQ_API_KEY env var")
+    try:
+        result = hybrid_answer(
+            args.question, api_key=args.api_key, model=args.model,
+            verbose=args.verbose, debug=args.debug, provider=args.provider,
+        )
+    except ValueError as e:
+        print(f"Error: {e}")
         sys.exit(1)
-
-    result = hybrid_answer(
-        args.question, args.api_key, model=args.model,
-        verbose=args.verbose, debug=args.debug,
-    )
     if not args.verbose:
         fb = " [sparql_fallback]" if result.sparql_fallback else ""
         print(f"Answer ({result.method}, route={result.route_source}{fb}): {result.answer}")

@@ -106,74 +106,7 @@ _ddg_breaker = _CircuitBreaker(threshold=3, cooldown=60.0)
 
 
 # ---------------------------------------------------------------------------
-# 1. Entity extraction (spaCy NLP)
-# ---------------------------------------------------------------------------
-
-import spacy
-
-_nlp = spacy.load("en_core_web_sm")
-
-# Words to strip from the front of noun chunks (determiners, question words)
-_STRIP_WORDS = STOPWORDS | {
-    "who", "what", "when", "where", "which", "how", "why",
-    "did", "does", "do", "are", "is", "was", "were",
-    "has", "have", "had", "both", "either",
-}
-
-
-def extract_entities(question: str) -> list[str]:
-    """Extract entity mentions using spaCy noun chunks + NER.
-
-    Handles both proper nouns (Albert Einstein) and lowercase domain
-    terms (angiogenesis, genomic variants) that are valid Wikipedia entities.
-    """
-    doc = _nlp(question)
-    mentions = []
-
-    # Quoted strings (spaCy may miss these)
-    mentions.extend(re.findall(r'"([^"]+)"', question))
-
-    # spaCy noun chunks: the core extraction
-    for chunk in doc.noun_chunks:
-        # Strip leading determiners/stopwords: "the last Horcrux" -> "Horcrux"
-        words = chunk.text.split()
-        while words and words[0].lower() in _STRIP_WORDS:
-            words.pop(0)
-        text = " ".join(words).strip()
-        if text:
-            mentions.append(text)
-
-    # spaCy NER: catch entities that noun chunks might miss
-    for ent in doc.ents:
-        if ent.label_ not in ("CARDINAL", "ORDINAL", "QUANTITY", "PERCENT"):
-            mentions.append(ent.text)
-
-    # Title-case for Wikipedia/DBpedia lookup (preserves already-capped names)
-    mentions = [m.title() if m[0].islower() else m for m in mentions if m]
-
-    # Deduplicate: case-insensitive
-    seen = set()
-    unique = []
-    for name in mentions:
-        key = name.lower().strip()
-        if key not in seen and key not in STOPWORDS and len(key) > 1:
-            seen.add(key)
-            unique.append(name)
-
-    # Remove entries that are substrings of longer entries
-    final = []
-    for name in unique:
-        if not any(
-            name.lower() != other.lower() and name.lower() in other.lower()
-            for other in unique
-        ):
-            final.append(name)
-
-    return final
-
-
-# ---------------------------------------------------------------------------
-# 1b. DBpedia Spotlight linking (primary) + spaCy fallback
+# 1. DBpedia Spotlight linking (primary) + spaCy fallback
 # ---------------------------------------------------------------------------
 
 def link_entities_to_dbpedia(question: str,

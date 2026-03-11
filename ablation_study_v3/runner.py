@@ -7,10 +7,10 @@ import os
 import time
 from dataclasses import asdict
 
-from groq import Groq
 from SPARQLWrapper import JSON, SPARQLWrapper
 
 from evaluation.metrics import compute_em, compute_f1
+from llm_provider import create_llm_client
 
 from .levels_base import LevelResult, answer_level_0, answer_level_1, answer_level_4
 from .levels_kg import answer_level_2, answer_level_3
@@ -45,7 +45,8 @@ class AblationV3Runner:
 
     def __init__(
         self, levels=None, n_per_type=50, seed=42,
-        groq_api_key=None, output_dir="data/ablation_v3", resume=True,
+        api_key=None, provider="groq",
+        output_dir="data/ablation_v3", resume=True,
     ):
         self.levels = levels or [0, 1, 2, 3, 4]
         self.n_per_type = n_per_type
@@ -55,7 +56,7 @@ class AblationV3Runner:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        self.client = Groq(api_key=groq_api_key or os.environ.get("GROQ_API_KEY"))
+        self.client = create_llm_client(provider, api_key=api_key)
 
         self.sparql = SPARQLWrapper(self.DBPEDIA_ENDPOINT)
         self.sparql.setReturnFormat(JSON)
@@ -172,7 +173,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Ablation Study V3: Controlled KG Detail Levels"
     )
-    parser.add_argument("--api-key", "-k", help="Groq API key (or GROQ_API_KEY env var)")
+    parser.add_argument("--api-key", "-k", help="API key (default: provider-specific env var)")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
     parser.add_argument(
         "--levels", nargs="+", type=int, default=[0, 1, 2, 3, 4],
         help="Which levels to run (e.g., --levels 0 1 2)",
@@ -192,7 +195,8 @@ def main():
         levels=args.levels,
         n_per_type=args.n_per_type,
         seed=args.seed,
-        groq_api_key=args.api_key,
+        api_key=args.api_key,
+        provider=args.provider,
         output_dir=args.output_dir,
         resume=not args.no_resume,
     )

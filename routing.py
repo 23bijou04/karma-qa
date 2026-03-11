@@ -375,9 +375,9 @@ def route_question(
     schema_ctx is optional backward-compat for incomplete entity coverage check.
     """
     from entity_profile import build_entity_profile
+    from llm_provider import call_llm
     from question_analysis import analyze_question
     from schema_projection import project
-    from sparql_evaluation import call_llm
 
     # Build projections if not provided
     if projections is None and schema_disc is not None:

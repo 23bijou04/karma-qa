@@ -24,8 +24,9 @@ from collections import defaultdict
 from datetime import datetime
 from urllib.parse import unquote
 
-from groq import Groq
 from SPARQLWrapper import JSON, SPARQLWrapper
+
+from llm_provider import call_llm, create_llm_client
 
 # ---------------------------------------------------------------------------
 # sys.path guard (same pattern as graphrag_wiki.py)
@@ -166,27 +167,6 @@ IMPORTANT: Use the EXACT URIs shown for each entity."""
 # ---------------------------------------------------------------------------
 # LLM helpers
 # ---------------------------------------------------------------------------
-
-def call_llm(client: Groq, prompt: str, model: str,
-             max_attempts: int = 5, initial_wait: float = 10.0) -> str:
-    """Make a Groq LLM call with retry on 429 rate limit errors."""
-    for attempt in range(max_attempts):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=1000,
-            )
-            return resp.choices[0].message.content.strip()
-        except Exception as e:
-            if "429" in str(e) and attempt < max_attempts - 1:
-                wait = initial_wait * (2 ** attempt)
-                logger.info(f"Rate limited, waiting {wait:.0f}s "
-                            f"(attempt {attempt + 1}/{max_attempts})")
-                time.sleep(wait)
-            else:
-                raise
 
 def extract_sparql(response: str) -> str:
     """Extract SPARQL query from LLM response using brace-depth matching."""
@@ -382,7 +362,7 @@ End your response with FINAL ANSWER: <your answer>"""
 # Per-question evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_question(q: dict, client: Groq, model: str,
+def evaluate_question(q: dict, client, model: str,
                       schema_disc: SchemaDiscovery,
                       trace_dir: str) -> dict:
     """Run full pipeline for one question."""
@@ -562,24 +542,24 @@ def main():
     parser.add_argument("--limit", type=int, default=0,
                         help="Max questions to evaluate (0 = all)")
     parser.add_argument("--model", default="openai/gpt-oss-120b",
-                        help="Groq model (default: openai/gpt-oss-120b)")
+                        help="LLM model (default: openai/gpt-oss-120b)")
     parser.add_argument("--output", default="data/sparql_eval.jsonl",
                         help="Output JSONL path")
     parser.add_argument("--api-key", default=None,
-                        help="Groq API key (default: GROQ_API_KEY env var)")
+                        help="API key (default: provider-specific env var)")
+    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+                        help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE_FILE,
                         help="Path to coverage analysis JSON")
     parser.add_argument("--retry-failed", action="store_true",
                         help="Re-evaluate questions that had empty answers or errors")
     args = parser.parse_args()
 
-    # Ensure API key
-    api_key = args.api_key or os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        print("Error: GROQ_API_KEY env var or --api-key required")
+    try:
+        client = create_llm_client(args.provider, api_key=args.api_key)
+    except ValueError as e:
+        print(f"Error: {e}")
         sys.exit(1)
-
-    client = Groq(api_key=api_key)
     schema_disc = SchemaDiscovery()
 
     # Trace directory

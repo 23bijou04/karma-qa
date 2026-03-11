@@ -7,8 +7,9 @@ from typing import Optional
 from urllib.parse import quote, unquote
 
 import requests
-from groq import Groq
 from SPARQLWrapper import JSON, SPARQLWrapper
+
+from llm_provider import call_llm as _call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -39,24 +40,14 @@ def _retry(func, max_attempts=3, backoff=2.0):
 
 
 def llm_call_with_retry(client, prompt, max_attempts=5, initial_wait=10.0,
-                        max_tokens=100, temperature=0):
-    """Make a Groq LLM call with retry on 429 rate limit errors."""
-    for attempt in range(max_attempts):
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=max_tokens, temperature=temperature,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            if "429" in str(e) and attempt < max_attempts - 1:
-                wait = initial_wait * (2 ** attempt)
-                logger.info(f"Rate limited, waiting {wait:.0f}s (attempt {attempt + 1}/{max_attempts})")
-                time.sleep(wait)
-            else:
-                raise
-    return None
+                        max_tokens=100, temperature=0,
+                        model="llama-3.3-70b-versatile"):
+    """Backward-compat wrapper around llm_provider.call_llm."""
+    return _call_llm(
+        client, prompt, model,
+        max_attempts=max_attempts, initial_wait=initial_wait,
+        max_tokens=max_tokens, temperature=temperature,
+    )
 
 
 def search_wikipedia(query: str, limit: int = 3) -> list[str]:
@@ -110,7 +101,7 @@ def get_wikipedia_text(title: str, max_chars: int = 3000, context: str = "") -> 
 
 
 def extract_answer_with_llm(
-    client: Groq, text: str, relation: str,
+    client, text: str, relation: str,
     question: str, entity_context: str = "",
 ) -> Optional[str]:
     """Use LLM to extract a specific fact from Wikipedia text."""
@@ -146,7 +137,7 @@ Answer:"""
 
 
 def compare_with_llm(
-    client: Groq, question: str,
+    client, question: str,
     entity1: str, value1: str, entity2: str, value2: str,
 ) -> Optional[str]:
     """Use LLM to compare two values and answer a comparison question."""
