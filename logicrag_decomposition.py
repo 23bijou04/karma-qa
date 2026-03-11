@@ -26,13 +26,14 @@ import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
 from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
+from llm_provider import call_llm  # noqa: E402
+from logicrag_prompts import DEPENDENCY_RAG_PROMPT, FINAL_ANSWER_PROMPT  # noqa: E402
 from question_analysis import analyze_question as qa_analyze  # noqa: E402
 from routing import (  # noqa: E402
     _is_comparison_question,
     _rule_based_route,
 )
 from schema_projection import project as sp_project  # noqa: E402
-from sparql_evaluation import call_llm  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -97,20 +98,6 @@ Example - Simple: "Who directed Inception?"
 
 JSON only, no explanation:"""
 
-SYNTHESIS_PROMPT = """Answer the original question using ONLY the verified facts below.
-
-QUESTION: {question}
-
-VERIFIED FACTS:
-{facts_block}
-
-Instructions:
-- Facts marked [SPARQL] are verified KG data -- trust them completely
-- Facts marked [TEXT] are extracted from Wikipedia -- trust but verify consistency
-- Combine the facts to answer the question step-by-step
-- If facts are insufficient, say what is missing
-- End with exactly: FINAL ANSWER: <answer>"""
-
 # ---------------------------------------------------------------------------
 # Topological sort
 # ---------------------------------------------------------------------------
@@ -171,6 +158,101 @@ def _substitute_answers(text: str, known_facts: dict[int, str]) -> str:
                     )
                     break
     return result
+
+
+# ---------------------------------------------------------------------------
+# JSON parsing utility
+# ---------------------------------------------------------------------------
+
+def _fix_json_response(text: str) -> dict:
+    """Robustly parse JSON from LLM response, handling common formatting issues.
+
+    Strips markdown code blocks, fixes trailing commas, falls back to empty dict.
+    """
+    if not text:
+        return {}
+    clean = text.strip()
+    clean = clean.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    clean = re.sub(r',\s*}', '}', clean)
+    clean = re.sub(r',\s*]', ']', clean)
+    try:
+        return json.loads(clean)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("JSON parse failed: %s", clean[:200])
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Early stopping check
+# ---------------------------------------------------------------------------
+
+def _check_can_answer(
+    question: str, info_summary: str,
+    deps_str: str, current_dep: str,
+    llm_client, model: str,
+) -> dict:
+    """Check if accumulated facts are sufficient to answer the original question.
+
+    Returns {"can_answer": bool, "current_understanding": str}.
+    On parse failure, returns can_answer=False (conservative — continue processing).
+    """
+    prompt = DEPENDENCY_RAG_PROMPT.format(
+        question=question,
+        info_summary=info_summary,
+        dependencies=deps_str,
+        current_dependency=current_dep,
+    )
+    try:
+        response = call_llm(llm_client, prompt, model)
+    except Exception:
+        logger.warning("Early stopping check failed, continuing")
+        return {"can_answer": False, "current_understanding": ""}
+    result = _fix_json_response(response)
+    raw = result.get("can_answer", False)
+    # Strict bool: reject string "true"/"false" from sloppy LLM JSON
+    can_answer = raw is True if isinstance(raw, bool) else str(raw).lower() == "true"
+    return {
+        "can_answer": can_answer,
+        "current_understanding": result.get("current_understanding", ""),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Final answer generation
+# ---------------------------------------------------------------------------
+
+def _generate_final_answer(
+    question: str, info_summary: str,
+    llm_client, model: str,
+) -> str:
+    """Generate a concise final answer from accumulated facts via FINAL_ANSWER_PROMPT.
+
+    Returns extracted answer string (via extract_final_answer).
+    """
+    prompt = FINAL_ANSWER_PROMPT.format(
+        question=question, info_summary=info_summary,
+    )
+    try:
+        response = call_llm(llm_client, prompt, model)
+    except Exception:
+        logger.warning("Final answer generation failed")
+        return None
+    return extract_final_answer(response) if response else None
+
+
+# ---------------------------------------------------------------------------
+# Info summary builder (used by early stopping + final answer)
+# ---------------------------------------------------------------------------
+
+def _build_info_summary(
+    sub_questions: list, known_facts: dict[int, str],
+) -> str:
+    """Build provenance-tagged info summary from resolved sub-questions."""
+    return "\n".join(
+        f"- [{('SPARQL' if sq.method == 'sparql' else 'TEXT')}] "
+        f"{sq.text} -> {known_facts[sq.original_idx]}"
+        for sq in sub_questions if sq.original_idx in known_facts
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,13 +347,10 @@ def _decompose_subquestions(
     resp = call_llm(llm_client, prompt, model)
 
     # Parse JSON response
-    try:
-        clean = resp.strip()
-        clean = clean.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(clean)
-    except (json.JSONDecodeError, ValueError):
+    data = _fix_json_response(resp)
+    if not data:
         if verbose:
-            logger.warning(f"Decomposition JSON parse failed: {resp[:200]}")
+            logger.warning("Decomposition JSON parse failed: %s", resp[:200] if resp else "")
         return None
 
     sub_qs = data.get("sub_questions", [])
@@ -496,7 +575,29 @@ def _try_logicrag_decomposition(
 
         methods_used.append(method)
 
-    # --- Step 3: Synthesize final answer from accumulated facts ---
+        # --- Early stopping check (Phase 2) ---
+        # Skip for comparison questions (need ALL entities resolved)
+        # Skip on last sub-Q (final answer generated regardless)
+        if (answer and not is_comparison
+                and loop_idx < len(sub_questions) - 1):
+            info_summary = _build_info_summary(sub_questions, known_facts)
+            deps_str = "\n".join(
+                f"{i + 1}. {sq.text}" for i, sq in enumerate(sub_questions)
+            )
+            check = _check_can_answer(
+                question, info_summary, deps_str, sub_q.text,
+                llm_client, model,
+            )
+            if verbose:
+                print(f"    Early stop check: can_answer={check['can_answer']}")
+            if check["can_answer"]:
+                if verbose:
+                    print("  -> Early exit: accumulated facts sufficient")
+                return _generate_final_answer(
+                    question, info_summary, llm_client, model,
+                )
+
+    # --- Step 3: Generate final answer from accumulated facts ---
     if not known_facts:
         if verbose:
             print("  No sub-questions resolved, decomposition failed")
@@ -509,29 +610,13 @@ def _try_logicrag_decomposition(
             print(f"  Single resolved fact: {sole_answer}")
         return sole_answer
 
-    # Build facts block with provenance labels
-    facts_lines = []
-    for sq in sub_questions:
-        if sq.original_idx in known_facts:
-            method_tag = "SPARQL" if sq.method == "sparql" else "TEXT"
-            facts_lines.append(
-                f"- [{method_tag}] {sq.text} -> {known_facts[sq.original_idx]}"
-            )
-    facts_block = "\n".join(facts_lines)
+    # Build info_summary with provenance labels
+    info_summary = _build_info_summary(sub_questions, known_facts)
 
     if verbose:
-        print("\n  --- Final Synthesis ---")
+        print("\n  --- Final Answer ---")
         print(f"  Facts ({len(known_facts)}):")
-        for line in facts_lines:
+        for line in info_summary.split("\n"):
             print(f"    {line}")
 
-    prompt = SYNTHESIS_PROMPT.format(
-        question=question, facts_block=facts_block,
-    )
-    response = call_llm(llm_client, prompt, model)
-    answer = extract_final_answer(response) if response else None
-
-    if verbose:
-        print(f"  Synthesized answer: {answer}")
-
-    return answer
+    return _generate_final_answer(question, info_summary, llm_client, model)
