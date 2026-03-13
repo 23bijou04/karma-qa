@@ -20,7 +20,8 @@ CACHED_CLASS_SCHEMAS = {
         "dbo": [
             "birthDate", "deathDate", "birthPlace", "deathPlace",
             "parent", "child", "spouse", "nationality", "occupation",
-            "almaMater", "residence", "religion", "ethnicity"
+            "almaMater", "residence", "religion", "ethnicity",
+            "father", "mother", "deathCause",
         ],
         "dbp": [
             "father", "mother", "birthDate", "birthPlace", "deathDate",
@@ -36,10 +37,13 @@ CACHED_CLASS_SCHEMAS = {
             "birthPlace": "place of birth (returns Place with country, isPartOf)",
             "spouse": "married partner",
             "child": "children of the person",
-            "nationality": "country of citizenship"
+            "nationality": "country of citizenship",
+            "deathCause": "cause of death",
         },
         "dbo_2hop": {
             "parent": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "father": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "mother": ("Person", ["birthDate", "deathDate", "birthPlace"]),
             "spouse": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
             "child": ("Person", ["birthDate", "deathDate", "birthPlace"]),
             "birthPlace": ("Place", ["country", "isPartOf", "populationTotal"]),
@@ -160,7 +164,28 @@ CACHED_CLASS_SCHEMAS = {
             "author": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
             "publisher": ("Company", ["foundingDate", "locationCity"]),
         },
-    }
+    },
+    "MusicalWork": {
+        "dbo": [
+            "artist", "genre", "recordLabel", "releaseDate", "runtime",
+            "writer", "producer", "album",
+        ],
+        "dbp": [
+            "artist", "genre", "label", "released", "length",
+            "writer", "producer",
+        ],
+        "descriptions": {
+            "artist": "performing artist (returns Person with birthDate, birthPlace)",
+            "genre": "music genre",
+            "releaseDate": "release date",
+            "album": "album this track belongs to",
+        },
+        "dbo_2hop": {
+            "artist": ("Person", ["birthDate", "deathDate", "birthPlace", "nationality"]),
+            "writer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            "producer": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+        },
+    },
 }
 
 # Property -> target class mappings for dbo: properties that return entities.
@@ -187,6 +212,8 @@ PROPERTY_RANGES: dict[str, str] = {
     "dbo:almaMater": "Place",
     # Person -> Person
     "dbo:parent": "Person",
+    "dbo:father": "Person",
+    "dbo:mother": "Person",
     "dbo:spouse": "Person",
     "dbo:child": "Person",
     # Company -> Person
@@ -204,6 +231,8 @@ PROPERTY_RANGES: dict[str, str] = {
     "dbo:capital": "Place",
     # MusicalArtist -> MusicalArtist
     "dbo:associatedMusicalArtist": "MusicalArtist",
+    # MusicalWork -> Person
+    "dbo:artist": "Person",
 }
 
 # Auto-generated reverse index: property name -> list of cached class names

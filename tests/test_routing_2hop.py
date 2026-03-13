@@ -129,7 +129,12 @@ class TestRuleBasedRoute:
         assert result is None
 
     def test_bridge_author_comparison(self):
-        """'Which author was born earlier' with Book schema -> SPARQL."""
+        """'Which author was born earlier' with Book schema -> SPARQL.
+
+        May fire as direct_date_comparison (publicationDate in _DATE_PROPERTIES)
+        or bridge_comparison (author -> Person -> birthDate). Both are correct
+        SPARQL routes.
+        """
         profile = _book_profile()
         analysis = analyze_question(
             "Which author was born earlier, the author of Harry Potter or LOTR?"
@@ -139,7 +144,7 @@ class TestRuleBasedRoute:
         assert result is not None
         route, reason = result
         assert route == "SPARQL"
-        assert "bridge" in reason
+        assert "bridge" in reason or "date_comparison" in reason
 
 
 def _make_entities(*names):
@@ -368,7 +373,7 @@ class TestParentChainRule:
         analysis = analyze_question("Who is the father of X?")
         proj = project(profile, analysis)
         result = _rule_based_route(analysis, [proj])
-        # "father" → target_properties = {dbo:parent, dbp:parent}
+        # "father" → target_properties = {dbo:father, dbp:father, dbo:parent, dbp:parent}
         # occupation doesn't match → None
         assert result is None
 

@@ -67,10 +67,21 @@ RELATION_SECTION_BOOST = {
     "deathPlace": ["death", "died", "later life"],
     "deathDate": ["death", "died", "later life"],
     "parent": ["early life", "family", "personal life"],
+    "father": ["early life", "family", "personal life"],
+    "mother": ["early life", "family", "personal life"],
     "spouse": ["personal life", "family", "marriage"],
     "country": ["geography", "politics", "government"],
     "foundedBy": ["history", "founding"],
     "award": ["awards", "honors", "career"],
+    "performer": ["discography", "career", "music", "singles"],
+    "artist": ["discography", "career", "music", "singles"],
+    "almaMater": ["education", "early life", "career"],
+    "nationality": ["nationality", "demographics", "early life", "biography"],
+    "genre": ["genre", "music", "discography", "career"],
+    "deathCause": ["death", "died", "later life"],
+    "publicationDate": ["publication", "bibliography", "works", "history", "release"],
+    "releaseDate": ["release", "discography", "singles", "history"],
+    "language": ["language", "languages", "demographics"],
 }
 
 
@@ -135,6 +146,7 @@ _CLASS_TO_SCHEMA = {
     "Mountain": "Place", "AdministrativeRegion": "Place",
     "Band": "MusicalArtist", "Singer": "MusicalArtist",
     "WrittenWork": "Book", "Novel": "Book", "Comic": "Book",
+    "Song": "MusicalWork", "Single": "MusicalWork", "Album": "MusicalWork",
 }
 
 # Noise classes: neighbors typed ONLY as these are dropped (blocklist approach)

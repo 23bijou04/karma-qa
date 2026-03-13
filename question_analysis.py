@@ -22,8 +22,9 @@ KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
     "starring": ["starring"], "actor": ["starring"], "actress": ["starring"],
     "founded": ["foundedBy", "foundingDate", "foundingYear"],
     "founder": ["foundedBy"],
+    "performer": ["artist"], "performed": ["artist"],
     # Family
-    "father": ["parent"], "mother": ["parent"],
+    "father": ["father", "parent"], "mother": ["mother", "parent"],
     "spouse": ["spouse"], "married": ["spouse"],
     "parent": ["parent"], "paternal": ["parent"], "maternal": ["parent"],
     # Life events
@@ -31,15 +32,29 @@ KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
     "birth": ["birthDate", "birthPlace"],
     "died": ["deathDate", "deathPlace"],
     "death": ["deathDate", "deathPlace"],
+    "cause": ["deathCause"],
+    # Publication/release
+    "published": ["publicationDate"],
+    "publication": ["publicationDate"],
+    "released": ["releaseDate", "publicationDate"],
     # Geography
     "capital": ["capital"],
     "population": ["populationTotal"],
     "nationality": ["nationality", "citizenship"],
     "country": ["country", "nationality"],
+    "citizen": ["nationality", "citizenship"],
+    "citizenship": ["nationality", "citizenship"],
+    "origin": ["country"],
+    # Education
+    "education": ["almaMater"],
+    "study": ["almaMater"], "studied": ["almaMater"],
+    "attended": ["almaMater"],
+    "educated": ["almaMater"],
     # Career/recognition
     "award": ["award"], "awarded": ["award"],
     "occupation": ["occupation"],
     "genre": ["genre"],
+    "language": ["language"],
 }
 
 COMPARISON_WORDS: set[str] = {
@@ -54,11 +69,15 @@ _BRIDGE_KEYWORDS: set[str] = {
     "starring", "actor", "actress",
     "founded", "founder",
     "father", "mother", "parent", "paternal", "maternal",
+    "performer",
+    "spouse", "married",
 }
 
 # Hop-2 keywords that indicate the question asks about a property of the hop-1 target.
 _HOP2_KEYWORDS: set[str] = {
     "born", "birth", "died", "death", "country", "nationality", "capital",
+    "citizenship", "citizen",
+    "education", "studied", "attended", "educated",
 }
 
 
@@ -101,6 +120,11 @@ def analyze_question(
     for kw in sorted_keywords:
         if re.search(rf"\b{re.escape(kw)}\b", q_lower):
             matched_keywords.append(kw)
+
+    # Collapse compound keywords to avoid misclassification
+    # "cause of death" → keep only "cause" (maps to deathCause)
+    if "cause" in matched_keywords and "death" in matched_keywords:
+        matched_keywords = [kw for kw in matched_keywords if kw != "death"]
 
     # 2. Property expansion
     all_property_names: set[str] = set()

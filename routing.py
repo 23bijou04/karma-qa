@@ -38,7 +38,9 @@ BRIDGE_WORD_TO_PROP = {
     "composer": "musicComposer",
     "starring": "starring", "actor": "starring", "actress": "starring",
     "founded": "foundedBy", "founder": "foundedBy",
-    "father": "parent", "mother": "parent",
+    "father": "father", "mother": "mother",
+    "performer": "artist",
+    "spouse": "spouse", "married": "spouse",
 }
 
 ROUTE_PROMPT = """You are a knowledge graph query router for DBpedia. \
@@ -70,13 +72,14 @@ _DATE_PROPERTIES = {
     "dbo:birthDate", "dbp:birthDate", "dbo:deathDate", "dbp:deathDate",
     "dbo:activeYearsStartYear", "dbp:established", "dbo:foundingYear",
     "dbp:foundingDate", "dbo:releaseDate", "dbp:released",
+    "dbo:publicationDate", "dbp:publicationDate", "dbp:published",
 }
 _COUNTRY_PROPERTIES = {
     "dbo:nationality", "dbp:nationality", "dbo:country", "dbp:country",
     "dbo:citizenship", "dbp:citizenship", "dbo:birthPlace", "dbp:birthPlace",
     "dbo:stateOfOrigin", "dbp:placeOfBirth",
 }
-_PARENT_PROPS = {"dbo:parent", "dbp:father", "dbp:mother"}
+_PARENT_PROPS = {"dbo:parent", "dbo:father", "dbo:mother", "dbp:father", "dbp:mother"}
 
 
 # ---------------------------------------------------------------------------
