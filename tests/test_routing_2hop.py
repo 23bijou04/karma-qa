@@ -4,7 +4,8 @@ from dbpedia_qa.models import Entity
 from entity_profile import EntityProfile
 from question_analysis import analyze_question
 from routing import (
-    ROUTE_PROMPT,
+    PROPERTY_EXTRACTION_PROMPT,
+    _build_property_schema,
     _has_incomplete_entity_coverage,
     _is_comparison_question,
     _rule_based_route,
@@ -290,42 +291,60 @@ class TestCountryComparisonRouting:
             assert result[0] == "SPARQL"
 
 
-class TestRoutePromptContract:
-    """Verify ROUTE_PROMPT placeholders and format contract."""
+class TestPropertyExtractionPrompt:
+    """Verify PROPERTY_EXTRACTION_PROMPT placeholders and format."""
 
     def test_prompt_has_required_placeholders(self):
-        assert "{schema}" in ROUTE_PROMPT
-        assert "{question}" in ROUTE_PROMPT
-        assert "{hint}" in ROUTE_PROMPT
+        assert "{schema}" in PROPERTY_EXTRACTION_PROMPT
+        assert "{question}" in PROPERTY_EXTRACTION_PROMPT
 
-    def test_prompt_mentions_2hop_reasoning(self):
-        lower = ROUTE_PROMPT.lower()
+    def test_prompt_mentions_2hop(self):
+        lower = PROPERTY_EXTRACTION_PROMPT.lower()
         assert "2-hop" in lower or "chain" in lower
 
-    def test_prompt_format_with_hint(self):
-        result = ROUTE_PROMPT.format(
-            schema="Entity: Foo\n  dbo: bar",
+    def test_prompt_format_basic(self):
+        result = PROPERTY_EXTRACTION_PROMPT.format(
+            schema="Entity: Foo\n  dbo properties: bar, baz",
             question="Who is Foo?",
-            hint="Schema analysis suggests: rule:direct_property (SPARQL likely feasible)",
         )
         assert "Who is Foo?" in result
-        assert "rule:direct_property" in result
-
-    def test_prompt_format_without_hint(self):
-        result = ROUTE_PROMPT.format(
-            schema="Entity: Foo\n  dbo: bar",
-            question="Who is Foo?",
-            hint="",
-        )
-        assert "Who is Foo?" in result
+        assert "bar, baz" in result
 
     def test_prompt_format_with_escaped_braces(self):
-        """Schema or question with curly braces must be escaped before .format()."""
         safe_schema = "Entity: {Foo}".replace("{", "{{").replace("}", "}}")
-        result = ROUTE_PROMPT.format(
-            schema=safe_schema, question="Who is Foo?", hint="",
+        result = PROPERTY_EXTRACTION_PROMPT.format(
+            schema=safe_schema, question="Who is Foo?",
         )
         assert "{Foo}" in result
+
+
+class TestBuildPropertySchema:
+    """Verify _build_property_schema produces correct schema summary."""
+
+    def test_film_schema_includes_class_and_props(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        schema = _build_property_schema([proj])
+        assert "Inception" in schema
+        assert "Film" in schema
+        assert "director" in schema
+
+    def test_film_schema_includes_chains(self):
+        profile = _film_profile()
+        analysis = analyze_question("Who directed Inception?")
+        proj = project(profile, analysis)
+        schema = _build_property_schema([proj])
+        assert "Chain:" in schema
+        assert "Person" in schema
+
+    def test_multi_entity_schema(self):
+        p1 = _film_profile()
+        p2 = _person_profile()
+        a = analyze_question("Who was born earlier?")
+        schema = _build_property_schema([project(p1, a), project(p2, a)])
+        assert "Inception" in schema
+        assert "Albert Einstein" in schema
 
 
 # ---------------------------------------------------------------------------
@@ -839,38 +858,268 @@ class TestIncompleteCoverage:
     def test_detects_missing_entity(self):
         entities = _make_entities("The Nice Guys")
         q = "Which film has the director who was born first, Piccoli Fuochi or The Nice Guys?"
-        assert _has_incomplete_entity_coverage(q, entities, "Entity: The Nice Guys")
+        assert _has_incomplete_entity_coverage(q, entities)
 
     def test_complete_coverage_passes(self):
         entities = _make_entities("Film A", "Film B")
         q = "Which was released first, Film A or Film B?"
-        assert not _has_incomplete_entity_coverage(
-            q, entities, "Entity: Film A\nEntity: Film B"
-        )
+        assert not _has_incomplete_entity_coverage(q, entities)
 
     def test_non_comparison_skips(self):
         entities = _make_entities("X")
         q = "Who directed X?"
-        assert not _has_incomplete_entity_coverage(q, entities, "Entity: X")
+        assert not _has_incomplete_entity_coverage(q, entities)
 
     def test_no_or_pattern_skips(self):
         entities = _make_entities("Film A")
         q = "Which film was released first?"
-        assert not _has_incomplete_entity_coverage(q, entities, "Entity: Film A")
+        assert not _has_incomplete_entity_coverage(q, entities)
 
     def test_case_insensitive_label_match(self):
         entities = _make_entities("the nice guys")
         q = "Which was released first, Film X or The Nice Guys?"
-        assert _has_incomplete_entity_coverage(q, entities, "Entity: the nice guys")
+        assert _has_incomplete_entity_coverage(q, entities)
 
     def test_and_pattern_detects_missing(self):
         """'both X and Y' should detect entity names."""
         entities = _make_entities("X")
         q = "Are both X and Y located in the same country?"
-        assert _has_incomplete_entity_coverage(q, entities, "Entity: X")
+        assert _has_incomplete_entity_coverage(q, entities)
 
     def test_comma_and_pattern(self):
         """', X and Y?' should detect entity names."""
         entities = _make_entities("X")
         q = "Which was released first, X and Y?"
-        assert _has_incomplete_entity_coverage(q, entities, "Entity: X")
+        assert _has_incomplete_entity_coverage(q, entities)
+
+
+# ---------------------------------------------------------------------------
+# enrich_analysis
+# ---------------------------------------------------------------------------
+
+class TestEnrichAnalysis:
+    """Tests for LLM property enrichment of QuestionAnalysis."""
+
+    def test_empty_properties_returns_base(self):
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the capital of France?")
+        enriched = enrich_analysis(base, [])
+        assert enriched is base
+
+    def test_adds_prefixed_properties(self):
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["director"])
+        assert "dbo:director" in enriched.target_properties
+        assert "dbp:director" in enriched.target_properties
+
+    def test_detects_bridge_structure(self):
+        """Two properties where first is in PROPERTY_RANGES → bridge detected."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["director", "birthDate"])
+        assert enriched.bridge_property == "director"
+        assert enriched.hop2_keyword == "birthDate"
+        assert enriched.hop_structure == "bridge"
+        assert enriched.expected_target_type == "Person"
+
+    def test_preserves_existing_bridge(self):
+        """If base already has bridge, don't override."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("When was the director of Inception born?")
+        assert base.bridge_property == "director"
+        enriched = enrich_analysis(base, ["starring"])
+        assert enriched.bridge_property == "director"  # preserved
+
+    def test_single_property_no_bridge(self):
+        """Single LLM property → adds to targets, no bridge."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["birthDate"])
+        assert enriched.bridge_property is None
+        assert "dbo:birthDate" in enriched.target_properties
+
+    def test_enriched_enables_routing(self):
+        """LLM-enriched analysis enables rule-based routing that keyword missed."""
+        from question_analysis import enrich_analysis
+        # "helmed" is not in KEYWORD_TO_PROPERTIES → no target_properties
+        base = analyze_question("Who helmed Inception?")
+        assert not base.target_properties
+        # LLM extracts "director"
+        enriched = enrich_analysis(base, ["director"])
+        # Now projection should match
+        profile = _film_profile()
+        proj = project(profile, enriched)
+        result = _rule_based_route(enriched, [proj])
+        assert result is not None
+        assert result[0] == "SPARQL"
+        assert "direct_property" in result[1]
+
+
+# ---------------------------------------------------------------------------
+# _extract_properties_llm
+# ---------------------------------------------------------------------------
+
+class TestExtractPropertiesLlm:
+    """Tests for LLM property extraction parsing."""
+
+    def test_parses_comma_separated(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import _extract_properties_llm
+        mock_client = MagicMock()
+        with patch("llm_provider.call_llm", return_value="director, birthDate"):
+            result = _extract_properties_llm("q", "schema", mock_client, "model")
+        assert result == ["director", "birthDate"]
+
+    def test_strips_prefixes(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import _extract_properties_llm
+        mock_client = MagicMock()
+        with patch("llm_provider.call_llm", return_value="dbo:director, dbp:birthDate"):
+            result = _extract_properties_llm("q", "schema", mock_client, "model")
+        assert result == ["director", "birthDate"]
+
+    def test_none_response(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import _extract_properties_llm
+        mock_client = MagicMock()
+        with patch("llm_provider.call_llm", return_value="NONE"):
+            result = _extract_properties_llm("q", "schema", mock_client, "model")
+        assert result == []
+
+    def test_empty_response(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import _extract_properties_llm
+        mock_client = MagicMock()
+        with patch("llm_provider.call_llm", return_value=""):
+            result = _extract_properties_llm("q", "schema", mock_client, "model")
+        assert result == []
+
+    def test_single_property(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import _extract_properties_llm
+        mock_client = MagicMock()
+        with patch("llm_provider.call_llm", return_value="director"):
+            result = _extract_properties_llm("q", "schema", mock_client, "model")
+        assert result == ["director"]
+
+
+# ---------------------------------------------------------------------------
+# H1: route_question Stage 2 LLM failure → TEXT fallback
+# ---------------------------------------------------------------------------
+
+class TestRouteQuestionLlmFailure:
+    """Stage 2 LLM crash must fall through to TEXT, not raise."""
+
+    def test_llm_exception_falls_to_text(self):
+        from unittest.mock import MagicMock, patch
+
+        from routing import route_question
+        mock_kg = MagicMock()
+        mock_llm = MagicMock()
+        entities = _make_entities("Inception")
+        profile = _film_profile()
+        analysis = analyze_question("What is the meaning of life?")
+        proj = project(profile, analysis)
+
+        with patch("llm_provider.call_llm", side_effect=RuntimeError("LLM down")):
+            route, source = route_question(
+                "What is the meaning of life?",
+                entities, mock_kg, mock_llm, "model",
+                projections=[proj],
+            )
+        assert route == "TEXT"
+        assert "no_match" in source
+
+
+# ---------------------------------------------------------------------------
+# H2: Order-invariant bridge detection in enrich_analysis
+# ---------------------------------------------------------------------------
+
+class TestEnrichBridgeOrdering:
+    """Bridge detection must pick the navigational property regardless of order."""
+
+    def test_director_birthdate_order(self):
+        """["director", "birthDate"] → director is bridge (Person has birthDate)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["director", "birthDate"])
+        assert enriched.bridge_property == "director"
+        assert enriched.hop2_keyword == "birthDate"
+
+    def test_birthdate_director_reversed(self):
+        """["birthDate", "director"] → director still wins (Person has birthDate)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["birthDate", "director"])
+        assert enriched.bridge_property == "director"
+        assert enriched.hop2_keyword == "birthDate"
+
+    def test_birthplace_country(self):
+        """["birthPlace", "country"] → birthPlace is bridge (Place has country)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["birthPlace", "country"])
+        assert enriched.bridge_property == "birthPlace"
+        assert enriched.hop2_keyword == "country"
+
+    def test_country_birthplace_reversed(self):
+        """["country", "birthPlace"] → birthPlace still wins (Place has country)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["country", "birthPlace"])
+        assert enriched.bridge_property == "birthPlace"
+        assert enriched.hop2_keyword == "country"
+
+    def test_two_leaf_properties_no_bridge(self):
+        """["birthDate", "deathDate"] → no bridge (neither covers the other)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["birthDate", "deathDate"])
+        assert enriched.bridge_property is None
+        assert enriched.hop_structure != "bridge"
+
+    def test_author_nationality(self):
+        """["author", "nationality"] → author is bridge (Person has nationality)."""
+        from question_analysis import enrich_analysis
+        base = analyze_question("What is the meaning of life?")
+        enriched = enrich_analysis(base, ["author", "nationality"])
+        assert enriched.bridge_property == "author"
+        assert enriched.hop2_keyword == "nationality"
+
+
+# ---------------------------------------------------------------------------
+# route_source substring match verification
+# ---------------------------------------------------------------------------
+
+class TestRouteSourceSubstringMatch:
+    """Verify bridge_patterns substring check handles all route_source forms."""
+
+    def test_plain_bridge_hop2(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert any(p in "rule:bridge_hop2" for p in bridge_patterns)
+
+    def test_ask_verified_bridge(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert any(p in "rule:bridge_hop2+ask_verified" for p in bridge_patterns)
+
+    def test_llm_prop_bridge(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert any(p in "llm_prop:rule:bridge_hop2+ask_verified" for p in bridge_patterns)
+
+    def test_llm_prop_parent(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert any(p in "llm_prop:rule:parent_chain+ask_verified" for p in bridge_patterns)
+
+    def test_direct_property_no_match(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert not any(p in "rule:direct_property" for p in bridge_patterns)
+
+    def test_no_schema_no_match(self):
+        bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+        assert not any(p in "no_schema_fallback" for p in bridge_patterns)

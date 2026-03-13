@@ -99,7 +99,7 @@ class HybridResult:
 
     answer: str
     method: str  # "sparql", "text", or "logicrag_decomposed"
-    route_source: str = ""  # "rule:*", "llm", "no_schema_fallback"
+    route_source: str = ""  # "rule:*[+ask_verified|ask_missing]", "llm_prop:*", "incomplete_coverage", "no_schema_fallback"
     sparql_fallback: bool = False  # True if routed SPARQL but fell back to text
     sparql_query: Optional[str] = None  # executed SPARQL query (provenance)
     kg_context: str = ""  # formatted KG facts injected into text prompt

@@ -43,28 +43,19 @@ BRIDGE_WORD_TO_PROP = {
     "spouse": "spouse", "married": "spouse",
 }
 
-ROUTE_PROMPT = """You are a knowledge graph query router for DBpedia. \
-Decide if this question can be answered via SPARQL.
+PROPERTY_EXTRACTION_PROMPT = """Given this question and DBpedia schema, \
+which properties are needed to answer it?
 
 {schema}
 
 QUESTION: {question}
-{hint}
-Reasoning steps:
-1. What information does this question need? \
-(a date, a name, a place, a comparison, etc.)
-2. What property or relationship provides that information? \
-(e.g., birthDate, director, foundedBy, nationality)
-3. Does the schema above contain that property, \
-or a 2-hop chain that leads to it?
-   - Direct: the property exists on the entity \
-(e.g., dbo:birthDate in "Actual properties")
-   - 2-hop: a chain exists \
-(e.g., "dbo:director -> Person: birthDate")
-4. If a complete property path exists: SPARQL
-5. If the required property is absent or the chain is incomplete: TEXT
 
-Reply with EXACTLY one word: SPARQL or TEXT"""
+Output a comma-separated list of property names (no dbo:/dbp: prefix).
+Only output properties listed above. For 2-hop paths (e.g., "director's birthdate"),
+list both: director, birthDate
+If no properties can help, output: NONE
+
+Properties:"""
 
 
 # Property sets for comparison routing
@@ -198,12 +189,12 @@ def _is_comparison_question(question: str, entities: list[Entity]) -> bool:
 
 
 def _has_incomplete_entity_coverage(
-    question: str, entities: list[Entity], schema_ctx: str,
+    question: str, entities: list[Entity],
 ) -> bool:
-    """Check if a comparison question mentions entities not in the schema.
+    """Check if a comparison question mentions entities not in linked set.
 
     Detects 'X or Y' / 'X and Y' patterns and checks if all mentioned names
-    have corresponding Entity blocks in the schema context.
+    have corresponding Entity objects.
     """
     q_lower = question.lower()
     comparison_words = [
@@ -358,6 +349,74 @@ def verify_sparql_feasibility(
 
 
 # ---------------------------------------------------------------------------
+# LLM property extraction (replaces binary LLM routing)
+# ---------------------------------------------------------------------------
+
+def _build_property_schema(projections: list) -> str:
+    """Build available-property summary for LLM property extraction (~200 tokens)."""
+    lines = []
+    for proj in projections:
+        profile = proj.entity_profile
+        lines.append(f"Entity: {profile.label}")
+        if proj.primary_class:
+            lines.append(f"Class: {proj.primary_class}")
+            schema = CACHED_CLASS_SCHEMAS.get(proj.primary_class, {})
+            if schema.get("dbo"):
+                lines.append(f"  dbo properties: {', '.join(schema['dbo'])}")
+        actual_dbo = profile.actual_properties.get("dbo", [])
+        actual_dbp = profile.actual_properties.get("dbp", [])
+        if actual_dbo:
+            lines.append(f"  Actual dbo: {', '.join(actual_dbo)}")
+        dbp_only = [p for p in actual_dbp if p not in (actual_dbo or [])]
+        if dbp_only:
+            lines.append(f"  Actual dbp: {', '.join(dbp_only)}")
+        if profile.all_2hop_chains:
+            for prop, (target, tprops) in profile.all_2hop_chains.items():
+                lines.append(f"  Chain: {prop} -> {target}: {', '.join(tprops)}")
+    return "\n".join(lines)
+
+
+def _extract_properties_llm(
+    question: str,
+    property_schema: str,
+    llm_client,
+    model: str,
+    debug: bool = False,
+) -> list[str]:
+    """Use LLM to extract needed properties from question + schema.
+
+    Called when keyword matching is inconclusive. The LLM sees available
+    schema properties and picks which ones the question needs.
+
+    Returns property names without prefix, e.g. ["director", "birthDate"].
+    """
+    from llm_provider import call_llm
+
+    safe_schema = property_schema.replace("{", "{{").replace("}", "}}")
+    safe_question = question.replace("{", "{{").replace("}", "}}")
+    prompt = PROPERTY_EXTRACTION_PROMPT.format(
+        schema=safe_schema, question=safe_question,
+    )
+
+    response = call_llm(llm_client, prompt, model).strip()
+
+    if debug:
+        print(f"  [DEBUG] LLM property extraction: {response}")
+
+    if not response or response.upper() == "NONE":
+        return []
+
+    # Parse comma-separated property names, strip prefixes
+    properties = []
+    for part in response.split(","):
+        prop = part.strip().split(":")[-1]  # strip dbo:/dbp: if present
+        if prop and prop.upper() != "NONE":
+            properties.append(prop)
+
+    return properties
+
+
+# ---------------------------------------------------------------------------
 # Main route_question entry point
 # ---------------------------------------------------------------------------
 
@@ -374,12 +433,18 @@ def route_question(
 ) -> tuple[str, str]:
     """Determine route for a question: SPARQL, DECOMPOSE, or TEXT.
 
-    If projections not provided, builds them from entities + schema_disc.
-    schema_ctx is optional backward-compat for incomplete entity coverage check.
+    Three-stage routing:
+      1. Keyword matching → deterministic rules → ASK verification
+      2. LLM property extraction → re-run rules → ASK verification
+      3. TEXT fallback
+
+    The LLM is used for open-vocabulary property extraction (mapping
+    question words like "helmed" to schema properties like "director"),
+    NOT for binary SPARQL/TEXT classification. All routing decisions
+    are deterministic once properties are identified.
     """
     from entity_profile import build_entity_profile
-    from llm_provider import call_llm
-    from question_analysis import analyze_question
+    from question_analysis import analyze_question, enrich_analysis
     from schema_projection import project
 
     # Build projections if not provided
@@ -396,47 +461,49 @@ def route_question(
         return ("TEXT", "no_schema_fallback")
 
     # Guard: comparison questions with incomplete entity coverage → DECOMPOSE
-    if schema_ctx and _has_incomplete_entity_coverage(question, entities, schema_ctx):
+    if _has_incomplete_entity_coverage(question, entities):
         if debug:
             print("  [DEBUG] Incomplete entity coverage → DECOMPOSE")
         return ("DECOMPOSE", "incomplete_coverage")
 
-    # Single call to _rule_based_route()
+    # Stage 1: Keyword-based rules + ASK verification
     rule_result = _rule_based_route(analysis, projections, debug=debug)
-
-    # Rule-based + ASK verification
     ask_result = verify_sparql_feasibility(
         analysis, projections, entities, kg_client, rule_result,
     )
     if ask_result:
         route, reason = ask_result
         if debug:
-            print(f"  [DEBUG] ASK verification: {route} ({reason})")
+            print(f"  [DEBUG] Stage 1 (keywords): {route} ({reason})")
         if route in ("SPARQL", "DECOMPOSE"):
             return (route, reason)
 
-    # LLM fallback with render_for_routing() (~150 tokens)
-    routing_context = "\n\n".join(proj.render_for_routing() for proj in projections)
-    hint = ""
-    if rule_result:
-        hint = f"\nSchema analysis suggests: {rule_result[1]} (SPARQL likely feasible)\n"
+    # Stage 2: LLM property extraction → re-run deterministic routing
+    try:
+        property_schema = _build_property_schema(projections)
+        llm_properties = _extract_properties_llm(
+            question, property_schema, llm_client, model, debug=debug,
+        )
 
-    safe_schema = routing_context.replace("{", "{{").replace("}", "}}")
-    safe_question = question.replace("{", "{{").replace("}", "}}")
-    route_prompt = ROUTE_PROMPT.format(
-        schema=safe_schema, question=safe_question, hint=hint,
-    )
-    route_resp = call_llm(llm_client, route_prompt, model).strip()
-    route_match = re.search(r'\b(SPARQL|TEXT)\b', route_resp, re.IGNORECASE)
-    route = route_match.group(1).upper() if route_match else "TEXT"
+        if llm_properties:
+            enriched = enrich_analysis(analysis, llm_properties)
+            enriched_profiles = [proj.entity_profile for proj in projections]
+            enriched_projections = [project(p, enriched) for p in enriched_profiles]
+            enriched_rule = _rule_based_route(enriched, enriched_projections, debug=debug)
+            enriched_ask = verify_sparql_feasibility(
+                enriched, enriched_projections, entities, kg_client, enriched_rule,
+            )
+            if enriched_ask:
+                route, reason = enriched_ask
+                if debug:
+                    print(f"  [DEBUG] Stage 2 (LLM props={llm_properties}): "
+                          f"{route} ({reason})")
+                if route in ("SPARQL", "DECOMPOSE"):
+                    return (route, f"llm_prop:{reason}")
+    except Exception as e:
+        logger.debug("Stage 2 LLM property extraction failed: %s", e)
 
-    # Preserve rule route_source when LLM agrees
-    if rule_result and route == "SPARQL":
-        route_source = rule_result[1]
-    else:
-        route_source = "llm"
-
+    # Stage 3: TEXT fallback
     if debug:
-        print(f"  [DEBUG] LLM route: {route} ({route_source})")
-
-    return (route, route_source)
+        print("  [DEBUG] No property match → TEXT")
+    return ("TEXT", "llm_prop:no_match")

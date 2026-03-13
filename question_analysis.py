@@ -8,7 +8,11 @@ No LLM calls — purely regex + dictionary lookup.
 import re
 from dataclasses import dataclass, field
 
-from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_RANGES, PROPERTY_TO_CLASSES
+from dbpedia_qa.dbpedia.schema_discovery import (
+    CACHED_CLASS_SCHEMAS,
+    PROPERTY_RANGES,
+    PROPERTY_TO_CLASSES,
+)
 
 # Consolidated keyword -> property names (without prefix).
 KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
@@ -195,4 +199,83 @@ def analyze_question(
         hop2_keyword=hop2_keyword,
         hop2_properties=hop2_properties,
         target_keywords_set=frozenset(matched_keywords),
+    )
+
+
+def enrich_analysis(
+    base: QuestionAnalysis,
+    llm_properties: list[str],
+) -> QuestionAnalysis:
+    """Create enriched QuestionAnalysis with LLM-extracted properties.
+
+    When keyword matching misses the right properties (closed vocabulary),
+    the LLM extracts property names from the question + schema. This function
+    merges those into the base analysis and detects bridge structure.
+
+    Args:
+        base: Original keyword-based QuestionAnalysis
+        llm_properties: Property names from LLM (no prefix), e.g. ["director", "birthDate"]
+
+    Returns:
+        New QuestionAnalysis with LLM properties merged in.
+    """
+    if not llm_properties:
+        return base
+
+    # Expand to prefixed property set
+    new_props: set[str] = set(base.target_properties)
+    for prop in llm_properties:
+        new_props.add(f"dbo:{prop}")
+        new_props.add(f"dbp:{prop}")
+
+    # Detect bridge structure from LLM properties
+    bridge_keyword = base.bridge_keyword
+    bridge_property = base.bridge_property
+    hop2_keyword = base.hop2_keyword
+    hop2_properties = base.hop2_properties
+    hop_structure = base.hop_structure
+    expected_type = base.expected_target_type
+
+    if not bridge_property and len(llm_properties) >= 2:
+        # Score each candidate by how well its target class covers remaining props.
+        # E.g., ["director","birthDate"]: director→Person has birthDate ✓ (score=1)
+        #        birthPlace→Place doesn't have director (score=0) → director wins.
+        best_candidate = None
+        best_score = -1
+        for prop in llm_properties:
+            range_key = f"dbo:{prop}"
+            if range_key not in PROPERTY_RANGES:
+                continue
+            target_cls = PROPERTY_RANGES[range_key]
+            target_schema = CACHED_CLASS_SCHEMAS.get(target_cls, {})
+            target_props = set(target_schema.get("dbo", []))
+            remaining = [p for p in llm_properties if p != prop]
+            score = sum(1 for p in remaining if p in target_props)
+            if score > best_score:
+                best_score = score
+                best_candidate = prop
+        if best_candidate and best_score > 0:
+            bridge_keyword = best_candidate
+            bridge_property = best_candidate
+            expected_type = PROPERTY_RANGES[f"dbo:{best_candidate}"]
+            remaining = [p for p in llm_properties if p != best_candidate]
+            hop2_keyword = remaining[0]
+            h2_set: set[str] = set()
+            for p in remaining:
+                h2_set.add(f"dbo:{p}")
+                h2_set.add(f"dbp:{p}")
+            hop2_properties = frozenset(h2_set)
+            hop_structure = "bridge"
+
+    return QuestionAnalysis(
+        target_keywords=base.target_keywords,
+        target_properties=frozenset(new_props),
+        expected_target_type=expected_type,
+        hop_structure=hop_structure,
+        is_comparison=base.is_comparison,
+        bridge_keyword=bridge_keyword,
+        bridge_property=bridge_property,
+        hop2_keyword=hop2_keyword,
+        hop2_properties=hop2_properties,
+        target_keywords_set=base.target_keywords_set,
     )
