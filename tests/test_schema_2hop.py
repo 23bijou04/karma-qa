@@ -139,11 +139,11 @@ class TestDescriptionFilter:
             "results": {"bindings": [
                 {
                     "property": {"value": "http://dbpedia.org/ontology/birthDate"},
-                    "value": {"value": "1879-03-14", "type": "literal"},
+                    "sampleValue": {"value": "1879-03-14", "type": "literal"},
                 },
                 {
                     "property": {"value": "http://dbpedia.org/ontology/description"},
-                    "value": {"value": "fisikawan bidang fisika", "type": "literal"},
+                    "sampleValue": {"value": "fisikawan bidang fisika", "type": "literal"},
                 },
             ]}
         }
@@ -267,6 +267,9 @@ class TestCachedClassSchemasIntegrity:
         for prop in schema.get("dbp", []):
             assert isinstance(prop, str)
 
-    def test_all_six_classes_present(self):
-        expected = {"Person", "Film", "Company", "Place", "MusicalArtist", "Book"}
+    def test_all_cached_classes_present(self):
+        expected = {
+            "Person", "Film", "Company", "Place", "MusicalArtist", "Book",
+            "MusicalWork",
+        }
         assert set(CACHED_CLASS_SCHEMAS.keys()) == expected

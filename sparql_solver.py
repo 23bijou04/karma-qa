@@ -22,6 +22,12 @@ from sparql_evaluation import (
 
 logger = logging.getLogger(__name__)
 
+# Null-answer patterns returned by the LLM that should be treated as no answer
+_NULL_ANSWERS = {
+    "could not", "n/a", "unknown", "none", "not found", "no answer",
+    "could not determine", "no information", "not available",
+}
+
 # ---------------------------------------------------------------------------
 # Unified SPARQL generation prompt (with optional known_facts for sub-Qs)
 # ---------------------------------------------------------------------------
@@ -151,8 +157,10 @@ def solve(
     )
     answer = extract_final_answer(call_llm(llm_client, answer_prompt, model))
 
-    if answer and answer.lower() in ("", "could not", "n/a", "unknown"):
-        answer = None
+    if answer:
+        clean = answer.strip().lower().rstrip(".")
+        if clean in _NULL_ANSWERS:
+            answer = None
 
     # Discover entities from SPARQL results
     seed_uris = {e.uri for e in entities if e.uri}

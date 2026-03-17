@@ -129,7 +129,10 @@ def _topological_sort_indices(n: int, edges: list[list[int]]) -> list[int]:
             if in_degree[neighbor] == 0:
                 queue.append(neighbor)
 
-    return order if len(order) == n else list(range(n))
+    if len(order) == n:
+        return order
+    logger.warning("Cyclic dependencies in sub-question decomposition, using sequential order")
+    return list(range(n))
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +409,9 @@ def _resolve_subquestion(
     answer is None if resolution fails.
     """
     # Step 1: Substitute known answers into sub-question text
-    resolved_text = _substitute_answers(sub_q.text, known_facts)
+    # Only use answers from actual dependencies, not all known facts
+    dep_facts = {idx: known_facts[idx] for idx in sub_q.depends_on if idx in known_facts}
+    resolved_text = _substitute_answers(sub_q.text, dep_facts)
     if verbose:
         print(f"\n    Sub-Q {idx}: {resolved_text}")
     if debug and sub_q.depends_on:
@@ -593,9 +598,11 @@ def _try_logicrag_decomposition(
             if check["can_answer"]:
                 if verbose:
                     print("  -> Early exit: accumulated facts sufficient")
-                return _generate_final_answer(
-                    question, info_summary, llm_client, model,
-                )
+                final = _generate_final_answer(question, info_summary, llm_client, model)
+                if final:
+                    return final
+                # Fall back to best sub-Q answer
+                break
 
     # --- Step 3: Generate final answer from accumulated facts ---
     if not known_facts:
@@ -603,12 +610,14 @@ def _try_logicrag_decomposition(
             print("  No sub-questions resolved, decomposition failed")
         return None
 
-    # If only one fact, return directly
+    # If only one fact, try final answer generation in case it's an intermediate fact
     if len(known_facts) == 1:
         sole_answer = list(known_facts.values())[0]
         if verbose:
             print(f"  Single resolved fact: {sole_answer}")
-        return sole_answer
+        info_summary = _build_info_summary(sub_questions, known_facts)
+        final = _generate_final_answer(question, info_summary, llm_client, model)
+        return final if final else sole_answer
 
     # Build info_summary with provenance labels
     info_summary = _build_info_summary(sub_questions, known_facts)
@@ -619,4 +628,8 @@ def _try_logicrag_decomposition(
         for line in info_summary.split("\n"):
             print(f"    {line}")
 
-    return _generate_final_answer(question, info_summary, llm_client, model)
+    final = _generate_final_answer(question, info_summary, llm_client, model)
+    if final:
+        return final
+    # Fallback: return most relevant known fact (last resolved)
+    return list(known_facts.values())[-1] if known_facts else None

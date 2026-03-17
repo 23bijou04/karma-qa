@@ -192,7 +192,7 @@ def _solve_rag(question, entities, known_facts, relation_hints,
         question, top_chunks, top_k=8, relation_hints=relation_hints,
     )
 
-    context = _assemble_from_chunks(reranked, known_facts, max_chars=12_000)
+    context = _assemble_from_chunks(reranked, "", max_chars=12_000)
     if verbose:
         print(f"  RAG context: {len(reranked)} chunks, {len(context)} chars")
     return context

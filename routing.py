@@ -21,6 +21,7 @@ from urllib.parse import unquote
 
 from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
 from dbpedia_qa.models import Entity
+from question_analysis import COMPARISON_WORDS
 
 if TYPE_CHECKING:
     from question_analysis import QuestionAnalysis
@@ -181,11 +182,7 @@ def _rule_based_route(
 def _is_comparison_question(question: str, entities: list[Entity]) -> bool:
     """Check if this is a comparison question with 2+ entities."""
     q_lower = question.lower()
-    comparison_words = [
-        "earlier", "later", "older", "younger", "first", "before", "after",
-        "more recently", "longer", "shorter", "same", "both",
-    ]
-    return len(entities) >= 2 and any(w in q_lower for w in comparison_words)
+    return len(entities) >= 2 and any(w in q_lower for w in COMPARISON_WORDS)
 
 
 def _has_incomplete_entity_coverage(
@@ -197,11 +194,7 @@ def _has_incomplete_entity_coverage(
     have corresponding Entity objects.
     """
     q_lower = question.lower()
-    comparison_words = [
-        "earlier", "later", "older", "younger", "first", "before", "after",
-        "more recently", "longer", "shorter", "same", "both",
-    ]
-    if not any(w in q_lower for w in comparison_words):
+    if not any(w in q_lower for w in COMPARISON_WORDS):
         return False
 
     m = re.search(r',\s*(.+?)\s+or\s+(.+?)\s*\?', question)
@@ -315,10 +308,6 @@ def verify_sparql_feasibility(
 
         # Completeness not "complete" -- verify via ASK
         hop1_prop = analysis.bridge_property
-        if not hop1_prop:
-            # Fallback to BRIDGE_WORD_TO_PROP
-            q_lower = analysis.target_keywords[0] if analysis.target_keywords else ""
-            hop1_prop = BRIDGE_WORD_TO_PROP.get(q_lower)
 
         if not hop1_prop or not entities:
             return (route, reason)

@@ -419,9 +419,10 @@ class TestLogicragSynthesis:
             )
 
         assert result is not None
-        # Only 1 sub-Q resolved -> returned directly, no synthesis
-        assert "verified facts" not in " ".join(llm_calls).lower()
-        assert result == "Christopher Nolan"
+        # Single resolved fact routes through LLM synthesis to handle
+        # intermediate bridge answers (e.g., entity name vs. final answer).
+        # The mock LLM returns "test" via extract_final_answer("FINAL ANSWER: test").
+        assert result == "test"
 
 
 # ---------------------------------------------------------------------------

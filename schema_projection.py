@@ -201,12 +201,11 @@ def project(
         if not hop1_ok:
             completeness = "missing"
             missing_hops = [f"hop1:{analysis.bridge_property}"]
-        elif needed_names <= have_names:
+        else:
+            # For bridge questions, hop1 property on seed entity is sufficient.
+            # Hop2 properties (e.g., birthDate) live on the bridge target entity.
             completeness = "complete"
             missing_hops = []
-        else:
-            completeness = "partial"
-            missing_hops = [f"hop1:{n}" for n in needed_names - have_names]
     else:
         if not needed_names:
             completeness = "complete"

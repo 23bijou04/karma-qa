@@ -511,7 +511,7 @@ class SchemaDiscovery:
 
         safe_uri = escape_sparql_uri(entity_uri)
         query = f"""
-        SELECT DISTINCT ?property ?value WHERE {{
+        SELECT ?property (SAMPLE(?value) AS ?sampleValue) WHERE {{
             <{safe_uri}> ?property ?value .
             FILTER(
                 STRSTARTS(STR(?property), "http://dbpedia.org/ontology/") ||
@@ -524,7 +524,8 @@ class SchemaDiscovery:
             FILTER(!CONTAINS(STR(?property), "description"))
             {filter_clause}
         }}
-        LIMIT 50
+        GROUP BY ?property
+        LIMIT 100
         """
 
         result = {"dbo": [], "dbp": [], "values": {}}
@@ -536,10 +537,10 @@ class SchemaDiscovery:
             for row in results.get("results", {}).get("bindings", []):
                 prop_uri = row["property"]["value"]
                 prop_name = prop_uri.split("/")[-1]
-                value = row["value"]["value"]
+                value = row["sampleValue"]["value"]
 
                 # Format value
-                if row["value"]["type"] == "uri":
+                if row["sampleValue"]["type"] == "uri":
                     value = value.split("/")[-1].replace("_", " ")
 
                 if "/ontology/" in prop_uri:
