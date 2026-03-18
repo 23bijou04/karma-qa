@@ -74,22 +74,22 @@ Answer
 
 ## Evaluation Results
 
-Evaluated on 276 answerable questions from 2WikiMultiHopQA dev set:
+Evaluated on 346 DBpedia-answerable questions from a 1000-question stratified sample:
 
 | System | EM | F1 | Judge EM | Best At |
 |--------|-----|------|----------|---------|
-| **LLM-SPARQL** | **67.8%** | **76.9%** | **82.6%** | comparison (89.8%), bridge_comparison (82.9%) |
-| GRASP | 33.7% | 51.9% | 75.7% | bridge_comparison (65.8%) |
+| **LLM-SPARQL** | **69.1%** | **83.2%** | **91.9%** | bridge_comparison (94.3%), comparison (85.9%) |
+| GRASP | 32.9% | 48.7% | 69.7% | bridge_comparison (55.3%) |
 | GraphRAG | -- | -- | -- | text-heavy questions |
 
 ### Per Question Type (LLM-SPARQL)
 
 | Type | n | EM | F1 | Judge EM |
 |------|---|-----|------|----------|
-| Comparison | 49 | 89.8% | 90.5% | 93.9% |
-| Bridge-Comparison | 111 | 82.9% | 82.9% | 82.9% |
-| Inference | 63 | 63.5% | 80.6% | 84.1% |
-| Compositional | 53 | 20.8% | 47.2% | 69.8% |
+| Bridge-Comparison | 141 | 94.3% | 96.2% | 97.2% |
+| Comparison | 71 | 85.9% | 92.3% | 95.8% |
+| Inference | 34 | 70.6% | 91.9% | 94.1% |
+| Compositional | 100 | 21.0% | 55.3% | 81.0% |
 
 ## DBpedia Answerability
 
