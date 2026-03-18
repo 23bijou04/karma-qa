@@ -9,8 +9,8 @@ Three-path architecture:
   1. EntityLink(q)            — DBpedia Spotlight (spaCy fallback)
   2. SchemaDiscovery(E)       — entity classes, properties, sample values
   3. RouteDecision(q, S)      — rule-based + SPARQL ASK verification + LLM fallback
-  4. Direct SPARQL            — sparql_solver.solve()
-  5. LogicRAG decomposition   — logicrag_decomposition._try_logicrag_decomposition()
+  4. Direct SPARQL            — sparql_solver.solve() (single-hop or multi-hop with full schema)
+  5. LogicRAG decomposition   — logicrag_decomposition (incomplete schema or SPARQL failed)
   6. Text fallback            — text_solver.solve()
 
 Usage:
@@ -126,8 +126,8 @@ def hybrid_answer(question: str, api_key: str = None,
     """Schema-routed hybrid QA with 3-path architecture.
 
     Paths:
-      1. Direct SPARQL — single-hop, verified via SPARQL ASK
-      2. LogicRAG decomposition — multi-hop, or direct SPARQL failed
+      1. Direct SPARQL — single-hop or multi-hop when schema coverage is complete
+      2. LogicRAG decomposition — multi-hop with incomplete schema, or direct SPARQL failed
       3. Simple text fallback — neighbors + Wikipedia + LLM reasoning
 
     Returns: HybridResult with answer, method, route_source, and sparql_fallback.
@@ -185,7 +185,7 @@ def hybrid_answer(question: str, api_key: str = None,
         print(f"STEP 3: Route Decision → {route} ({route_source})")
         print(sep)
 
-    # === Step 4: Direct SPARQL (verified via ASK, or rule-based match) ===
+    # === Step 4: Direct SPARQL (single-hop or multi-hop with full schema) ===
     sparql_answer = None
     executed_sparql_query = ""
     if route == "SPARQL" and schema_ctx:
@@ -211,7 +211,7 @@ def hybrid_answer(question: str, api_key: str = None,
             sparql_query=executed_sparql_query,
         )
 
-    # === Step 5: LogicRAG Decomposition (multi-hop, or SPARQL failed) ===
+    # === Step 5: LogicRAG Decomposition (incomplete schema, or SPARQL failed) ===
     sparql_fallback = route == "SPARQL"  # originally routed SPARQL but it failed
     logicrag_answer = _try_logicrag_decomposition(
         question, entities, schema_ctx, llm_client, model,
@@ -258,7 +258,8 @@ def hybrid_answer(question: str, api_key: str = None,
             relation_hints[title] = e.discovery_relation
 
     # Build seed titles for budget allocation
-    if route_source in ("rule:bridge_comparison", "rule:bridge_hop2", "rule:parent_chain"):
+    bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
+    if any(p in route_source for p in bridge_patterns):
         spotlight_uris = {e.uri for e in entities if e.uri}
         seed_titles = {
             uri_to_wiki_title(e.uri) for e in all_entities

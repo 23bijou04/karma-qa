@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ablation_study_v3.wiki_utils import get_wikipedia_text_by_title  # noqa: E402
+from ablation_study_v3.wiki_utils import get_wikipedia_text  # noqa: E402
 
 
 def normalize(text: str) -> str:
@@ -155,7 +155,8 @@ def phase2_wiki_check(results: list, delay: float = 0.5) -> list:
     """Phase 2: For hops without DBpedia property, check actual Wikipedia pages.
 
     This tests whether our pipeline's Wikipedia retrieval can find the value,
-    as opposed to the curated benchmark context.
+    as opposed to the curated benchmark context. Loads from cache file if present,
+    only fetches entities not already cached.
     """
     candidates = []
     for r in results:
@@ -167,12 +168,29 @@ def phase2_wiki_check(results: list, delay: float = 0.5) -> list:
     wiki_cache: dict[str, str | None] = {}
     disambiguation_set: set[str] = set()
     unique_entities = {hop["entity"] for _, _, hop in candidates}
+
+    # Load existing cache if available
+    pages_path = Path(__file__).resolve().parent.parent / "data/eval_1000q/wiki_pages_phase2.json"
+    if pages_path.exists():
+        with open(pages_path) as f:
+            cached = json.load(f)
+        for entity in unique_entities:
+            if entity in cached and cached[entity]["text"]:
+                wiki_cache[entity] = cached[entity]["text"]
+            elif entity in cached and cached[entity]["disambiguation"]:
+                disambiguation_set.add(entity)
+                wiki_cache[entity] = None
+        cached_count = sum(1 for e in unique_entities if e in cached and
+                           (cached[e]["text"] or cached[e]["disambiguation"]))
+        print(f"Phase 2: loaded {cached_count} entities from cache")
+
+    to_fetch = sorted(unique_entities - set(wiki_cache.keys()))
     print(f"Phase 2: {len(candidates)} hops need Wikipedia check "
-          f"({len(unique_entities)} unique entities)...")
+          f"({len(unique_entities)} unique entities, {len(to_fetch)} to fetch)...")
 
     fetched = 0
-    for entity in sorted(unique_entities):
-        wiki_text = get_wikipedia_text_by_title(entity, max_chars=8000)
+    for entity in to_fetch:
+        wiki_text = get_wikipedia_text(entity, max_chars=8000)
         if wiki_text and _is_disambiguation_page(wiki_text):
             disambiguation_set.add(entity)
             wiki_cache[entity] = None  # treat as not found
@@ -180,11 +198,10 @@ def phase2_wiki_check(results: list, delay: float = 0.5) -> list:
             wiki_cache[entity] = wiki_text
         fetched += 1
         if fetched % 50 == 0:
-            print(f"  ... fetched {fetched}/{len(unique_entities)} Wikipedia pages")
+            print(f"  ... fetched {fetched}/{len(to_fetch)} Wikipedia pages")
         time.sleep(delay)
 
     # Persist fetched pages for further analysis
-    pages_path = Path(__file__).resolve().parent.parent / "data/eval_1000q/wiki_pages_phase2.json"
     pages_out = {}
     for entity in sorted(wiki_cache):
         pages_out[entity] = {

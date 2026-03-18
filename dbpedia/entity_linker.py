@@ -34,6 +34,7 @@ _MENTION_BLOCKLIST = frozenset({
     "year", "date", "time", "place", "name", "age", "number",
     "first", "last", "born", "died", "older", "younger",
     "earlier", "later", "more", "fewer", "same", "different",
+    "performer", "publisher", "composer", "musician",
 })
 
 # Maps question keywords to the type of SUBJECT entities being compared.
@@ -46,7 +47,9 @@ TYPE_HINTS: dict[str, str] = {
     r'\bnovel\b': 'dbo:Book',
     r'\bsong\b': 'dbo:MusicalWork',
     r'\balbum\b': 'dbo:MusicalWork',
+    r'\bperformer\b': 'dbo:MusicalWork',
     r'\bband\b': 'dbo:MusicalArtist',
+    r'\bmusician\b': 'dbo:MusicalArtist',
     r'\bcountry\b': 'dbo:Country',
     r'\bcity\b': 'dbo:City',
     r'\bperson\b': 'dbo:Person',
@@ -63,6 +66,8 @@ RELATION_TYPE_HINTS: dict[str, str] = {
     r'\bwrote\b': 'dbo:Book',
     r'\bwriter\s+of\b': 'dbo:Book',
     r'\bcomposer\s+of\b': 'dbo:MusicalWork',
+    r'\bperformer\s+of\b': 'dbo:MusicalWork',
+    r'\bperformed\b': 'dbo:MusicalWork',
     r'\bpresident\s+of\b': 'dbo:Country',
     r'\bfounder\s+of\b': 'dbo:Company',
     r'\bcapital\s+of\b': 'dbo:Country',
@@ -86,7 +91,7 @@ class DBpediaEntityLinker:
         spotlight_endpoint: str = "https://api.dbpedia-spotlight.org/en/annotate",
         sparql_client: Optional[DBpediaSPARQLClient] = None,
         cache_manager: Optional[CacheManager] = None,
-        min_confidence: float = 0.35,
+        min_confidence: float = 0.5,
         min_support: int = 20,
     ):
         self.spotlight_endpoint = spotlight_endpoint

@@ -133,7 +133,10 @@ class TestRelationSectionBoosting:
     def test_relation_section_boost_dict_has_key_relations(self):
         """RELATION_SECTION_BOOST must cover key predicates."""
         from graphrag_wiki import RELATION_SECTION_BOOST
-        for rel in ["director", "author", "birthPlace", "deathDate", "spouse"]:
+        for rel in [
+            "director", "author", "birthPlace", "deathDate", "spouse",
+            "performer", "almaMater", "deathCause", "publicationDate",
+        ]:
             assert rel in RELATION_SECTION_BOOST
 
     def test_assemble_context_passes_relation_hints(self):

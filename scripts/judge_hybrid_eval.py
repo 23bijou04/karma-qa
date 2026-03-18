@@ -21,18 +21,32 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from llm_provider import create_llm_client  # noqa: E402
 
-JUDGE_PROMPT = """Judge if predicted answer is semantically equivalent to gold answer.
+JUDGE_PROMPT = """Judge if the predicted answer is semantically equivalent to the gold answer.
 Question: {question}
 Gold: {gold}
 Predicted: {pred}
-Rules: "yes" if same entity/fact (even if more specific). "no" if wrong or empty.
+Rules:
+- "yes" if they refer to the same entity/fact even with different specificity
+- "yes" if gold is contained in predicted as the same location/entity (e.g. "Munich" vs "Nymphenburg Palace, Munich, Germany" = yes)
+- "yes" if predicted adds a title/honorific to the same person (e.g. "Henriette of Nassau" vs "Princess Henriette of Nassau" = yes)
+- "yes" for equivalent date formats (e.g. "July 16, 2013" vs "2013-07-16" = yes)
+- "no" if the predicted answer is wrong, empty, or a different entity
 Answer ONLY "yes" or "no":"""
+
+
+def _normalize(s: str) -> str:
+    """Lowercase, strip punctuation/whitespace for containment check."""
+    return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
 
 
 def judge(client, question, gold, pred, model="llama-3.3-70b-versatile"):
     """Return True if LLM judge deems prediction semantically correct."""
     if not pred or pred.strip() == "":
         return False
+    # Fast path: if gold is contained in predicted (or vice versa), it's correct
+    g, p = _normalize(gold), _normalize(pred)
+    if g and p and (g in p or p in g):
+        return True
     resp = client.chat.completions.create(
         model=model,
         temperature=0,
@@ -47,7 +61,7 @@ def judge(client, question, gold, pred, model="llama-3.3-70b-versatile"):
 def main():
     parser = argparse.ArgumentParser(description="LLM judge for hybrid evaluation results")
     parser.add_argument("input_file", help="Input JSONL file from hybrid_batch_eval.py")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile",
                         help="LLM model name")

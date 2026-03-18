@@ -6,6 +6,7 @@ Provider is selected at runtime via --provider flag; model via --model.
 Providers:
   groq   — https://api.groq.com/openai/v1  (env: GROQ_API_KEY)
   github — https://models.inference.ai.azure.com (env: GITHUB_TOKEN)
+  ollama — http://localhost:11434/v1         (no key required)
 """
 
 import logging
@@ -25,6 +26,10 @@ PROVIDERS = {
     "github": {
         "base_url": "https://models.inference.ai.azure.com",
         "env_key": "GITHUB_TOKEN",
+    },
+    "ollama": {
+        "base_url": "http://localhost:11434/v1",
+        "env_key": None,
     },
 }
 
@@ -51,9 +56,12 @@ def create_llm_client(provider: str = "groq", api_key: str | None = None) -> Ope
     cfg = PROVIDERS.get(provider)
     if not cfg:
         raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(PROVIDERS)}")
-    key = api_key or os.environ.get(cfg["env_key"])
-    if not key:
-        raise ValueError(f"API key required: pass --api-key or set {cfg['env_key']}")
+    if cfg["env_key"] is None:
+        key = api_key or "ollama"
+    else:
+        key = api_key or os.environ.get(cfg["env_key"])
+        if not key:
+            raise ValueError(f"API key required: pass --api-key or set {cfg['env_key']}")
     return OpenAI(base_url=cfg["base_url"], api_key=key)
 
 
