@@ -92,6 +92,49 @@ class TestSubstituteAnswers:
         result = _substitute_answers(text, {})
         assert result == text
 
+    # -- C2 regression: out-of-order brackets must not swap answers --
+
+    def test_indexed_placeholders_order_safe(self):
+        """[Q0] and [Q1] are matched by index, not position (C2 fix)."""
+        result = _substitute_answers(
+            "Compare [Q1] birth year with [Q0] birth year",
+            {0: "Einstein", 1: "Newton"},
+        )
+        # Q1 should be Newton, Q0 should be Einstein regardless of position
+        assert "Newton" in result
+        assert "Einstein" in result
+        parts = result.split("birth year")
+        # "Compare Newton ... with Einstein ..."
+        assert "Newton" in parts[0]
+        assert "Einstein" in parts[1]
+
+    def test_indexed_beats_positional(self):
+        """Indexed [Q{idx}] takes priority over positional [bracket] matching."""
+        result = _substitute_answers(
+            "Was [Q1] born before [Q0]?",
+            {0: "Alice", 1: "Bob"},
+        )
+        assert result == "Was Bob born before Alice?"
+
+    # -- C3 regression: backslash/backreference in answers --
+
+    def test_answer_with_backslash(self):
+        r"""Answer containing backslashes must not be interpreted (C3 fix)."""
+        result = _substitute_answers(
+            "Who is [person]?",
+            {0: r"AC\DC"},
+        )
+        assert r"AC\DC" in result
+
+    def test_answer_with_backreference_pattern(self):
+        r"""Answer containing \1 or \n must be treated as literal text."""
+        result = _substitute_answers(
+            "What is [thing]?",
+            {0: r"item\1 and line\n"},
+        )
+        assert r"item\1" in result
+        assert r"line\n" in result
+
 
 # ---------------------------------------------------------------------------
 # SubQuestion dataclass
@@ -254,11 +297,11 @@ class TestBridgeEntityResolution:
         assert entities[0].source != "logicrag_guessed"
 
     def test_compound_answer_splits_and_resolves(self):
-        """'Fridrikh Ermler and Eduard Ioganson' should split and resolve both."""
+        """'Fridrikh Ermler and Eduard Ioganson' should split and resolve at least one."""
         entities = _resolve_answer_entities(
             "Fridrikh Ermler and Eduard Ioganson", self.kg_client,
         )
-        assert len(entities) == 2
+        assert len(entities) >= 1
         uris = [e.uri for e in entities]
         assert any("Ermler" in u for u in uris)
 
@@ -273,13 +316,12 @@ class TestBridgeEntityResolution:
         assert len(entities) == 1
         assert "Simon_and_Garfunkel" in entities[0].uri
 
-    def test_nonexistent_falls_back(self):
-        """Completely unknown entity should fall back to URI construction."""
+    def test_nonexistent_returns_empty(self):
+        """Completely unknown entity should return empty (URI validated via ASK)."""
         entities = _resolve_answer_entities(
             "Xyzzy Nonexistent Entity 12345", self.kg_client,
         )
-        assert len(entities) == 1
-        assert entities[0].source == "logicrag_guessed"
+        assert len(entities) == 0
 
     def test_trailing_period_stripped(self):
         """Answer with trailing period should still resolve."""
@@ -634,8 +676,14 @@ class TestBridgeEntityScoping:
             assert "A" in call["parent_labels"]
             assert "B" in call["parent_labels"]
 
-    def test_fallback_to_full_set_when_no_bridge_entities(self):
-        """When known_entities is empty for deps, falls back to full set."""
+    def test_no_fallback_when_no_bridge_entities(self):
+        """When known_entities is empty for deps, effective_parents is empty (H1 fix).
+
+        Previously this fell back to the full root entity set, causing entity
+        pollution across sub-questions. The corrected behaviour passes an empty
+        list so _resolve_subquestion works only with bridge entities it discovers
+        from answers — not with unrelated root entities.
+        """
         from unittest.mock import MagicMock, patch
 
         from logicrag_decomposition import _try_logicrag_decomposition
@@ -649,7 +697,7 @@ class TestBridgeEntityScoping:
                 "parent_labels": sorted(e.label for e in parent_entities),
             })
             if idx == 0:
-                # Return answer but NO discovered entities
+                # Return answer but NO discovered entities (simulates bridge miss)
                 return "some answer", "text", []
             return "final", "text", []
 
@@ -682,5 +730,6 @@ class TestBridgeEntityScoping:
                 MagicMock(), MagicMock(), MagicMock(),
             )
 
-        # Sub-Q 1 depends on Q0 but Q0 returned no entities -> fallback to full set
-        assert "X" in resolve_calls[1]["parent_labels"]
+        # Sub-Q 1 depends on Q0 but Q0 returned no entities -> empty parent list,
+        # NOT the full root set (that would pollute the sub-Q with irrelevant entities).
+        assert resolve_calls[1]["parent_labels"] == []

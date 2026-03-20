@@ -79,14 +79,14 @@ Return JSON:
 
 Example - Bridge: "When was the director of Inception born?"
 {{
-  "sub_questions": ["Who directed Inception?", "When was [director] born?"],
+  "sub_questions": ["Who directed Inception?", "When was [Q0] born?"],
   "dependencies": [[1, 0]]
 }}
 
 Example - Comparison: "Who was born first, the director of X or Y?"
 {{
   "sub_questions": ["Who directed X?", "Who directed Y?",
-    "When was [director of X] born?", "When was [director of Y] born?"],
+    "When was [Q0] born?", "When was [Q1] born?"],
   "dependencies": [[2, 0], [3, 1]]
 }}
 
@@ -142,22 +142,41 @@ def _topological_sort_indices(n: int, edges: list[list[int]]) -> list[int]:
 def _substitute_answers(text: str, known_facts: dict[int, str]) -> str:
     """Replace placeholder references in sub-question text with resolved answers.
 
-    Uses belt-and-suspenders approach:
-    1. Regex: replace bracketed placeholders like [director], [answer to Q0]
-    2. Direct: replace generic references like "Q0", "sub-question 0"
+    Strategy:
+    1. Indexed: replace [Q{idx}] patterns first (explicit, order-safe).
+    2. Positional fallback: replace remaining [.*?] brackets in sorted-index order.
+    3. Direct: replace "Q{idx}" / "sub-question {idx}" tokens.
+
+    All replacements use lambda to prevent backslash/backreference interpretation
+    in answer strings (C3 fix).
     """
     result = text
-    # Pass 1: Replace bracketed placeholders (ordered by index)
+
+    # Pass 1: Indexed placeholders [Q0], [Q1], etc. — exact match, no order risk
+    matched_indices: set[int] = set()
     for idx in sorted(known_facts.keys()):
         answer = known_facts[idx]
-        result = re.sub(r'\[.*?\]', answer, result, count=1)
-    # Pass 2: Direct string replacement for known answer values
+        pattern = re.compile(r'\[Q' + str(idx) + r'\]', re.IGNORECASE)
+        if pattern.search(result):
+            result = pattern.sub(lambda _: answer, result)
+            matched_indices.add(idx)
+
+    # Pass 2: Positional fallback for any remaining [.*?] brackets
+    # Only apply to indices not already handled in pass 1.
+    for idx in sorted(known_facts.keys()):
+        if idx in matched_indices:
+            continue
+        answer = known_facts[idx]
+        result = re.sub(r'\[.*?\]', lambda _: answer, result, count=1)
+
+    # Pass 3: Direct token replacement for "Q{idx}" / "sub-question {idx}"
     for idx, answer in known_facts.items():
         if answer and answer not in result:
             for pattern in [f"Q{idx}", f"sub-question {idx}", f"answer {idx}"]:
                 if pattern.lower() in result.lower():
                     result = re.sub(
-                        re.escape(pattern), answer, result, flags=re.IGNORECASE,
+                        re.escape(pattern), lambda _, a=answer: a,
+                        result, flags=re.IGNORECASE,
                     )
                     break
     return result
@@ -268,10 +287,27 @@ def _split_compound_answer(answer: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _make_fallback_entity(name: str, verbose: bool = False) -> Entity:
-    """Construct unverified Entity from name (fallback when SPARQL linking fails)."""
-    local_name = url_quote(name.replace(' ', '_'), safe="_")
+def _make_fallback_entity(name: str, kg_client=None,
+                          verbose: bool = False) -> Entity | None:
+    """Construct Entity from name, validating URI exists in DBpedia.
+
+    Returns None if kg_client is provided and URI doesn't exist.
+    """
+    local_name = url_quote(name.replace(' ', '_'), safe="_'()")
     uri = f"http://dbpedia.org/resource/{local_name}"
+
+    if kg_client:
+        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        safe_uri = escape_sparql_uri(uri)
+        try:
+            result = kg_client.query(f"ASK {{ <{safe_uri}> ?p ?o }}")
+            if not result.get("boolean", False):
+                if verbose:
+                    print(f"    Guessed URI not in DBpedia, skipping: {uri}")
+                return None
+        except Exception:
+            pass  # err on side of inclusion
+
     if verbose:
         print(f"    Guessed bridge entity URI: {uri}")
     return Entity(uri=uri, label=name, source="logicrag_guessed")
@@ -300,7 +336,8 @@ def _resolve_answer_entities(
     # Split on " and " and try each fragment
     parts = _split_compound_answer(answer_val)
     if len(parts) <= 1:
-        return [_make_fallback_entity(answer_val, verbose)]
+        fallback = _make_fallback_entity(answer_val, kg_client, verbose)
+        return [fallback] if fallback else []
 
     entities = []
     for part in parts:
@@ -310,7 +347,9 @@ def _resolve_answer_entities(
             if verbose:
                 print(f"    Linked bridge entity: '{part}' -> {linked.uri}")
         else:
-            entities.append(_make_fallback_entity(part, verbose))
+            fallback = _make_fallback_entity(part, kg_client, verbose)
+            if fallback:
+                entities.append(fallback)
     return entities
 
 
@@ -501,7 +540,7 @@ def _resolve_subquestion(
         resolved_text, all_entities,
         known_facts=kg_facts_block,
         llm_client=llm_client, model=model,
-        verbose=False, is_subquestion=True,
+        verbose=debug, is_subquestion=True,
     )
 
     if verbose:
@@ -568,7 +607,7 @@ def _try_logicrag_decomposition(
             scoped = []
             for dep_idx in sub_q.depends_on:
                 scoped.extend(known_entities.get(dep_idx, []))
-            effective_parents = scoped if scoped else list(entities)
+            effective_parents = scoped
         else:
             effective_parents = list(entities)
 

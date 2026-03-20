@@ -23,7 +23,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from urllib.parse import unquote
 
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
@@ -37,7 +36,7 @@ from dbpedia_qa.dbpedia import (  # noqa: E402
     DBpediaSPARQLClient,
     SchemaDiscovery,
 )
-from dbpedia_qa.models import Entity, HybridResult  # noqa: E402
+from dbpedia_qa.models import HybridResult  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from graphrag_wiki import link_entities_to_dbpedia  # noqa: E402
 from llm_provider import create_llm_client  # noqa: E402
@@ -47,70 +46,6 @@ from routing import route_question  # noqa: E402
 from schema_projection import project  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _sparql_neighbors(entities: list[Entity],
-                      kg_client: DBpediaSPARQLClient,
-                      limit_per_entity: int = 10,
-                      verbose: bool = False) -> list[Entity]:
-    """Get direct dbo:/dbp: neighbors via a simple SPARQL query.
-
-    Much simpler than explore_kg: no schema lookup, no type blocklist.
-    Just gets the first N structured neighbors for each seed entity.
-    """
-    from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
-
-    all_entities = list(entities)
-    seen_uris = {e.uri for e in entities if e.uri}
-
-    for entity in entities:
-        if not entity.uri:
-            continue
-        safe_uri = escape_sparql_uri(entity.uri)
-        query = f"""
-        SELECT DISTINCT ?p ?neighbor ?label WHERE {{
-            <{safe_uri}> ?p ?neighbor .
-            FILTER(isIRI(?neighbor))
-            FILTER(
-                STRSTARTS(STR(?p), "http://dbpedia.org/ontology/")
-                || STRSTARTS(STR(?p), "http://dbpedia.org/property/")
-            )
-            FILTER(?p != <http://dbpedia.org/ontology/wikiPageWikiLink>)
-            FILTER(STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/"))
-            FILTER(!STRSTARTS(STR(?neighbor), "http://dbpedia.org/resource/Category:"))
-            ?neighbor rdfs:label ?label .
-            FILTER(LANG(?label) = "en")
-        }} LIMIT {limit_per_entity}
-        """
-        try:
-            raw = kg_client.query(query)
-            bindings = raw.get("results", {}).get("bindings", [])
-        except Exception as e:
-            logger.warning(f"Neighbor query failed for {entity.label}: {e}")
-            continue
-
-        for b in bindings:
-            uri = b["neighbor"]["value"]
-            if uri in seen_uris:
-                continue
-            seen_uris.add(uri)
-            label = b.get("label", {}).get("value", "")
-            if not label:
-                label = unquote(uri.split("/")[-1]).replace("_", " ")
-            prop = b["p"]["value"].split("/")[-1]
-            all_entities.append(Entity(
-                uri=uri, label=label, source="sparql_neighbor",
-                discovery_relation=prop,
-            ))
-            if verbose:
-                print(f"    {entity.label} --{prop}--> {label}")
-
-    return all_entities
 
 
 # ---------------------------------------------------------------------------

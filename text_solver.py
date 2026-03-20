@@ -146,14 +146,22 @@ def solve(
         }
 
     if _RAG_AVAILABLE:
-        context = _solve_rag(
-            question, entities, known_facts, relation_hints or {},
-            seed_titles, verbose and not is_subquestion,
-        )
+        try:
+            context = _solve_rag(
+                question, entities, known_facts, relation_hints or {},
+                seed_titles, verbose,
+            )
+        except Exception as e:
+            logger.warning("RAG retrieval failed, falling back to keyword: %s", e,
+                          exc_info=True)
+            context = _solve_keyword(
+                question, entities, known_facts, relation_hints or {},
+                seed_titles, verbose,
+            )
     else:
         context = _solve_keyword(
             question, entities, known_facts, relation_hints or {},
-            seed_titles, verbose and not is_subquestion,
+            seed_titles, verbose,
         )
 
     if context is None:
@@ -191,7 +199,7 @@ def _solve_rag(question, entities, known_facts, relation_hints,
         return None
 
     rag_index = RAGIndex()
-    rag_index.index_chunks(chunks)
+    rag_index.index_chunks(chunks, cache=cache)
     top_chunks = rag_index.retrieve(question, top_k=20, seed_titles=seed_titles)
 
     if not top_chunks:

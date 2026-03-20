@@ -41,8 +41,12 @@ class RAGIndex:
         self._index = None
         self._empty = True
 
-    def index_chunks(self, chunks: list[WikiChunk]) -> None:
-        """Encode and index all chunks into a FAISS flat index."""
+    def index_chunks(self, chunks: list[WikiChunk], cache=None) -> None:
+        """Encode and index all chunks into a FAISS flat index.
+
+        If cache (WikiRAGCache) is provided, checks for cached embeddings
+        per page before encoding and stores newly computed embeddings.
+        """
         if not chunks:
             self._empty = True
             return
@@ -56,15 +60,61 @@ class RAGIndex:
             )
 
         encoder = _get_encoder(self._model_name)
-        texts = [c.text for c in chunks]
-        embeddings = encoder.encode(texts, show_progress_bar=False, normalize_embeddings=True)
-        embeddings = np.asarray(embeddings, dtype=np.float32)
+        dim = encoder.get_sentence_embedding_dimension()
 
-        dim = embeddings.shape[1]
+        if cache:
+            embeddings = self._index_with_cache(chunks, encoder, cache, dim)
+        else:
+            texts = [c.text for c in chunks]
+            embeddings = encoder.encode(
+                texts, show_progress_bar=False, normalize_embeddings=True,
+            )
+            embeddings = np.asarray(embeddings, dtype=np.float32)
+
         self._index = faiss.IndexFlatIP(dim)  # Inner product on normalized = cosine
         self._index.add(embeddings)
         self._chunks = list(chunks)
         self._empty = False
+
+    def _index_with_cache(self, chunks, encoder, cache, dim):
+        """Encode chunks with per-page embedding cache."""
+        # Group chunk indices by page_title
+        page_indices: dict[str, list[int]] = {}
+        for i, chunk in enumerate(chunks):
+            page_indices.setdefault(chunk.page_title, []).append(i)
+
+        embeddings = np.zeros((len(chunks), dim), dtype=np.float32)
+        to_encode_indices: list[int] = []
+        to_encode_texts: list[str] = []
+
+        for title, indices in page_indices.items():
+            cached_emb = cache.get_embeddings(title)
+            if cached_emb is not None and len(cached_emb) == len(indices):
+                for j, idx in enumerate(indices):
+                    embeddings[idx] = cached_emb[j]
+            else:
+                for idx in indices:
+                    to_encode_indices.append(idx)
+                    to_encode_texts.append(chunks[idx].text)
+
+        if to_encode_texts:
+            new_emb = encoder.encode(
+                to_encode_texts, show_progress_bar=False, normalize_embeddings=True,
+            )
+            new_emb = np.asarray(new_emb, dtype=np.float32)
+            for j, idx in enumerate(to_encode_indices):
+                embeddings[idx] = new_emb[j]
+
+            # Store newly computed embeddings per page
+            for title, indices in page_indices.items():
+                cached_emb = cache.get_embeddings(title)
+                if cached_emb is None or len(cached_emb) != len(indices):
+                    page_emb = np.array(
+                        [embeddings[i] for i in indices], dtype=np.float32,
+                    )
+                    cache.store_embeddings(title, page_emb)
+
+        return embeddings
 
     def retrieve(
         self,

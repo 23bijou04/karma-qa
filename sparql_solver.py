@@ -8,6 +8,7 @@ Imports helper functions from sparql_evaluation.py (which stays standalone).
 
 import json
 import logging
+import re
 
 from dbpedia_qa.models import Entity, extract_final_answer
 from llm_provider import call_llm
@@ -21,6 +22,21 @@ from sparql_evaluation import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# SPARQL read-only guard (C1: injection prevention)
+# ---------------------------------------------------------------------------
+
+_WRITE_OPS = re.compile(
+    r'\b(INSERT|DELETE|DROP|CLEAR|CREATE|LOAD|COPY|MOVE|ADD)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_readonly_sparql(query: str) -> bool:
+    """Return True iff query contains no SPARQL write operations."""
+    return not _WRITE_OPS.search(query)
+
 
 # Null-answer patterns returned by the LLM that should be treated as no answer
 _NULL_ANSWERS = {
@@ -100,6 +116,11 @@ def solve(
     if verbose:
         print(f"  Generated SPARQL:\n    {sparql_query[:200]}")
 
+    # Reject write operations before executing
+    if not _is_readonly_sparql(sparql_query):
+        logger.warning("Rejected non-read-only SPARQL: %s", sparql_query[:100])
+        return None, sparql_query, []
+
     # Execute
     results, err = execute_sparql(sparql_query, preserve_uris=preserve_uris)
     if verbose:
@@ -122,7 +143,11 @@ def solve(
         retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
         if verbose:
             print(f"  Retry SPARQL:\n    {retry_query[:200]}")
-        results2, err2 = execute_sparql(retry_query, preserve_uris=preserve_uris)
+        if not _is_readonly_sparql(retry_query):
+            logger.warning("Rejected non-read-only retry SPARQL: %s", retry_query[:100])
+            results2, err2 = [], "write operation rejected"
+        else:
+            results2, err2 = execute_sparql(retry_query, preserve_uris=preserve_uris)
         if verbose:
             print(f"  Retry results: {len(results2)} rows")
         if results2:
