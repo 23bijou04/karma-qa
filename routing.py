@@ -89,21 +89,34 @@ def _rule_based_route(
     for proj in projections:
         all_actual |= proj.entity_profile.actual_property_set
 
-    # 1. Comparison + date properties -> SPARQL
+    # 1. Comparison + date/country properties -> SPARQL
+    # Require ALL entities to have the property (intersection), not just ANY (union).
+    # If only one entity has dbo:birthDate, SPARQL returns partial data and the
+    # LLM has no basis for comparison — fall through to DECOMPOSE instead.
     if analysis.is_comparison:
-        if all_actual & _DATE_PROPERTIES:
+        per_entity_props = [
+            proj.entity_profile.actual_property_set for proj in projections
+        ]
+        # Intersection: only properties present on every linked entity
+        # Use reduce-style intersection to support both set and frozenset inputs.
+        common_props: set[str] = (
+            set(per_entity_props[0]).intersection(*per_entity_props[1:])
+            if per_entity_props else set()
+        )
+
+        if common_props & _DATE_PROPERTIES:
             if debug:
                 print(f"  [DEBUG] Rule matched: direct_date_comparison "
-                      f"(have {sorted(all_actual & _DATE_PROPERTIES)})")
+                      f"(have {sorted(common_props & _DATE_PROPERTIES)})")
             return ("SPARQL", "rule:direct_date_comparison")
 
         country_keywords = {"country", "nationality", "citizen"}
         if (analysis.target_keywords_set & country_keywords) and (
-            all_actual & _COUNTRY_PROPERTIES
+            common_props & _COUNTRY_PROPERTIES
         ):
             if debug:
                 print(f"  [DEBUG] Rule matched: direct_country_comparison "
-                      f"(have {sorted(all_actual & _COUNTRY_PROPERTIES)})")
+                      f"(have {sorted(common_props & _COUNTRY_PROPERTIES)})")
             return ("SPARQL", "rule:direct_country_comparison")
 
     # 2. Comparison bridge chain: bridge keyword + date chain in schema
@@ -285,8 +298,8 @@ def verify_sparql_feasibility(
 ) -> tuple[str, str] | None:
     """Verify route via SPARQL ASK queries.
 
-    Uses SchemaProjection completeness where possible, falling back to ASK
-    only for bridge hops that need ground-truth verification.
+    Direct property routes are already verified by actual_property_set.
+    Bridge/hop2/parent routes always run ASK for ground-truth verification.
     """
     if not rule_result:
         return None
@@ -299,14 +312,10 @@ def verify_sparql_feasibility(
     if "direct_country_comparison" in reason:
         return (route, reason)
 
-    # Bridge routes: use projection completeness + ASK verification
+    # Bridge routes: always verify via ASK query.
+    # Don't shortcut on projection completeness — dbp-only properties
+    # (e.g., dbp:father without dbo:father) can inflate completeness.
     if "bridge" in reason or "hop2" in reason or "parent" in reason:
-        # Check projection completeness first
-        for proj in projections:
-            if proj.completeness == "complete":
-                return ("SPARQL", f"{reason}+ask_verified")
-
-        # Completeness not "complete" -- verify via ASK
         hop1_prop = analysis.bridge_property
 
         if not hop1_prop or not entities:

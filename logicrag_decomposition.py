@@ -661,11 +661,37 @@ def _try_logicrag_decomposition(
             print("  No sub-questions resolved, decomposition failed")
         return None
 
-    # If only one fact, try final answer generation in case it's an intermediate fact
+    # If only one fact, attempt to resolve dependent sub-Qs via text before falling back
     if len(known_facts) == 1:
         sole_answer = list(known_facts.values())[0]
         if verbose:
             print(f"  Single resolved fact: {sole_answer}")
+
+        sole_idx = list(known_facts.keys())[0]
+        bridge_entities = _resolve_answer_entities(sole_answer, kg_client, verbose=verbose)
+        if bridge_entities:
+            for sq in sub_questions:
+                oidx = sq.original_idx
+                if oidx in known_facts:
+                    continue  # already resolved
+                if sole_idx not in sq.depends_on:
+                    continue  # not dependent on the resolved fact
+
+                dep_facts = {idx: known_facts[idx] for idx in sq.depends_on if idx in known_facts}
+                resolved_text = _substitute_answers(sq.text, dep_facts)
+                answer = text_solver.solve(
+                    resolved_text, bridge_entities,
+                    known_facts="",
+                    llm_client=llm_client, model=model,
+                    verbose=debug, is_subquestion=True,
+                )
+                if answer:
+                    known_facts[oidx] = answer
+                    sq.answer = answer
+                    sq.method = "text"
+                    if verbose:
+                        print(f"    Retry sub-Q {oidx}: TEXT -> {answer}")
+
         info_summary = _build_info_summary(sub_questions, known_facts)
         final = _generate_final_answer(question, info_summary, llm_client, model)
         return final if final else sole_answer

@@ -191,13 +191,17 @@ def project(
         if prop == analysis.bridge_property or prop in target_names:
             relevant_chains[prop] = chain_data
 
-    # 4. Completeness: prefix-independent check
+    # 4. Completeness: prefix-aware check
+    # Only dbo: properties count — dbp-only properties (e.g., dbp:father
+    # without dbo:father) cause false completeness since ASK queries and
+    # SPARQL generation use dbo: prefix.
     needed_names = {p.split(":")[-1] for p in analysis.target_properties}
-    have_names = {p.split(":")[-1] for p in profile.actual_property_set}
-    detail = {name: name in have_names for name in needed_names}
+    have_dbo = {p.split(":")[-1] for p in profile.actual_property_set
+                if p.startswith("dbo:")}
+    detail = {name: name in have_dbo for name in needed_names}
 
     if analysis.hop_structure == "bridge" and analysis.bridge_property:
-        hop1_ok = analysis.bridge_property in have_names
+        hop1_ok = analysis.bridge_property in have_dbo
         if not hop1_ok:
             completeness = "missing"
             missing_hops = [f"hop1:{analysis.bridge_property}"]
@@ -210,12 +214,12 @@ def project(
         if not needed_names:
             completeness = "complete"
             missing_hops = []
-        elif needed_names <= have_names:
+        elif needed_names <= have_dbo:
             completeness = "complete"
             missing_hops = []
-        elif needed_names & have_names:
+        elif needed_names & have_dbo:
             completeness = "partial"
-            missing_hops = [n for n in sorted(needed_names) if n not in have_names]
+            missing_hops = [n for n in sorted(needed_names) if n not in have_dbo]
         else:
             completeness = "missing"
             missing_hops = sorted(needed_names)

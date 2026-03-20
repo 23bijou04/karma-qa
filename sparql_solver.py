@@ -44,6 +44,17 @@ _NULL_ANSWERS = {
     "could not determine", "no information", "not available",
 }
 
+# DBpedia list-article patterns — these are pointers to disambiguation/list pages,
+# not actual answers. Detected in both raw URIs and LLM-decoded label strings.
+_LIST_ARTICLE_PATTERN = re.compile(
+    r'(?:^|/)List[_ ]of[_ ]'          # "List of ..." or "List_of_..." (URI or label)
+    r'|discography$'                    # "...discography"
+    r'|filmography$'                    # "...filmography"
+    r'|bibliography$'                   # "...bibliography"
+    r'|Awards[_ ]and[_ ]nominations',   # "Awards and nominations received by ..."
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # Unified SPARQL generation prompt (with optional known_facts for sub-Qs)
 # ---------------------------------------------------------------------------
@@ -186,6 +197,10 @@ def solve(
         clean = answer.strip().lower().rstrip(".")
         if clean in _NULL_ANSWERS:
             answer = None
+
+    if answer and _LIST_ARTICLE_PATTERN.search(answer.strip()):
+        logger.debug("Rejected list-article answer: %s", answer)
+        answer = None
 
     # Discover entities from SPARQL results
     seed_uris = {e.uri for e in entities if e.uri}

@@ -448,9 +448,11 @@ class TestDirectPropertyRule:
 # ---------------------------------------------------------------------------
 
 class TestMultiProjectionRouting:
-    def test_union_properties_across_entities(self):
-        """Two entities: one has birthDate, other has deathDate.
-        Union should contain both → date comparison triggers."""
+    def test_asymmetric_date_properties_does_not_fire_date_comparison(self):
+        """Two entities: A has birthDate, B has only deathDate (different properties).
+        Intersection is empty → direct_date_comparison must NOT fire.
+        SPARQL would only return data for one entity; LLM cannot compare fairly.
+        Falls through to a later rule (direct_property or None)."""
         p1 = _person_profile(
             uri="http://dbpedia.org/resource/A", label="A",
             actual_property_set=frozenset({"dbo:birthDate"}),
@@ -458,6 +460,23 @@ class TestMultiProjectionRouting:
         p2 = _person_profile(
             uri="http://dbpedia.org/resource/B", label="B",
             actual_property_set=frozenset({"dbo:deathDate"}),
+        )
+        analysis = analyze_question("Who was born earlier, A or B?")
+        proj1 = project(p1, analysis)
+        proj2 = project(p2, analysis)
+        result = _rule_based_route(analysis, [proj1, proj2])
+        # direct_date_comparison must not fire when properties differ across entities
+        assert result is None or "date_comparison" not in result[1]
+
+    def test_symmetric_date_properties_fires_date_comparison(self):
+        """Both entities have birthDate → intersection non-empty → date comparison fires."""
+        p1 = _person_profile(
+            uri="http://dbpedia.org/resource/A", label="A",
+            actual_property_set=frozenset({"dbo:birthDate"}),
+        )
+        p2 = _person_profile(
+            uri="http://dbpedia.org/resource/B", label="B",
+            actual_property_set=frozenset({"dbo:birthDate"}),
         )
         analysis = analyze_question("Who was born earlier, A or B?")
         proj1 = project(p1, analysis)
