@@ -560,10 +560,22 @@ def _try_logicrag_decomposition(
         if verbose:
             print(f"\n  --- Resolving sub-Q {loop_idx}/{len(sub_questions) - 1} ---")
 
+        # Scope parent_entities: root sub-Qs get full set; dependent sub-Qs
+        # get only bridge entities resolved from their dependencies.
+        # Prevents entity pollution (e.g., Thomas Jefferson president leaking
+        # into sub-Qs about Ken Burns' birthplace).
+        if sub_q.depends_on:
+            scoped = []
+            for dep_idx in sub_q.depends_on:
+                scoped.extend(known_entities.get(dep_idx, []))
+            effective_parents = scoped if scoped else list(entities)
+        else:
+            effective_parents = list(entities)
+
         answer, method, discovered = _resolve_subquestion(
             sub_q, loop_idx,
             known_facts, known_entities,
-            entities, schema_ctx,
+            effective_parents, schema_ctx,
             llm_client, model,
             linker, kg_client, schema_disc,
             verbose, debug=debug,

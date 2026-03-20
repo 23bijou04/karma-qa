@@ -478,7 +478,17 @@ class DBpediaSPARQLClient:
         for c in candidates:
             if c.label.lower().strip() == name_lower:
                 return c
-        # Prefer shortest URI (less likely to be a disambiguation/list page)
+        # When entity_type is specified, prefer type-matching candidates
+        if entity_type:
+            type_short = entity_type.replace('dbo:', '')
+            for c in candidates:
+                try:
+                    types = self.get_entity_types(c.uri)
+                    if any(type_short in t for t in types):
+                        return c
+                except Exception:
+                    continue
+        # Fallback: shortest URI (less likely to be a disambiguation/list page)
         return min(candidates, key=lambda e: len(e.uri))
 
     def get_wikipedia_page_id(self, entity_uri: str) -> Optional[str]:

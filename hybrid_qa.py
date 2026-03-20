@@ -224,6 +224,45 @@ def hybrid_answer(question: str, api_key: str = None,
             sparql_query="[logicrag_decomposed]",
         )
 
+    # === Step 5b: SPARQL pre-check for direct properties before TEXT ===
+    # Safety net: if an entity has a direct property answering the question,
+    # use SPARQL instead of TEXT. Catches routing gaps from entity-linking
+    # failures where properties weren't detected but the URI is correct.
+    if entities and analysis.target_properties and schema_ctx:
+        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+
+        for entity in entities:
+            if not entity.uri:
+                continue
+            safe_uri = escape_sparql_uri(entity.uri)
+            for prop in analysis.target_properties:
+                ask = f"ASK {{ <{safe_uri}> {prop} ?x }}"
+                try:
+                    result = kg_client.query(ask)
+                    if result.get("boolean"):
+                        if verbose:
+                            print(f"\n{sep}")
+                            print(f"STEP 5b: SPARQL pre-check hit: "
+                                  f"{entity.label} has {prop}")
+                            print(sep)
+                        precheck_answer, precheck_query, _ = sparql_solver.solve(
+                            question, schema_ctx, entities, llm_client, model,
+                            verbose=verbose, debug=debug,
+                        )
+                        if precheck_answer:
+                            return HybridResult(
+                                precheck_answer, "sparql",
+                                "precheck_" + route_source,
+                                sparql_fallback=True,
+                                sparql_query=precheck_query,
+                            )
+                        break  # Only need one hit to attempt SPARQL
+                except Exception:
+                    continue  # ASK failed, try next property
+            else:
+                continue
+            break  # Break outer loop if inner broke
+
     # === Step 6: Text Fallback — type-guided discovery + Wikipedia + LLM ===
     from entity_discovery import discover_context_entities
 

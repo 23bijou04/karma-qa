@@ -45,10 +45,17 @@ def _get_reranker():
 
 
 def _assemble_from_chunks(chunks, kg_facts: str = "",
-                          max_chars: int = 25_000) -> str:
-    """Build LLM context string from reranked WikiChunks within char budget."""
+                          max_chars: int = 25_000,
+                          max_per_entity: int = 4_000) -> str:
+    """Build LLM context string from reranked WikiChunks within char budget.
+
+    Args:
+        max_per_entity: Max chars per page_title to prevent volume bias.
+    """
     parts: list[str] = []
     total = 0
+    entity_used: dict[str, int] = {}
+
     if kg_facts:
         parts.append(kg_facts)
         total += len(kg_facts)
@@ -57,8 +64,13 @@ def _assemble_from_chunks(chunks, kg_facts: str = "",
         entry = f"=== {chunk.page_title} / {chunk.section_header} ===\n{chunk.text}"
         if total + len(entry) > max_chars:
             break
+        page = chunk.page_title
+        used = entity_used.get(page, 0)
+        if used + len(entry) > max_per_entity:
+            continue  # skip, this entity already has enough context
         parts.append(entry)
         total += len(entry)
+        entity_used[page] = used + len(entry)
 
     return "\n\n".join(parts)
 

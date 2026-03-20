@@ -123,3 +123,81 @@ class TestBridgeBudgetFix:
         assert dir_pos >= 0, "Director page must appear in context"
         if film_pos >= 0:
             assert dir_pos < film_pos, "Director (seed) must appear before Film (bridge)"
+
+
+# ---------------------------------------------------------------------------
+# Per-entity chunk cap in RAG _assemble_from_chunks
+# ---------------------------------------------------------------------------
+
+
+class TestPerEntityChunkCap:
+    """Tests for per-entity char cap preventing volume bias in RAG path."""
+
+    def test_single_entity_capped(self):
+        """One entity with many chunks should be capped at max_per_entity."""
+        from unittest.mock import MagicMock
+
+        from text_solver import _assemble_from_chunks
+
+        chunks = []
+        for i in range(10):
+            chunk = MagicMock()
+            chunk.page_title = "Thomas Jefferson"
+            chunk.section_header = f"Section {i}"
+            chunk.text = "x" * 450
+            chunks.append(chunk)
+
+        result = _assemble_from_chunks(chunks, max_chars=25_000, max_per_entity=2_000)
+
+        # Count chars from Thomas Jefferson chunks only
+        jeff_chars = sum(
+            len(part) for part in result.split("\n\n")
+            if "Thomas Jefferson" in part
+        )
+        assert jeff_chars <= 2_500  # Allow header overhead
+
+    def test_volume_bias_prevented(self):
+        """Large entity should not crowd out small entity."""
+        from unittest.mock import MagicMock
+
+        from text_solver import _assemble_from_chunks
+
+        chunks = []
+        # 8 chunks from large entity (ranked higher)
+        for i in range(8):
+            chunk = MagicMock()
+            chunk.page_title = "Large Entity"
+            chunk.section_header = f"Section {i}"
+            chunk.text = "large " * 80
+            chunks.append(chunk)
+        # 2 chunks from small entity (ranked lower)
+        for i in range(2):
+            chunk = MagicMock()
+            chunk.page_title = "Small Entity"
+            chunk.section_header = f"Section {i}"
+            chunk.text = "small " * 80
+            chunks.append(chunk)
+
+        result = _assemble_from_chunks(chunks, max_chars=10_000, max_per_entity=2_000)
+
+        assert "Large Entity" in result
+        assert "Small Entity" in result
+
+    def test_no_cap_when_high(self):
+        """With very high max_per_entity, all chunks included (backward compat)."""
+        from unittest.mock import MagicMock
+
+        from text_solver import _assemble_from_chunks
+
+        chunks = []
+        for i in range(3):
+            chunk = MagicMock()
+            chunk.page_title = "Only Entity"
+            chunk.section_header = f"Section {i}"
+            chunk.text = "content " * 50
+            chunks.append(chunk)
+
+        result = _assemble_from_chunks(
+            chunks, max_chars=25_000, max_per_entity=100_000,
+        )
+        assert result.count("Only Entity") == 3

@@ -509,3 +509,178 @@ class TestLogicragIntegration:
         )
         assert result is not None
         assert len(result) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Bridge-entity scoping (fix for entity pollution bug)
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeEntityScoping:
+    """Verify that dependent sub-Qs get only bridge entities, not full parent set."""
+
+    def test_dependent_subq_gets_only_bridge_entities(self):
+        """Sub-Q with depends_on should receive only known_entities from deps."""
+        from unittest.mock import MagicMock, patch
+
+        from logicrag_decomposition import _try_logicrag_decomposition
+
+        resolve_calls = []
+
+        def fake_resolve(sub_q, idx, known_facts, known_entities,
+                         parent_entities, *args, **kwargs):
+            resolve_calls.append({
+                "idx": idx,
+                "parent_labels": sorted(e.label for e in parent_entities),
+            })
+            if idx == 0:
+                return "Ken Burns", "sparql", [
+                    Entity(uri="http://dbpedia.org/resource/Ken_Burns",
+                           label="Ken Burns", source="sparql"),
+                ]
+            return "Brooklyn", "text", []
+
+        parent_entities = [
+            Entity(uri="http://dbpedia.org/resource/Thomas_Jefferson",
+                   label="Thomas Jefferson", source="spotlight"),
+            Entity(uri="http://dbpedia.org/resource/Ken_Burns",
+                   label="Ken Burns", source="spotlight"),
+        ]
+
+        def fake_decompose(*args, **kwargs):
+            return [
+                SubQuestion(text="Who directed Thomas Jefferson?",
+                            depends_on=[], original_idx=0),
+                SubQuestion(text="Where was [director] born?",
+                            depends_on=[0], original_idx=1),
+            ]
+
+        def fake_call_llm(client, prompt, model):
+            # Early stopping check and final answer
+            if "can_answer" in prompt.lower() or "pre-parsed" in prompt.lower():
+                return '{"can_answer": false, "current_understanding": "need more"}'
+            return "FINAL ANSWER: Brooklyn"
+
+        with patch("logicrag_decomposition._decompose_subquestions",
+                    side_effect=fake_decompose), \
+             patch("logicrag_decomposition._resolve_subquestion",
+                    side_effect=fake_resolve), \
+             patch("logicrag_decomposition._is_comparison_question",
+                    return_value=False), \
+             patch("logicrag_decomposition.call_llm",
+                    side_effect=fake_call_llm):
+            _try_logicrag_decomposition(
+                "Where was the director of Thomas Jefferson born?",
+                parent_entities, "schema", MagicMock(), "model",
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+        assert len(resolve_calls) == 2
+        # Sub-Q 0 (root): should get full parent set
+        assert "Thomas Jefferson" in resolve_calls[0]["parent_labels"]
+        assert "Ken Burns" in resolve_calls[0]["parent_labels"]
+        # Sub-Q 1 (dependent): should get ONLY the bridge entity from sub-Q 0
+        assert resolve_calls[1]["parent_labels"] == ["Ken Burns"]
+        assert "Thomas Jefferson" not in resolve_calls[1]["parent_labels"]
+
+    def test_root_subq_gets_full_entities(self):
+        """Sub-Q with no depends_on should receive the full entity list."""
+        from unittest.mock import MagicMock, patch
+
+        from logicrag_decomposition import _try_logicrag_decomposition
+
+        resolve_calls = []
+
+        def fake_resolve(sub_q, idx, known_facts, known_entities,
+                         parent_entities, *args, **kwargs):
+            resolve_calls.append({
+                "idx": idx,
+                "parent_labels": sorted(e.label for e in parent_entities),
+            })
+            return "answer", "sparql", []
+
+        entities = [
+            Entity(uri="http://dbpedia.org/resource/A", label="A", source="t"),
+            Entity(uri="http://dbpedia.org/resource/B", label="B", source="t"),
+        ]
+
+        def fake_decompose(*args, **kwargs):
+            return [
+                SubQuestion(text="Q about A?", depends_on=[], original_idx=0),
+                SubQuestion(text="Q about B?", depends_on=[], original_idx=1),
+            ]
+
+        def fake_call_llm(client, prompt, model):
+            if "can_answer" in prompt.lower() or "pre-parsed" in prompt.lower():
+                return '{"can_answer": false, "current_understanding": "need more"}'
+            return "FINAL ANSWER: answer"
+
+        with patch("logicrag_decomposition._decompose_subquestions",
+                    side_effect=fake_decompose), \
+             patch("logicrag_decomposition._resolve_subquestion",
+                    side_effect=fake_resolve), \
+             patch("logicrag_decomposition._is_comparison_question",
+                    return_value=True), \
+             patch("logicrag_decomposition.call_llm",
+                    side_effect=fake_call_llm):
+            _try_logicrag_decomposition(
+                "Compare A and B?",
+                entities, "schema", MagicMock(), "model",
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+        # Both root sub-Qs get full entity list
+        for call in resolve_calls:
+            assert "A" in call["parent_labels"]
+            assert "B" in call["parent_labels"]
+
+    def test_fallback_to_full_set_when_no_bridge_entities(self):
+        """When known_entities is empty for deps, falls back to full set."""
+        from unittest.mock import MagicMock, patch
+
+        from logicrag_decomposition import _try_logicrag_decomposition
+
+        resolve_calls = []
+
+        def fake_resolve(sub_q, idx, known_facts, known_entities,
+                         parent_entities, *args, **kwargs):
+            resolve_calls.append({
+                "idx": idx,
+                "parent_labels": sorted(e.label for e in parent_entities),
+            })
+            if idx == 0:
+                # Return answer but NO discovered entities
+                return "some answer", "text", []
+            return "final", "text", []
+
+        entities = [
+            Entity(uri="http://dbpedia.org/resource/X", label="X", source="t"),
+        ]
+
+        def fake_decompose(*args, **kwargs):
+            return [
+                SubQuestion(text="Q0?", depends_on=[], original_idx=0),
+                SubQuestion(text="Q1?", depends_on=[0], original_idx=1),
+            ]
+
+        def fake_call_llm(client, prompt, model):
+            if "can_answer" in prompt.lower() or "pre-parsed" in prompt.lower():
+                return '{"can_answer": false, "current_understanding": "need more"}'
+            return "FINAL ANSWER: final"
+
+        with patch("logicrag_decomposition._decompose_subquestions",
+                    side_effect=fake_decompose), \
+             patch("logicrag_decomposition._resolve_subquestion",
+                    side_effect=fake_resolve), \
+             patch("logicrag_decomposition._is_comparison_question",
+                    return_value=False), \
+             patch("logicrag_decomposition.call_llm",
+                    side_effect=fake_call_llm):
+            _try_logicrag_decomposition(
+                "Q about X?",
+                entities, "schema", MagicMock(), "model",
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+        # Sub-Q 1 depends on Q0 but Q0 returned no entities -> fallback to full set
+        assert "X" in resolve_calls[1]["parent_labels"]

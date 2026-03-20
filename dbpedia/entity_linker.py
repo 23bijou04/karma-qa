@@ -224,6 +224,16 @@ class DBpediaEntityLinker:
         if not suffix:
             return entities
 
+        # Clean obj_phrase for fallback search: strip determiners, years,
+        # and generic descriptors that pollute bif:contains queries.
+        _clean = re.sub(r'\b(?:the|a|an|this|that)\b', '', obj_phrase, flags=re.I)
+        _clean = re.sub(r'\b\d{4}\b', '', _clean)  # years
+        _clean = re.sub(
+            r'\b(?:documentary|miniseries|series|biopic|telefilm)\b',
+            '', _clean, flags=re.I,
+        )
+        clean_obj = re.sub(r'\s+', ' ', _clean).strip()
+
         validated = []
         for entity in entities:
             # Check if this entity corresponds to the object phrase
@@ -241,8 +251,27 @@ class DBpediaEntityLinker:
             except Exception:
                 pass  # can't verify, try fallback
 
-            # Type mismatch: search with type suffix for disambiguation
-            search_query = f"{obj_phrase} {suffix}"
+            # Direct URI probe: try dbr:Name_(type) pattern before text search.
+            # DBpedia uses this for disambiguation (e.g., Thomas_Jefferson_(film)).
+            probe_local = entity.label.replace(' ', '_')
+            probe_uri = f"http://dbpedia.org/resource/{probe_local}_({suffix})"
+            try:
+                probe_types = self.sparql_client.get_entity_types(probe_uri)
+                type_short = expected_type.replace('dbo:', '')
+                if any(type_short in t for t in probe_types):
+                    logger.info(
+                        f"URI probe hit: '{entity.label}' -> {probe_uri}"
+                    )
+                    validated.append(Entity(
+                        uri=probe_uri, label=entity.label,
+                        source="type_corrected",
+                    ))
+                    continue
+            except Exception:
+                pass  # probe failed, fall through to search
+
+            # Type mismatch: search with cleaned phrase + type suffix
+            search_query = f"{clean_obj} {suffix}" if clean_obj else f"{obj_phrase} {suffix}"
             logger.info(
                 f"Type mismatch for '{entity.label}' (expected {expected_type}), "
                 f"searching: '{search_query}'"

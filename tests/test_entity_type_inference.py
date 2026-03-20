@@ -131,3 +131,145 @@ class TestValidateEntityTypes:
         assert result[0].uri == person.uri
         # Film entity replaced
         assert "film" in result[1].uri.lower()
+
+
+class TestCleanObjPhrase:
+    """Tests for Phase 4: noisy obj_phrase cleaning before fallback search."""
+
+    def test_noisy_obj_phrase_cleaned_for_search(self):
+        """Long obj_phrase with year/determiner/descriptor is cleaned before search."""
+        linker = DBpediaEntityLinker.__new__(DBpediaEntityLinker)
+        linker.sparql_client = MagicMock()
+
+        president = Entity(
+            uri="http://dbpedia.org/resource/Thomas_Jefferson",
+            label="Thomas Jefferson",
+            source="spotlight",
+        )
+
+        # First call: type check returns Person (not Film)
+        # Second call: probe URI type check returns [] (no match)
+        linker.sparql_client.get_entity_types.side_effect = [
+            ["Person", "Agent"],  # original entity
+            [],                    # probe URI miss
+        ]
+
+        film_entity = Entity(
+            uri="http://dbpedia.org/resource/Thomas_Jefferson_(film)",
+            label="Thomas Jefferson (film)",
+            source="sparql",
+        )
+        linker.sparql_client.search_entity_by_name.return_value = film_entity
+
+        linker._validate_entity_types(
+            [president],
+            "Who directed the 1995 Ken Burns documentary Thomas Jefferson?",
+            "dbo:Film",
+        )
+
+        # Verify search was called with cleaned query
+        call_args = linker.sparql_client.search_entity_by_name.call_args
+        search_query = call_args[0][0]
+        assert "1995" not in search_query
+        assert "documentary" not in search_query.lower()
+        assert "Thomas Jefferson" in search_query
+
+    def test_clean_obj_keeps_entity_name(self):
+        """Cleaning should preserve the entity name itself."""
+        linker = DBpediaEntityLinker.__new__(DBpediaEntityLinker)
+        linker.sparql_client = MagicMock()
+
+        entity = Entity(
+            uri="http://dbpedia.org/resource/Harry_Potter",
+            label="Harry Potter",
+            source="spotlight",
+        )
+
+        linker.sparql_client.get_entity_types.side_effect = [
+            ["Person"],  # original
+            [],           # probe miss
+        ]
+        linker.sparql_client.search_entity_by_name.return_value = Entity(
+            uri="http://dbpedia.org/resource/Harry_Potter_(book)",
+            label="Harry Potter (book)",
+            source="sparql",
+        )
+
+        linker._validate_entity_types(
+            [entity],
+            "Who wrote the Harry Potter series?",
+            "dbo:Book",
+        )
+
+        call_args = linker.sparql_client.search_entity_by_name.call_args
+        search_query = call_args[0][0]
+        assert "Harry Potter" in search_query
+        assert "series" not in search_query.lower()
+
+
+class TestDirectUriProbe:
+    """Tests for Phase 5: direct URI probe dbr:Name_(type) before text search."""
+
+    def test_direct_uri_probe_finds_film(self):
+        """URI probe dbr:Name_(film) should resolve before bif:contains search."""
+        linker = DBpediaEntityLinker.__new__(DBpediaEntityLinker)
+        linker.sparql_client = MagicMock()
+
+        president = Entity(
+            uri="http://dbpedia.org/resource/Thomas_Jefferson",
+            label="Thomas Jefferson",
+            source="spotlight",
+        )
+
+        # First call: type check for president -> Person (not Film)
+        # Second call: probe URI type check -> Film (match!)
+        linker.sparql_client.get_entity_types.side_effect = [
+            ["Person", "Agent"],  # original entity types
+            ["Film", "Work"],     # probe URI types -- HIT
+        ]
+
+        result = linker._validate_entity_types(
+            [president],
+            "Who directed Thomas Jefferson?",
+            "dbo:Film",
+        )
+
+        assert len(result) == 1
+        assert result[0].uri == "http://dbpedia.org/resource/Thomas_Jefferson_(film)"
+        assert result[0].source == "type_corrected"
+        # search_entity_by_name should NOT have been called (probe hit first)
+        linker.sparql_client.search_entity_by_name.assert_not_called()
+
+    def test_direct_uri_probe_miss_falls_to_search(self):
+        """When probe URI has wrong type, falls through to bif:contains search."""
+        linker = DBpediaEntityLinker.__new__(DBpediaEntityLinker)
+        linker.sparql_client = MagicMock()
+
+        entity = Entity(
+            uri="http://dbpedia.org/resource/Some_Name",
+            label="Some Name",
+            source="spotlight",
+        )
+
+        # First call: type check -> Person; Second: probe -> empty
+        linker.sparql_client.get_entity_types.side_effect = [
+            ["Person"],  # original entity
+            [],          # probe URI doesn't exist
+        ]
+
+        fallback = Entity(
+            uri="http://dbpedia.org/resource/Some_Name_(film)",
+            label="Some Name (film)",
+            source="sparql",
+        )
+        linker.sparql_client.search_entity_by_name.return_value = fallback
+
+        result = linker._validate_entity_types(
+            [entity],
+            "Who directed Some Name?",
+            "dbo:Film",
+        )
+
+        # Probe missed, should have fallen through to search
+        linker.sparql_client.search_entity_by_name.assert_called_once()
+        assert result[0].uri == fallback.uri
