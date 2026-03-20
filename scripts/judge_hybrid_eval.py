@@ -5,14 +5,22 @@ Reads a JSONL file from hybrid_batch_eval.py and adds a 'judge_correct'
 boolean field using LLM semantic equivalence check.
 Resume-safe: skips already-judged question IDs.
 
+Note: default model (gemma3:12b via Ollama) has not been formally validated
+as a judge. For thesis-grade results, validate against human annotations
+on a 100-question sample, or use a stronger model (--provider groq --model
+llama-3.3-70b-versatile).
+
 Usage:
     python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid_eval_1000.jsonl
+    python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider groq --model llama-3.3-70b-versatile
     python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider github --model gpt-4o
 """
 
 import argparse
 import json
 import os
+import re
+import string
 import sys
 import time
 
@@ -21,50 +29,115 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from llm_provider import create_llm_client  # noqa: E402
 
-JUDGE_PROMPT = """Judge if the predicted answer is semantically equivalent to the gold answer.
+JUDGE_SYSTEM = (
+    "You are a strict evaluation judge for a QA benchmark. "
+    "Determine if two answers refer to the exact same entity or fact. "
+    "Precision matters more than recall — when in doubt, answer no."
+)
+
+JUDGE_PROMPT = """Determine if the predicted answer is semantically equivalent to the gold answer.
+
 Question: {question}
-Gold: {gold}
-Predicted: {pred}
-Rules:
-- "yes" if they refer to the same entity/fact even with different specificity
-- "yes" if gold is contained in predicted as the same location/entity (e.g. "Munich" vs "Nymphenburg Palace, Munich, Germany" = yes)
-- "yes" if predicted adds a title/honorific to the same person (e.g. "Henriette of Nassau" vs "Princess Henriette of Nassau" = yes)
-- "yes" for equivalent date formats (e.g. "July 16, 2013" vs "2013-07-16" = yes)
-- "no" if the predicted answer is wrong, empty, or a different entity
-Answer ONLY "yes" or "no":"""
+Gold answer: {gold}
+Predicted answer: {pred}
+
+Matching rules (answer YES):
+- Same entity/fact with different surface forms (e.g. "July 16, 2013" vs "2013-07-16")
+- Gold contained in a more specific predicted answer (e.g. "Munich" vs "Nymphenburg Palace, Munich")
+- Added title/honorific/disambiguator (e.g. "Henry III" vs "Henry III, Holy Roman Emperor")
+- Full formal name of same person (e.g. "Giovanni Mario" vs "Giovanni Mario de Candia")
+
+Rejection rules (answer NO):
+- Wrong, empty, or completely different entity
+- Predicted is broader/vaguer than gold (e.g. gold "Taipei Medical University Hospital" vs pred "Taipei")
+- Year only when gold has full date (e.g. gold "December 25, 1757" vs pred "1757")
+- Related but distinct entities (e.g. gold "Hollywood" vs pred "Los Angeles")
+- Same first name but different person (e.g. gold "Paris" vs pred "Paris Hilton")
+- Predicted lists multiple answers and gold is NOT clearly among them
+
+First, explain in ONE sentence why the answers match or don't.
+Then write your verdict on a new line: VERDICT: yes or VERDICT: no"""
 
 
 def _normalize(s: str) -> str:
-    """Lowercase, strip punctuation/whitespace for containment check."""
-    return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
+    """Normalize for containment check — aligned with evaluation/metrics.py."""
+    s = s.lower()
+    s = "".join(ch for ch in s if ch not in string.punctuation)
+    s = re.sub(r'\b(a|an|the)\b', ' ', s)
+    return " ".join(s.split())
 
 
-def judge(client, question, gold, pred, model="llama-3.3-70b-versatile"):
+def _word_set(s: str) -> set[str]:
+    """Split normalized string into word set."""
+    return set(s.split())
+
+
+def _containment_precheck(gold: str, pred: str) -> bool | None:
+    """Fast-path containment check: gold words subset of pred words.
+
+    Returns True if gold is clearly contained in pred (word-level).
+    Returns None if the LLM should decide.
+    Only checks gold-in-pred direction to avoid false positives from
+    vague/broader predictions (e.g. "Taipei" matching "Taipei Medical University").
+    """
+    g, p = _normalize(gold), _normalize(pred)
+    if not g or not p:
+        return None
+    g_words = _word_set(g)
+    # Require at least 2 gold words to avoid single-word substring traps
+    # (e.g. "Paris" matching "Paris Hilton", "Jordan" matching "Michael Jordan")
+    if len(g_words) < 2:
+        return None
+    return g_words.issubset(_word_set(p)) or None
+
+
+def _parse_verdict(response: str) -> bool:
+    """Extract VERDICT from LLM response. Falls back to last line."""
+    text = response.strip().lower()
+    if not text:
+        return False
+    # Search for "verdict:" anywhere in the response (last occurrence wins)
+    if "verdict:" in text:
+        remainder = text.rsplit("verdict:", 1)[1].strip()
+        word = remainder.split()[0].rstrip(string.punctuation) if remainder else ""
+        return word == "yes"
+    # Fallback: check if last non-empty line is "yes"
+    lines = text.splitlines()
+    if not lines or not lines[-1].strip():
+        return False
+    word = lines[-1].strip().split()[0].rstrip(string.punctuation)
+    return word == "yes"
+
+
+def judge(client, question, gold, pred, model="gemma3:12b"):
     """Return True if LLM judge deems prediction semantically correct."""
     if not pred or pred.strip() == "":
         return False
-    # Fast path: if gold is contained in predicted (or vice versa), it's correct
-    g, p = _normalize(gold), _normalize(pred)
-    if g and p and (g in p or p in g):
+    # Fast path: word-level containment (gold-in-pred only, min 2 words)
+    precheck = _containment_precheck(gold, pred)
+    if precheck is True:
         return True
     resp = client.chat.completions.create(
         model=model,
         temperature=0,
-        messages=[{
-            "role": "user",
-            "content": JUDGE_PROMPT.format(question=question, gold=gold, pred=pred),
-        }],
+        max_tokens=100,
+        messages=[
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": JUDGE_PROMPT.format(
+                question=question, gold=gold, pred=pred,
+            )},
+        ],
     )
-    return resp.choices[0].message.content.strip().lower().startswith("yes")
+    return _parse_verdict(resp.choices[0].message.content or "")
 
 
 def main():
     parser = argparse.ArgumentParser(description="LLM judge for hybrid evaluation results")
     parser.add_argument("input_file", help="Input JSONL file from hybrid_batch_eval.py")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
-                        help="LLM provider (default: groq)")
-    parser.add_argument("--model", default="llama-3.3-70b-versatile",
-                        help="LLM model name")
+    parser.add_argument("--provider", default="ollama", choices=["ollama", "groq", "github"],
+                        help="LLM provider (default: ollama)")
+    parser.add_argument("--model", default="gemma3:12b",
+                        help="LLM model name (default: gemma3:12b for ollama)")
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
     args = parser.parse_args()
@@ -129,7 +202,8 @@ def main():
                 print(f"  Judged {total_so_far}/{len(records)} "
                       f"({correct_count}/{total_so_far} correct)")
 
-            time.sleep(0.5)  # rate limit courtesy
+            if args.provider != "ollama":
+                time.sleep(0.5)  # rate limit courtesy for remote APIs
 
     # Final summary
     total = len(records)
