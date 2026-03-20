@@ -41,8 +41,8 @@ from llm_provider import call_llm, create_llm_client
 
 logger = logging.getLogger(__name__)
 
-MAX_CONTEXT_CHARS = 12_000
-MAX_CHARS_PER_PAGE = 3_000
+MAX_CONTEXT_CHARS = 25_000
+MAX_CHARS_PER_PAGE = 6_000
 
 STOPWORDS = {
     "who", "what", "when", "where", "which", "how", "why",

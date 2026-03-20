@@ -41,7 +41,7 @@ class Reranker:
         self,
         query: str,
         chunks: list[tuple[WikiChunk, float]],
-        top_k: int = 8,
+        top_k: int = 15,
         relation_hints: dict[str, str] | None = None,
     ) -> list[WikiChunk]:
         """Rerank chunks using cross-encoder.

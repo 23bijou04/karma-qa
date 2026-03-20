@@ -69,7 +69,7 @@ class RAGIndex:
     def retrieve(
         self,
         query: str,
-        top_k: int = 20,
+        top_k: int = 30,
         seed_titles: set[str] | None = None,
         seed_boost: float = 1.2,
     ) -> list[tuple[WikiChunk, float]]:

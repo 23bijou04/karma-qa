@@ -45,7 +45,7 @@ def _get_reranker():
 
 
 def _assemble_from_chunks(chunks, kg_facts: str = "",
-                          max_chars: int = 12_000) -> str:
+                          max_chars: int = 25_000) -> str:
     """Build LLM context string from reranked WikiChunks within char budget."""
     parts: list[str] = []
     total = 0
