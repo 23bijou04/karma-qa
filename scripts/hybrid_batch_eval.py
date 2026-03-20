@@ -197,6 +197,8 @@ def main():
             record["sparql_fallback"] = result.sparql_fallback
             record["sparql_query"] = getattr(result, "sparql_query", None) or ""
             record["kg_context"] = (getattr(result, "kg_context", None) or "")[:200]
+            if result.sub_question_log:
+                record["sub_question_log"] = result.sub_question_log
             record["error"] = ""
         except Exception as e:
             record["raw_answer"] = ""

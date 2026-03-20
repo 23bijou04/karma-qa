@@ -126,7 +126,7 @@ def logicrag_forced_answer(
     )
 
     # Try LogicRAG decomposition
-    logicrag_answer = _try_logicrag_decomposition(
+    logicrag_answer, _sub_q_log = _try_logicrag_decomposition(
         question=question,
         entities=entities,
         schema_ctx=schema_ctx,
@@ -326,6 +326,8 @@ def main():
                 record["method"] = result.method
                 record["route_source"] = result.route_source
                 record["sparql_fallback"] = result.sparql_fallback
+                if result.sub_question_log:
+                    record["sub_question_log"] = result.sub_question_log
             else:
                 # LogicRAG-forced
                 entities = link_entities_to_dbpedia(question, linker)

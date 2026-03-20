@@ -288,7 +288,7 @@ class TestEarlyStoppingGuards:
                    return_value=("SPARQL", "test")), \
              patch("logicrag_decomposition._is_comparison_question",
                    return_value=is_comparison):
-            result = _try_logicrag_decomposition(
+            result, _sub_q_log = _try_logicrag_decomposition(
                 "Test question?",
                 [mock_entity], "schema", MagicMock(), "model",
                 MagicMock(), MagicMock(), MagicMock(),
@@ -364,7 +364,7 @@ class TestEarlyStoppingGuards:
                    return_value=("SPARQL", "test")), \
              patch("logicrag_decomposition._is_comparison_question",
                    return_value=False):
-            result = _try_logicrag_decomposition(
+            result, _sub_q_log = _try_logicrag_decomposition(
                 "Test?", [mock_entity], "schema", MagicMock(), "model",
                 MagicMock(), MagicMock(), MagicMock(),
             )

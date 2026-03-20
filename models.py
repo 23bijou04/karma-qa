@@ -103,3 +103,4 @@ class HybridResult:
     sparql_fallback: bool = False  # True if routed SPARQL but fell back to text
     sparql_query: Optional[str] = None  # executed SPARQL query (provenance)
     kg_context: str = ""  # formatted KG facts injected into text prompt
+    sub_question_log: list[dict] = field(default_factory=list)  # per-sub-Q method/query/answer

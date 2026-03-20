@@ -441,11 +441,11 @@ def _resolve_subquestion(
     llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
-) -> tuple[str | None, str, list[Entity]]:
+) -> tuple[str | None, str, list[Entity], str | None]:
     """Resolve a single sub-question via SPARQL or TEXT.
 
-    Returns (answer, method, discovered_entities).
-    answer is None if resolution fails.
+    Returns (answer, method, discovered_entities, sparql_query).
+    answer is None if resolution fails. sparql_query is the generated SPARQL (if any).
     """
     # Step 1: Substitute known answers into sub-question text
     # Only use answers from actual dependencies, not all known facts
@@ -521,7 +521,7 @@ def _resolve_subquestion(
         if answer:
             if verbose:
                 print(f"    -> SPARQL answer: {answer}")
-            return answer, "sparql", discovered
+            return answer, "sparql", discovered, query
 
     # Step 5b: TEXT fallback via unified solver — enhanced entity discovery
     if sub_projections:
@@ -546,7 +546,7 @@ def _resolve_subquestion(
     if verbose:
         print(f"    -> TEXT answer: {answer}")
 
-    return answer, "text", []
+    return answer, "text", [], None
 
 
 # ---------------------------------------------------------------------------
@@ -558,15 +558,16 @@ def _try_logicrag_decomposition(
     schema_ctx: str, llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
-) -> str | None:
+) -> tuple[str | None, list[dict]]:
     """LogicRAG-style sub-question decomposition with per-sub-Q SPARQL/TEXT routing.
 
     Decomposes multi-hop question into dependency-ordered sub-questions.
     Each sub-Q is routed independently: SPARQL when schema supports it, TEXT otherwise.
     SPARQL answers become grounded facts injected into downstream sub-Qs.
 
-    Returns answer string if successful, None otherwise (caller falls through
-    to existing routing logic).
+    Returns (answer, sub_question_log). answer is None if decomposition fails.
+    sub_question_log is a list of dicts with per-sub-Q details:
+      {"sub_question", "method", "sparql_query", "answer"}
     """
     if debug:
         verbose = True
@@ -588,12 +589,13 @@ def _try_logicrag_decomposition(
     if not sub_questions:
         if verbose:
             print("  Decomposition returned None (single-hop or parse failure)")
-        return None
+        return None, []
 
     # --- Step 2: Resolve each sub-question in order ---
     known_facts: dict[int, str] = {}
     known_entities: dict[int, list[Entity]] = {}
     methods_used: list[str] = []
+    sub_q_log: list[dict] = []
 
     for loop_idx, sub_q in enumerate(sub_questions):
         if verbose:
@@ -611,7 +613,7 @@ def _try_logicrag_decomposition(
         else:
             effective_parents = list(entities)
 
-        answer, method, discovered = _resolve_subquestion(
+        answer, method, discovered, sparql_query = _resolve_subquestion(
             sub_q, loop_idx,
             known_facts, known_entities,
             effective_parents, schema_ctx,
@@ -619,6 +621,13 @@ def _try_logicrag_decomposition(
             linker, kg_client, schema_disc,
             verbose, debug=debug,
         )
+
+        sub_q_log.append({
+            "sub_question": sub_q.text,
+            "method": method,
+            "sparql_query": sparql_query,
+            "answer": answer,
+        })
 
         oidx = sub_q.original_idx
         if answer:
@@ -651,7 +660,7 @@ def _try_logicrag_decomposition(
                     print("  -> Early exit: accumulated facts sufficient")
                 final = _generate_final_answer(question, info_summary, llm_client, model)
                 if final:
-                    return final
+                    return final, sub_q_log
                 # Fall back to best sub-Q answer
                 break
 
@@ -659,7 +668,7 @@ def _try_logicrag_decomposition(
     if not known_facts:
         if verbose:
             print("  No sub-questions resolved, decomposition failed")
-        return None
+        return None, sub_q_log
 
     # If only one fact, attempt to resolve dependent sub-Qs via text before falling back
     if len(known_facts) == 1:
@@ -689,12 +698,18 @@ def _try_logicrag_decomposition(
                     known_facts[oidx] = answer
                     sq.answer = answer
                     sq.method = "text"
+                    sub_q_log.append({
+                        "sub_question": sq.text,
+                        "method": "text",
+                        "sparql_query": None,
+                        "answer": answer,
+                    })
                     if verbose:
                         print(f"    Retry sub-Q {oidx}: TEXT -> {answer}")
 
         info_summary = _build_info_summary(sub_questions, known_facts)
         final = _generate_final_answer(question, info_summary, llm_client, model)
-        return final if final else sole_answer
+        return (final if final else sole_answer), sub_q_log
 
     # Build info_summary with provenance labels
     info_summary = _build_info_summary(sub_questions, known_facts)
@@ -707,6 +722,7 @@ def _try_logicrag_decomposition(
 
     final = _generate_final_answer(question, info_summary, llm_client, model)
     if final:
-        return final
+        return final, sub_q_log
     # Fallback: return most relevant known fact (last resolved)
-    return list(known_facts.values())[-1] if known_facts else None
+    fallback = list(known_facts.values())[-1] if known_facts else None
+    return fallback, sub_q_log

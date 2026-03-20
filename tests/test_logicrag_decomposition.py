@@ -390,13 +390,14 @@ class TestLogicragSynthesis:
              patch("logicrag_decomposition._rule_based_route",
                    return_value=("SPARQL", "test")), \
              patch("logicrag_decomposition._is_comparison_question", return_value=False):
-            result = _try_logicrag_decomposition(
+            result, sub_q_log = _try_logicrag_decomposition(
                 "Who directed Film X and who directed Film Y?",
                 [mock_entity], "schema", MagicMock(), "model",
                 MagicMock(), MagicMock(), MagicMock(),
             )
 
         assert result is not None
+        assert isinstance(sub_q_log, list)
         # FINAL_ANSWER_PROMPT should have been called (contains "concise")
         assert any("concise" in c.lower() for c in llm_calls)
 
@@ -454,13 +455,14 @@ class TestLogicragSynthesis:
              patch("logicrag_decomposition._rule_based_route",
                    return_value=("SPARQL", "test")), \
              patch("logicrag_decomposition._is_comparison_question", return_value=False):
-            result = _try_logicrag_decomposition(
+            result, sub_q_log = _try_logicrag_decomposition(
                 "When was the director of Inception born?",
                 [mock_entity], "schema", MagicMock(), "model",
                 MagicMock(), MagicMock(), MagicMock(),
             )
 
         assert result is not None
+        assert isinstance(sub_q_log, list)
         # Single resolved fact routes through LLM synthesis to handle
         # intermediate bridge answers (e.g., entity name vs. final answer).
         # The mock LLM returns "test" via extract_final_answer("FINAL ANSWER: test").
@@ -579,8 +581,8 @@ class TestBridgeEntityScoping:
                 return "Ken Burns", "sparql", [
                     Entity(uri="http://dbpedia.org/resource/Ken_Burns",
                            label="Ken Burns", source="sparql"),
-                ]
-            return "Brooklyn", "text", []
+                ], "SELECT ?x WHERE { ... }"
+            return "Brooklyn", "text", [], None
 
         parent_entities = [
             Entity(uri="http://dbpedia.org/resource/Thomas_Jefferson",
@@ -639,7 +641,7 @@ class TestBridgeEntityScoping:
                 "idx": idx,
                 "parent_labels": sorted(e.label for e in parent_entities),
             })
-            return "answer", "sparql", []
+            return "answer", "sparql", [], "SELECT ..."
 
         entities = [
             Entity(uri="http://dbpedia.org/resource/A", label="A", source="t"),
@@ -698,8 +700,8 @@ class TestBridgeEntityScoping:
             })
             if idx == 0:
                 # Return answer but NO discovered entities (simulates bridge miss)
-                return "some answer", "text", []
-            return "final", "text", []
+                return "some answer", "text", [], None
+            return "final", "text", [], None
 
         entities = [
             Entity(uri="http://dbpedia.org/resource/X", label="X", source="t"),
