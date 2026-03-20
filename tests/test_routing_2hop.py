@@ -1142,3 +1142,79 @@ class TestRouteSourceSubstringMatch:
     def test_no_schema_no_match(self):
         bridge_patterns = ("bridge_comparison", "bridge_hop2", "parent_chain")
         assert not any(p in "no_schema_fallback" for p in bridge_patterns)
+
+
+# ---------------------------------------------------------------------------
+# No-URI guard in route_question
+# ---------------------------------------------------------------------------
+
+class TestNoEntityUriGuard:
+    """route_question returns TEXT when no entities have URIs."""
+
+    def test_all_entities_no_uri(self):
+        from unittest.mock import MagicMock
+
+        from routing import route_question
+        entities = [Entity(uri=None, label="Albert Einstein")]
+        route, reason = route_question(
+            "When was Einstein born?", entities,
+            kg_client=MagicMock(), llm_client=MagicMock(), model="test",
+        )
+        assert route == "TEXT"
+        assert "no_entity_uris" in reason
+
+    def test_empty_entities_returns_text(self):
+        from unittest.mock import MagicMock
+
+        from routing import route_question
+        route, reason = route_question(
+            "When was Einstein born?", [],
+            kg_client=MagicMock(), llm_client=MagicMock(), model="test",
+        )
+        assert route == "TEXT"
+
+
+# ---------------------------------------------------------------------------
+# 2-hop ASK verification
+# ---------------------------------------------------------------------------
+
+class TestTwoHopAskVerification:
+    """verify_sparql_feasibility checks both hops for bridge routes."""
+
+    def test_ask_includes_hop2_property(self):
+        """ASK query must contain hop2 property when bridge has hop2_properties."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        mock_kg.query.return_value = {"boolean": True}
+        entities = _make_entities("Inception")
+        rule = ("SPARQL", "rule:bridge_hop2")
+        verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        # Inspect the actual ASK query sent to kg_client
+        call_args = mock_kg.query.call_args[0][0]
+        assert "director" in call_args
+        assert "birthDate" in call_args or "birthPlace" in call_args
+
+    def test_hop2_missing_returns_decompose(self):
+        """When 2-hop ASK returns False (hop2 missing), route is DECOMPOSE."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        mock_kg.query.return_value = {"boolean": False}
+        entities = _make_entities("Inception")
+        rule = ("SPARQL", "rule:bridge_hop2")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        assert result[0] == "DECOMPOSE"
+        assert "ask_missing" in result[1]

@@ -30,6 +30,8 @@ KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
     # Family
     "father": ["father", "parent"], "mother": ["mother", "parent"],
     "spouse": ["spouse"], "married": ["spouse"],
+    "wife": ["spouse"], "husband": ["spouse"],
+    "grandfather": ["father", "parent"], "grandmother": ["mother", "parent"],
     "parent": ["parent"], "paternal": ["parent"], "maternal": ["parent"],
     # Life events
     "born": ["birthDate", "birthPlace"],
@@ -75,6 +77,8 @@ _BRIDGE_KEYWORDS: set[str] = {
     "father", "mother", "parent", "paternal", "maternal",
     "performer",
     "spouse", "married",
+    "wife", "husband",
+    "grandfather", "grandmother",
 }
 
 # Hop-2 keywords that indicate the question asks about a property of the hop-1 target.
@@ -82,6 +86,7 @@ _HOP2_KEYWORDS: set[str] = {
     "born", "birth", "died", "death", "country", "nationality", "capital",
     "citizenship", "citizen",
     "education", "studied", "attended", "educated",
+    "spouse", "wife", "husband",
 }
 
 
@@ -159,15 +164,21 @@ def analyze_question(
     matched_hop2 = [kw for kw in matched_keywords if kw in _HOP2_KEYWORDS]
 
     if matched_bridge and matched_hop2:
-        bridge_keyword = matched_bridge[0]
-        bridge_props = KEYWORD_TO_PROPERTIES[bridge_keyword]
-        bridge_property = bridge_props[0]  # primary property name
-        hop2_keyword = matched_hop2[0]
-        h2_props: set[str] = set()
-        for prop_name in KEYWORD_TO_PROPERTIES[hop2_keyword]:
-            h2_props.add(f"dbo:{prop_name}")
-            h2_props.add(f"dbp:{prop_name}")
-        hop2_properties = frozenset(h2_props)
+        # Try each bridge candidate; pick the first that leaves valid hop2 candidates
+        # (avoids self-matching when a keyword is in both _BRIDGE and _HOP2)
+        for candidate in matched_bridge:
+            hop2_candidates = [kw for kw in matched_hop2 if kw != candidate]
+            if hop2_candidates:
+                bridge_keyword = candidate
+                bridge_props = KEYWORD_TO_PROPERTIES[bridge_keyword]
+                bridge_property = bridge_props[0]
+                hop2_keyword = hop2_candidates[0]
+                h2_props: set[str] = set()
+                for prop_name in KEYWORD_TO_PROPERTIES[hop2_keyword]:
+                    h2_props.add(f"dbo:{prop_name}")
+                    h2_props.add(f"dbp:{prop_name}")
+                hop2_properties = frozenset(h2_props)
+                break
 
     # For bridge questions, override expected_type with the PROPERTY_RANGES target
     # of the bridge property. E.g., "When was the director born?" -> bridge is

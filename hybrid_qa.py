@@ -129,17 +129,10 @@ def hybrid_answer(question: str, api_key: str = None,
             print("STEP 4: SPARQL Generation + Execution")
             print(sep)
 
-        sparql_answer, executed_sparql_query, sparql_rows = sparql_solver.solve(
+        sparql_answer, executed_sparql_query, _discovered = sparql_solver.solve(
             question, schema_ctx, entities, llm_client, model,
             verbose=verbose, debug=debug,
         )
-        # Guard: comparison questions need data for ALL compared entities.
-        # If SPARQL returns fewer rows than entities, the comparison is unreliable.
-        if sparql_answer and analysis.is_comparison and len(sparql_rows) < 2:
-            if verbose:
-                print(f"  Comparison guard: only {len(sparql_rows)} row(s) for "
-                      f"{len(entities)} entities — falling through to LogicRAG")
-            sparql_answer = None
 
     if sparql_answer:
         if verbose:
@@ -155,7 +148,7 @@ def hybrid_answer(question: str, api_key: str = None,
 
     # === Step 5: LogicRAG Decomposition (incomplete schema, or SPARQL failed) ===
     sparql_fallback = route == "SPARQL"  # originally routed SPARQL but it failed
-    logicrag_answer = _try_logicrag_decomposition(
+    logicrag_answer, sub_q_log = _try_logicrag_decomposition(
         question, entities, schema_ctx, llm_client, model,
         linker, kg_client, schema_disc, verbose, debug=debug,
     )
@@ -164,6 +157,7 @@ def hybrid_answer(question: str, api_key: str = None,
             logicrag_answer, "logicrag_decomposed", route_source,
             sparql_fallback=sparql_fallback,
             sparql_query="[logicrag_decomposed]",
+            sub_question_log=sub_q_log,
         )
 
     # === Step 5b: SPARQL pre-check for direct properties before TEXT ===

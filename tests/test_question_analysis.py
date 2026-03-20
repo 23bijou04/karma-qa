@@ -441,6 +441,36 @@ class TestNewKeywordBridgeDetection:
         assert result.hop_structure == "bridge"
 
 
+    def test_wife_is_bridge(self):
+        """wife + born -> bridge structure."""
+        result = analyze_question("Where was Albert Einstein's wife born?")
+        assert result.bridge_keyword == "wife"
+        assert result.hop2_keyword == "born"
+        assert result.hop_structure == "bridge"
+
+    def test_grandfather_is_bridge(self):
+        """grandfather + born -> bridge structure."""
+        result = analyze_question("When was the grandfather of Prince William born?")
+        assert result.bridge_keyword == "grandfather"
+        assert result.hop2_keyword == "born"
+        assert result.hop_structure == "bridge"
+
+    def test_husband_as_hop2(self):
+        """father + husband -> bridge with husband as hop2."""
+        result = analyze_question("Who is the father's husband?")
+        assert result.bridge_keyword == "father"
+        assert result.hop2_keyword == "husband"
+        assert result.hop_structure == "bridge"
+
+    def test_spouse_only_not_bridge(self):
+        """'spouse' alone (no separate hop2 keyword) -> not a bridge."""
+        result = analyze_question("Who is the spouse of Albert Einstein?")
+        # spouse matches both _BRIDGE and _HOP2, but self-exclusion
+        # means no valid hop2 -> not classified as bridge
+        assert result.bridge_keyword is None
+        assert result.hop_structure != "bridge"
+
+
 class TestNewKeywordAnalysis:
     def test_publication_date_question(self):
         result = analyze_question("When was Harry Potter published?")

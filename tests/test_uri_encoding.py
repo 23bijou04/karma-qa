@@ -60,6 +60,35 @@ class TestSparqlResultsToEntities:
         assert "%2C" not in entities[0].uri
 
 
+    def test_arbitrary_variable_name(self):
+        """LLM-generated variable names (not in hardcoded list) still extract entities."""
+        from routing import _sparql_results_to_entities
+        uri = "http://dbpedia.org/resource/Christopher_Nolan"
+        results = [{"director": uri}]
+        entities = _sparql_results_to_entities(results, seed_uris=set())
+        assert len(entities) == 1
+        assert entities[0].uri == uri
+
+    def test_multiple_resource_uris_picks_first(self):
+        """When row has multiple dbr: URIs, first one (by insertion order) is picked."""
+        from routing import _sparql_results_to_entities
+        results = [{
+            "film": "http://dbpedia.org/resource/Inception",
+            "director": "http://dbpedia.org/resource/Christopher_Nolan",
+        }]
+        entities = _sparql_results_to_entities(results, seed_uris=set())
+        assert len(entities) == 1
+        # First URI in insertion order wins
+        assert entities[0].uri == "http://dbpedia.org/resource/Inception"
+
+    def test_ontology_uri_not_extracted(self):
+        """dbo: URIs are not extracted as entity URIs."""
+        from routing import _sparql_results_to_entities
+        results = [{"p": "http://dbpedia.org/ontology/director"}]
+        entities = _sparql_results_to_entities(results, seed_uris=set())
+        assert len(entities) == 0
+
+
 class TestExecuteSparqlPreserveURIs:
     def test_preserve_uris_default_false(self):
         """Default preserve_uris=False still works (backward compatibility)."""

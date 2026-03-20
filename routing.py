@@ -254,15 +254,17 @@ def _sparql_results_to_entities(results: list[dict],
     for row in results:
         uri = None
         label = None
-        for key in ("entity", "related", "neighbor", "uri", "s", "o"):
-            if key in row and row[key]:
-                val = row[key]
-                if val.startswith("http://dbpedia.org/resource/"):
-                    uri = val
-                elif "/" not in val and val.strip():
+        # Scan ALL row values for DBpedia resource URIs (LLMs use arbitrary variable names)
+        for val in row.values():
+            if isinstance(val, str) and val.startswith("http://dbpedia.org/resource/"):
+                uri = val
+                break
+        # Fallback: check for local names (non-URI strings without slashes)
+        if not uri:
+            for val in row.values():
+                if isinstance(val, str) and "/" not in val and val.strip():
                     local_name = val.replace(" ", "_")
                     uri = f"http://dbpedia.org/resource/{local_name}"
-                if uri:
                     break
         for key in ("label", "entityLabel", "name"):
             if key in row and row[key]:
@@ -328,15 +330,31 @@ def verify_sparql_feasibility(
         if not hop1_prop or not entities:
             return (route, reason)
 
+        # Determine hop-2 property for 2-hop ASK verification
+        hop2_dbo_prop = None
+        if analysis.hop2_properties:
+            for p in analysis.hop2_properties:
+                if p.startswith("dbo:"):
+                    hop2_dbo_prop = p[4:]  # strip "dbo:" prefix
+                    break
+
         verified = False
         for entity in entities:
             if not entity.uri:
                 continue
             from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
             safe_uri = escape_sparql_uri(entity.uri)
-            ask_query = (
-                f"ASK {{ <{safe_uri}> <http://dbpedia.org/ontology/{hop1_prop}> ?x }}"
+            # Build ASK: hop-1 only, or hop-1 + hop-2 when hop2 is known
+            hop1_pattern = (
+                f"<{safe_uri}> <http://dbpedia.org/ontology/{hop1_prop}> ?x"
             )
+            if hop2_dbo_prop:
+                ask_query = (
+                    f"ASK {{ {hop1_pattern} . "
+                    f"?x <http://dbpedia.org/ontology/{hop2_dbo_prop}> ?y }}"
+                )
+            else:
+                ask_query = f"ASK {{ {hop1_pattern} }}"
             try:
                 raw = kg_client.query(ask_query)
                 if raw.get("boolean", False):
@@ -451,6 +469,10 @@ def route_question(
     from entity_profile import build_entity_profile
     from question_analysis import analyze_question, enrich_analysis
     from schema_projection import project
+
+    # Guard: if no entities have URIs, SPARQL is impossible
+    if not any(e.uri for e in entities):
+        return ("TEXT", "no_entity_uris")
 
     # Build projections if not provided
     if projections is None and schema_disc is not None:
