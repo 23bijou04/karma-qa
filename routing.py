@@ -173,10 +173,17 @@ def _rule_based_route(
             return ("SPARQL", "rule:parent_chain")
 
     # 5. Direct property match
-    if analysis.target_properties & all_actual:
+    # For comparison questions, require the matched property on ALL entities
+    # (intersection), not just any — partial data yields wrong comparisons.
+    # `common_props` is already computed in step 1 when is_comparison is True.
+    if analysis.is_comparison:
+        matched = analysis.target_properties & common_props
+    else:
+        matched = analysis.target_properties & all_actual
+    if matched:
         if debug:
             print(f"  [DEBUG] Rule matched: direct_property "
-                  f"(matched={sorted(analysis.target_properties & all_actual)})")
+                  f"(matched={sorted(matched)})")
         return ("SPARQL", "rule:direct_property")
 
     if debug:

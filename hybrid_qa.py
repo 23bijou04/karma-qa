@@ -129,10 +129,17 @@ def hybrid_answer(question: str, api_key: str = None,
             print("STEP 4: SPARQL Generation + Execution")
             print(sep)
 
-        sparql_answer, executed_sparql_query, _ = sparql_solver.solve(
+        sparql_answer, executed_sparql_query, sparql_rows = sparql_solver.solve(
             question, schema_ctx, entities, llm_client, model,
             verbose=verbose, debug=debug,
         )
+        # Guard: comparison questions need data for ALL compared entities.
+        # If SPARQL returns fewer rows than entities, the comparison is unreliable.
+        if sparql_answer and analysis.is_comparison and len(sparql_rows) < 2:
+            if verbose:
+                print(f"  Comparison guard: only {len(sparql_rows)} row(s) for "
+                      f"{len(entities)} entities — falling through to LogicRAG")
+            sparql_answer = None
 
     if sparql_answer:
         if verbose:
