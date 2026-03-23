@@ -61,19 +61,33 @@ DEFAULT_SCENARIO_FILE = "data/eval_1000q/scenario_classification_1000.json"
 # Question selection
 # ---------------------------------------------------------------------------
 
-def select_questions(data: dict, per_scenario: int, seed: int = 42) -> list[dict]:
-    """Stratified sample: N questions per scenario (A-F), sorted by scenario."""
+def select_questions(
+    data: dict, per_scenario: int, seed: int = 42, scenarios: list[str] | None = None,
+) -> list[dict]:
+    """Stratified sample: N questions per scenario (A-F), sorted by scenario.
+
+    If *scenarios* is given, only include those scenarios (e.g. ["D"]).
+    """
     questions = data["questions"]
     by_scenario = defaultdict(list)
     for q in questions:
         by_scenario[q["scenario"]].append(q)
 
+    if scenarios:
+        unknown = set(scenarios) - set(by_scenario.keys())
+        if unknown:
+            valid = sorted(by_scenario.keys())
+            raise ValueError(f"Unknown scenarios: {unknown}. Valid: {valid}")
+
     rng = random.Random(seed)
     selected = []
+    allowed = set(scenarios) if scenarios else set(by_scenario.keys())
     for scenario in sorted(by_scenario.keys()):
         pool = by_scenario[scenario]
         n = min(per_scenario, len(pool))
-        selected.extend(rng.sample(pool, n))
+        sampled = rng.sample(pool, n)  # always consume RNG for seed stability
+        if scenario in allowed:
+            selected.extend(sampled)
 
     return selected
 
@@ -252,6 +266,8 @@ def main():
     parser.add_argument("--scenario-file", default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output", default=None,
                         help="Output JSONL (default: data/eval_1000q/scenario_eval_{mode}.jsonl)")
+    parser.add_argument("--scenarios", default=None,
+                        help="Comma-separated scenarios to include (e.g. D or A,B,D; default: all)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -263,7 +279,8 @@ def main():
     # Load and select questions
     with open(args.scenario_file) as f:
         data = json.load(f)
-    selected = select_questions(data, args.per_scenario, args.seed)
+    scenario_filter = [s.strip().upper() for s in args.scenarios.split(",")] if args.scenarios else None
+    selected = select_questions(data, args.per_scenario, args.seed, scenarios=scenario_filter)
     print(f"Selected {len(selected)} questions ({args.per_scenario}/scenario) "
           f"from {len(data['questions'])} total")
 
