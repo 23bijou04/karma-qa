@@ -469,6 +469,8 @@ class DBpediaSPARQLClient:
 
         # Step 2: fulltext search
         candidates = self.search_entities_fulltext(name, entity_type, limit=5)
+        if not candidates and entity_type:
+            candidates = self.search_entities_fulltext(name, entity_type=None, limit=5)
         if not candidates:
             return None
 

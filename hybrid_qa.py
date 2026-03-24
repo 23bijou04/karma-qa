@@ -302,12 +302,24 @@ def main():
         "--debug", action="store_true",
         help="Show SPARQL gap analysis and decomposition traces (implies --verbose)",
     )
+    parser.add_argument(
+        "--corpus", default=None,
+        help="Path to benchmark corpus JSON for TEXT route RAG (same as LogicRAG)",
+    )
     args = parser.parse_args()
+
+    benchmark_corpus = None
+    if args.corpus:
+        import json
+        with open(args.corpus) as f:
+            benchmark_corpus = json.load(f)
+        print(f"Loaded benchmark corpus: {len(benchmark_corpus)} entries")
 
     try:
         result = hybrid_answer(
             args.question, api_key=args.api_key, model=args.model,
             verbose=args.verbose, debug=args.debug, provider=args.provider,
+            benchmark_corpus=benchmark_corpus,
         )
     except ValueError as e:
         print(f"Error: {e}")

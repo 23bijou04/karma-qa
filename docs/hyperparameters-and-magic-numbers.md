@@ -59,7 +59,7 @@ These are operational parameters, not research hyperparameters.
 | 29 | `0.5s` | `sparql_evaluation.py:634` | Batch eval polite delay | `time.sleep(0.5)` between questions. Prevents overwhelming DBpedia/LLM during batch evaluation. |
 | 30 | `max_tokens=1000` | `llm_provider.py:63` | Default LLM max tokens | Enough for SPARQL generation + reasoning. 1000 covers typical QA responses. |
 | 31 | `max_tokens=500` | `graphrag_wiki.py:786` | GraphRAG LLM max tokens | Shorter for the text-only pipeline (simpler reasoning, no SPARQL generation). |
-| 32 | `min_support=20` | `dbpedia/entity_linker.py:90` | Spotlight support threshold | Minimum Wikipedia "support" (page views/links) for entity candidates. Filters very obscure entities. |
+| 32 | `min_support=5` | `dbpedia/entity_linker.py:95` | Spotlight support threshold | Minimum Wikipedia inlinks for entity candidates. Lowered from 20 to 5 to catch obscure but real entities (e.g., Margaretha_van_Mechelen, support=8). Confidence threshold (0.5) remains the primary quality gate. |
 
 ---
 

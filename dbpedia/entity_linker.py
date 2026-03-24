@@ -92,7 +92,7 @@ class DBpediaEntityLinker:
         sparql_client: Optional[DBpediaSPARQLClient] = None,
         cache_manager: Optional[CacheManager] = None,
         min_confidence: float = 0.5,
-        min_support: int = 20,
+        min_support: int = 5,
     ):
         self.spotlight_endpoint = spotlight_endpoint
         self.sparql_client = sparql_client or DBpediaSPARQLClient()
