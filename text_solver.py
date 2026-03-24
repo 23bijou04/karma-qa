@@ -49,25 +49,28 @@ def _build_corpus_index(benchmark_corpus: list[dict], verbose: bool = False) -> 
     """Build or return cached FAISS index from benchmark corpus.
 
     Built once on first call, reused for all subsequent questions.
-    Wraps short entries directly as WikiChunk (no section splitting).
+    Embeds whole entries with title prefix (matches LogicRAG format).
     Uses WikiRAGCache for embedding persistence across runs.
+
+    NOTE: If switching from the old chunked format, delete data/wiki_cache.db
+    first — short entries (<=512 chars) have matching chunk counts (1==1) so
+    the cache won't auto-invalidate their stale embeddings.
     """
     global _corpus_index
     if _corpus_index is not None:
         return _corpus_index
 
-    from rag.chunker import WikiChunk, chunk_wikipedia_page
+    from rag.chunker import WikiChunk
 
     chunks = []
     for entry in benchmark_corpus:
         title, text = entry["title"], entry["text"]
-        if len(text) > 512:
-            chunks.extend(chunk_wikipedia_page(title, text))
-        else:
-            chunks.append(WikiChunk(
-                text=text, page_title=title,
-                section_header="(Lead)", chunk_index=0, char_offset=0,
-            ))
+        # Embed whole entry with title prefix (matches LogicRAG format)
+        full_text = f"Title: {title}. Content: {text}"
+        chunks.append(WikiChunk(
+            text=full_text, page_title=title,
+            section_header="(Lead)", chunk_index=0, char_offset=0,
+        ))
 
     cache = _get_rag_cache()
     index = RAGIndex()
@@ -75,8 +78,7 @@ def _build_corpus_index(benchmark_corpus: list[dict], verbose: bool = False) -> 
     _corpus_index = index
 
     if verbose:
-        print(f"  Built corpus FAISS index: {len(chunks)} chunks from "
-              f"{len(benchmark_corpus)} entries")
+        print(f"  Built corpus FAISS index: {len(chunks)} entries (no chunking)")
 
     return _corpus_index
 
