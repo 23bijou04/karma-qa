@@ -55,6 +55,17 @@ from question_analysis import analyze_question  # noqa: E402
 from schema_projection import project  # noqa: E402
 
 DEFAULT_SCENARIO_FILE = "data/eval_1000q/scenario_classification_1000.json"
+LOGICRAG_CORPUS = os.path.join(
+    PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
+)
+
+
+def load_benchmark_corpus(corpus_file: str) -> list[dict]:
+    """Load benchmark corpus for fair TEXT-route comparison."""
+    with open(corpus_file) as f:
+        corpus = json.load(f)
+    print(f"Loaded benchmark corpus: {len(corpus)} entries from {corpus_file}")
+    return corpus
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +131,7 @@ def logicrag_forced_answer(
     kg_client,
     schema_disc,
     verbose: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Force LogicRAG decomposition path, with SPARQL + text fallback.
 
@@ -198,6 +210,7 @@ def logicrag_forced_answer(
         llm_client=llm_client, model=model,
         verbose=verbose,
         seed_titles=seed_titles,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if answer:
@@ -303,6 +316,7 @@ def main():
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
+    benchmark_corpus = load_benchmark_corpus(LOGICRAG_CORPUS)
 
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
 
@@ -337,6 +351,7 @@ def main():
                     llm_client=llm_client, linker=linker,
                     kg_client=kg_client, schema_disc=schema_disc,
                     verbose=args.verbose,
+                    benchmark_corpus=benchmark_corpus,
                 )
                 record["raw_answer"] = result.answer
                 record["predicted_answer"] = clean_answer(result.answer)
@@ -351,6 +366,7 @@ def main():
                 answer, method = logicrag_forced_answer(
                     question, entities, llm_client, args.model,
                     linker, kg_client, schema_disc, verbose=args.verbose,
+                    benchmark_corpus=benchmark_corpus,
                 )
                 record["raw_answer"] = answer
                 record["predicted_answer"] = clean_answer(answer)
