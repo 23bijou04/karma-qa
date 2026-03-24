@@ -45,6 +45,17 @@ from hybrid_qa import hybrid_answer  # noqa: E402
 
 DEFAULT_COVERAGE = "data/eval_1000q/coverage_analysis_1000.json"
 DEFAULT_OUTPUT = "data/eval_1000q/hybrid_eval_1000.jsonl"
+LOGICRAG_CORPUS = os.path.join(
+    PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
+)
+
+
+def load_benchmark_corpus(corpus_file: str) -> list[dict]:
+    """Load shared benchmark corpus (same as LogicRAG baseline)."""
+    with open(corpus_file) as f:
+        corpus = json.load(f)
+    print(f"Loaded benchmark corpus: {len(corpus)} entries from {corpus_file}")
+    return corpus
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +169,9 @@ def main():
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
 
+    # Load shared benchmark corpus (same as LogicRAG baseline)
+    benchmark_corpus = load_benchmark_corpus(LOGICRAG_CORPUS)
+
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
 
     # Track stats
@@ -189,6 +203,7 @@ def main():
                 question, args.api_key, model=args.model,
                 llm_client=llm_client, linker=linker,
                 kg_client=kg_client, schema_disc=schema_disc,
+                benchmark_corpus=benchmark_corpus,
             )
             record["raw_answer"] = result.answer
             record["predicted_answer"] = clean_answer(result.answer)

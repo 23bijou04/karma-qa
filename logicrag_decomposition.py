@@ -441,6 +441,7 @@ def _resolve_subquestion(
     llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str | None, str, list[Entity], str | None]:
     """Resolve a single sub-question via SPARQL or TEXT.
 
@@ -541,6 +542,7 @@ def _resolve_subquestion(
         known_facts=kg_facts_block,
         llm_client=llm_client, model=model,
         verbose=debug, is_subquestion=True,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if verbose:
@@ -558,6 +560,7 @@ def _try_logicrag_decomposition(
     schema_ctx: str, llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str | None, list[dict]]:
     """LogicRAG-style sub-question decomposition with per-sub-Q SPARQL/TEXT routing.
 
@@ -620,6 +623,7 @@ def _try_logicrag_decomposition(
             llm_client, model,
             linker, kg_client, schema_disc,
             verbose, debug=debug,
+            benchmark_corpus=benchmark_corpus,
         )
 
         sub_q_log.append({
@@ -693,6 +697,7 @@ def _try_logicrag_decomposition(
                     known_facts="",
                     llm_client=llm_client, model=model,
                     verbose=debug, is_subquestion=True,
+                    benchmark_corpus=benchmark_corpus,
                 )
                 if answer:
                     known_facts[oidx] = answer

@@ -57,7 +57,8 @@ def hybrid_answer(question: str, api_key: str = None,
                   verbose: bool = False, debug: bool = False,
                   llm_client=None, linker=None,
                   kg_client=None, schema_disc=None,
-                  provider: str = "groq") -> HybridResult:
+                  provider: str = "groq",
+                  benchmark_corpus: list[dict] | None = None) -> HybridResult:
     """Schema-routed hybrid QA with 3-path architecture.
 
     Paths:
@@ -151,6 +152,7 @@ def hybrid_answer(question: str, api_key: str = None,
     logicrag_answer, sub_q_log = _try_logicrag_decomposition(
         question, entities, schema_ctx, llm_client, model,
         linker, kg_client, schema_disc, verbose, debug=debug,
+        benchmark_corpus=benchmark_corpus,
     )
     if logicrag_answer:
         return HybridResult(
@@ -257,6 +259,7 @@ def hybrid_answer(question: str, api_key: str = None,
         llm_client=llm_client, model=model,
         verbose=verbose,
         seed_titles=seed_titles,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if not answer:
