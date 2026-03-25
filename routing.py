@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_last_route_meta: dict = {}
+
 # Mapping from question keywords to DBpedia ontology property names.
 # Used by verify_sparql_feasibility() (ASK).
 BRIDGE_WORD_TO_PROP = {
@@ -422,6 +424,8 @@ def _extract_properties_llm(
     )
 
     response = call_llm(llm_client, prompt, model).strip()
+    _last_route_meta["llm_property_prompt"] = prompt
+    _last_route_meta["llm_property_response"] = response
 
     if debug:
         print(f"  [DEBUG] LLM property extraction: {response}")
@@ -435,6 +439,7 @@ def _extract_properties_llm(
         prop = part.strip().split(":")[-1]  # strip dbo:/dbp: if present
         if prop and prop.upper() != "NONE":
             properties.append(prop)
+    _last_route_meta["llm_extracted_properties"] = properties
 
     return properties
 
@@ -466,6 +471,8 @@ def route_question(
     NOT for binary SPARQL/TEXT classification. All routing decisions
     are deterministic once properties are identified.
     """
+    global _last_route_meta
+    _last_route_meta = {}
     from entity_profile import build_entity_profile
     from question_analysis import analyze_question, enrich_analysis
     from schema_projection import project
@@ -495,11 +502,13 @@ def route_question(
 
     # Stage 1: Keyword-based rules + ASK verification
     rule_result = _rule_based_route(analysis, projections, debug=debug)
+    _last_route_meta["rule_result"] = rule_result
     ask_result = verify_sparql_feasibility(
         analysis, projections, entities, kg_client, rule_result,
     )
     if ask_result:
         route, reason = ask_result
+        _last_route_meta["ask_result"] = reason
         if debug:
             print(f"  [DEBUG] Stage 1 (keywords): {route} ({reason})")
         if route in ("SPARQL", "DECOMPOSE"):
@@ -520,6 +529,7 @@ def route_question(
             enriched_ask = verify_sparql_feasibility(
                 enriched, enriched_projections, entities, kg_client, enriched_rule,
             )
+            _last_route_meta["enriched_rule_result"] = enriched_ask
             if enriched_ask:
                 route, reason = enriched_ask
                 if debug:

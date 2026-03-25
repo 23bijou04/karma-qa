@@ -23,6 +23,8 @@ from sparql_evaluation import (
 
 logger = logging.getLogger(__name__)
 
+_last_solve_meta: dict = {}
+
 # ---------------------------------------------------------------------------
 # SPARQL read-only guard (C1: injection prevention)
 # ---------------------------------------------------------------------------
@@ -111,6 +113,9 @@ def solve(
     if debug:
         verbose = True
 
+    global _last_solve_meta
+    _last_solve_meta = {}
+
     # Build prompt — unified for direct and sub-Q paths
     known_facts_block = ""
     if known_facts:
@@ -123,6 +128,9 @@ def solve(
     )
     sparql_resp = call_llm(llm_client, sparql_prompt, model)
     sparql_query = sanitize_sparql_uris(extract_sparql(sparql_resp))
+    _last_solve_meta["sparql_gen_prompt"] = sparql_prompt
+    _last_solve_meta["sparql_gen_response"] = sparql_resp
+    _last_solve_meta["initial_query"] = sparql_query
 
     if verbose:
         print(f"  Generated SPARQL:\n    {sparql_query[:200]}")
@@ -134,6 +142,9 @@ def solve(
 
     # Execute
     results, err = execute_sparql(sparql_query, preserve_uris=preserve_uris)
+    _last_solve_meta["initial_results"] = results[:20] if results else []
+    _last_solve_meta["initial_result_count"] = len(results) if results else 0
+    _last_solve_meta["initial_error"] = err
     if verbose:
         if err:
             print(f"  Results: {len(results)} rows, error: '{err[:80]}'")
@@ -152,6 +163,9 @@ def solve(
         )
         retry_resp = call_llm(llm_client, retry_prompt, model)
         retry_query = sanitize_sparql_uris(extract_sparql(retry_resp))
+        _last_solve_meta["retry_prompt"] = retry_prompt
+        _last_solve_meta["retry_response"] = retry_resp
+        _last_solve_meta["retry_query"] = retry_query
         if verbose:
             print(f"  Retry SPARQL:\n    {retry_query[:200]}")
         if not _is_readonly_sparql(retry_query):
@@ -159,6 +173,10 @@ def solve(
             results2, err2 = [], "write operation rejected"
         else:
             results2, err2 = execute_sparql(retry_query, preserve_uris=preserve_uris)
+        _last_solve_meta["retry_results"] = results2[:20] if results2 else []
+        _last_solve_meta["retry_result_count"] = len(results2) if results2 else 0
+        _last_solve_meta["retry_error"] = err2
+        _last_solve_meta["used_retry"] = True
         if verbose:
             print(f"  Retry results: {len(results2)} rows")
         if results2:
@@ -191,7 +209,10 @@ def solve(
     answer_prompt = ANSWER_PROMPT.format(
         question=question, results=fmt_results,
     )
-    answer = extract_final_answer(call_llm(llm_client, answer_prompt, model))
+    answer_raw_response = call_llm(llm_client, answer_prompt, model)
+    _last_solve_meta["answer_prompt"] = answer_prompt
+    _last_solve_meta["answer_raw_response"] = answer_raw_response
+    answer = extract_final_answer(answer_raw_response)
 
     if answer:
         clean = answer.strip().lower().rstrip(".")

@@ -37,6 +37,7 @@ from schema_projection import project as sp_project  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_last_decomp_meta: dict = {}
 
 # ---------------------------------------------------------------------------
 # Data structure
@@ -254,11 +255,13 @@ def _generate_final_answer(
     prompt = FINAL_ANSWER_PROMPT.format(
         question=question, info_summary=info_summary,
     )
+    _last_decomp_meta["final_answer_prompt"] = prompt
     try:
         response = call_llm(llm_client, prompt, model)
     except Exception:
         logger.warning("Final answer generation failed")
         return None
+    _last_decomp_meta["final_answer_raw_response"] = response
     return extract_final_answer(response) if response else None
 
 
@@ -293,7 +296,7 @@ def _make_fallback_entity(name: str, kg_client=None,
 
     Returns None if kg_client is provided and URI doesn't exist.
     """
-    local_name = url_quote(name.replace(' ', '_'), safe="_'()")
+    local_name = url_quote(name.replace(' ', '_'), safe="_'(),")
     uri = f"http://dbpedia.org/resource/{local_name}"
 
     if kg_client:
@@ -387,6 +390,8 @@ def _decompose_subquestions(
         schema_summary=schema_summary, type_hint=type_hint,
     )
     resp = call_llm(llm_client, prompt, model)
+    _last_decomp_meta["decompose_prompt"] = prompt
+    _last_decomp_meta["decompose_raw_response"] = resp
 
     # Parse JSON response
     data = _fix_json_response(resp)
@@ -397,6 +402,8 @@ def _decompose_subquestions(
 
     sub_qs = data.get("sub_questions", [])
     deps = data.get("dependencies", [])
+    _last_decomp_meta["sub_question_count"] = len(sub_qs)
+    _last_decomp_meta["dependency_graph"] = deps
 
     if not sub_qs or len(sub_qs) < 2:
         return None  # Single-hop, skip decomposition
@@ -452,6 +459,10 @@ def _resolve_subquestion(
     # Only use answers from actual dependencies, not all known facts
     dep_facts = {idx: known_facts[idx] for idx in sub_q.depends_on if idx in known_facts}
     resolved_text = _substitute_answers(sub_q.text, dep_facts)
+    if dep_facts and resolved_text == sub_q.text:
+        # Substitution failed (LLM didn't use [Q0] placeholders) — append context
+        facts_ctx = "; ".join(f"Q{k}={v}" for k, v in dep_facts.items())
+        resolved_text = f"{resolved_text} (given: {facts_ctx})"
     if verbose:
         print(f"\n    Sub-Q {idx}: {resolved_text}")
     if debug and sub_q.depends_on:
@@ -574,6 +585,8 @@ def _try_logicrag_decomposition(
     """
     if debug:
         verbose = True
+    global _last_decomp_meta
+    _last_decomp_meta = {}
     sep = "=" * 70
 
     # --- Step 1: Decompose ---
@@ -626,11 +639,18 @@ def _try_logicrag_decomposition(
             benchmark_corpus=benchmark_corpus,
         )
 
+        _sub_solver_meta = {}
+        if method == "sparql":
+            _sub_solver_meta = sparql_solver._last_solve_meta.copy()
+        elif method == "text":
+            _sub_solver_meta = text_solver._last_solve_meta.copy()
+
         sub_q_log.append({
             "sub_question": sub_q.text,
             "method": method,
             "sparql_query": sparql_query,
             "answer": answer,
+            "solver_meta": _sub_solver_meta,
         })
 
         oidx = sub_q.original_idx
@@ -660,6 +680,9 @@ def _try_logicrag_decomposition(
             if verbose:
                 print(f"    Early stop check: can_answer={check['can_answer']}")
             if check["can_answer"]:
+                _last_decomp_meta["early_stop_triggered"] = True
+                _last_decomp_meta["early_stop_at_subq"] = loop_idx
+                _last_decomp_meta["early_stop_understanding"] = check.get("current_understanding", "")
                 if verbose:
                     print("  -> Early exit: accumulated facts sufficient")
                 final = _generate_final_answer(question, info_summary, llm_client, model)
@@ -699,6 +722,7 @@ def _try_logicrag_decomposition(
                     verbose=debug, is_subquestion=True,
                     benchmark_corpus=benchmark_corpus,
                 )
+                _retry_meta = text_solver._last_solve_meta.copy()
                 if answer:
                     known_facts[oidx] = answer
                     sq.answer = answer
@@ -708,6 +732,7 @@ def _try_logicrag_decomposition(
                         "method": "text",
                         "sparql_query": None,
                         "answer": answer,
+                        "solver_meta": _retry_meta,
                     })
                     if verbose:
                         print(f"    Retry sub-Q {oidx}: TEXT -> {answer}")

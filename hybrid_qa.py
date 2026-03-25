@@ -22,12 +22,15 @@ Usage:
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
+import logicrag_decomposition  # noqa: E402
+import routing as routing_mod  # noqa: E402
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
 from ablation_study_v3.wiki_utils import uri_to_wiki_title  # noqa: E402
@@ -75,6 +78,7 @@ def hybrid_answer(question: str, api_key: str = None,
     linker = linker or DBpediaEntityLinker(min_confidence=0.5)
     kg_client = kg_client or DBpediaSPARQLClient()
     schema_disc = schema_disc or SchemaDiscovery()
+    t_start = time.time()
 
     # === Step 1: Entity Linking ===
     entities = link_entities_to_dbpedia(question, linker)
@@ -88,6 +92,7 @@ def hybrid_answer(question: str, api_key: str = None,
                 print(f"    URI: {e.uri}")
         if not entities:
             print("  (none found)")
+    t_entity_link = time.time()
 
     # === Step 2: Build EntityProfiles ===
     profiles = [build_entity_profile(e.uri, e.label, schema_disc) for e in entities if e.uri]
@@ -110,16 +115,56 @@ def hybrid_answer(question: str, api_key: str = None,
                   f"completeness={p.completeness}")
         if not projections:
             print("  (no URIs to query schema for)")
+    t_schema = time.time()
 
     # === Step 3: Route Decision — rules + ASK verification + LLM fallback ===
     route, route_source = route_question(
         question, entities, kg_client, llm_client, model,
         projections=projections, schema_ctx=schema_ctx, debug=debug,
     )
+    t_route = time.time()
     if verbose:
         print(f"\n{sep}")
         print(f"STEP 3: Route Decision → {route} ({route_source})")
         print(sep)
+
+    # Build debug_info — wrapped in try/except so metadata failure doesn't crash the question
+    try:
+        debug_info = {
+            "entities_linked": [
+                {"label": e.label, "uri": e.uri, "confidence": e.confidence, "source": e.source}
+                for e in entities
+            ],
+            "route": route,
+            "route_meta": routing_mod._last_route_meta.copy(),
+            "analysis": {
+                "hop_structure": analysis.hop_structure,
+                "is_comparison": analysis.is_comparison,
+                "target_properties": sorted(analysis.target_properties),
+                "bridge_keyword": analysis.bridge_keyword,
+                "bridge_property": analysis.bridge_property,
+                "hop2_keyword": analysis.hop2_keyword,
+                "hop2_properties": sorted(analysis.hop2_properties)
+                if analysis.hop2_properties else [],
+            },
+            "projections": [
+                {
+                    "entity_label": p.entity_profile.label,
+                    "primary_class": p.primary_class,
+                    "completeness": p.completeness,
+                    "missing_hops": p.missing_hops,
+                    "relevant_properties": p.relevant_properties,
+                }
+                for p in projections
+            ],
+            "stage_timings": {
+                "entity_linking_s": round(t_entity_link - t_start, 3),
+                "schema_projection_s": round(t_schema - t_entity_link, 3),
+                "routing_s": round(t_route - t_schema, 3),
+            },
+        }
+    except Exception as e:
+        debug_info = {"assembly_error": str(e)}
 
     # === Step 4: Direct SPARQL (single-hop or multi-hop with full schema) ===
     sparql_answer = None
@@ -136,6 +181,8 @@ def hybrid_answer(question: str, api_key: str = None,
         )
 
     if sparql_answer:
+        debug_info["sparql_solver_meta"] = sparql_solver._last_solve_meta.copy()
+        debug_info["stage_timings"]["sparql_solve_s"] = round(time.time() - t_route, 3)
         if verbose:
             print(f"\n{sep}")
             print(f"RESULT (method=sparql, route={route_source})")
@@ -145,6 +192,7 @@ def hybrid_answer(question: str, api_key: str = None,
         return HybridResult(
             sparql_answer, "sparql", route_source,
             sparql_query=executed_sparql_query,
+            debug_info=debug_info,
         )
 
     # === Step 5: LogicRAG Decomposition (incomplete schema, or SPARQL failed) ===
@@ -155,11 +203,14 @@ def hybrid_answer(question: str, api_key: str = None,
         benchmark_corpus=benchmark_corpus,
     )
     if logicrag_answer:
+        debug_info["decomp_meta"] = logicrag_decomposition._last_decomp_meta.copy()
+        debug_info["stage_timings"]["logicrag_s"] = round(time.time() - t_route, 3)
         return HybridResult(
             logicrag_answer, "logicrag_decomposed", route_source,
             sparql_fallback=sparql_fallback,
             sparql_query="[logicrag_decomposed]",
             sub_question_log=sub_q_log,
+            debug_info=debug_info,
         )
 
     # === Step 5b: SPARQL pre-check for direct properties before TEXT ===
@@ -188,11 +239,15 @@ def hybrid_answer(question: str, api_key: str = None,
                             verbose=verbose, debug=debug,
                         )
                         if precheck_answer:
+                            debug_info["sparql_solver_meta"] = sparql_solver._last_solve_meta.copy()
+                            debug_info["stage_timings"]["precheck_s"] = round(
+                                time.time() - t_route, 3)
                             return HybridResult(
                                 precheck_answer, "sparql",
                                 "precheck_" + route_source,
                                 sparql_fallback=True,
                                 sparql_query=precheck_query,
+                                debug_info=debug_info,
                             )
                         break  # Only need one hit to attempt SPARQL
                 except Exception:
@@ -273,9 +328,18 @@ def hybrid_answer(question: str, api_key: str = None,
         print(f"  Question: {question}")
         print(f"  Answer:   {answer}")
 
+    debug_info["text_path"] = {
+        "seed_entity_count": len(entities),
+        "all_entity_count": len(all_entities),
+        "kg_facts_chars": len(kg_facts),
+    }
+    debug_info["text_solver_meta"] = text_solver._last_solve_meta.copy()
+    debug_info["stage_timings"]["text_solve_s"] = round(time.time() - t_route, 3)
+
     return HybridResult(
         answer, "text", route_source, sparql_fallback,
         kg_context=kg_facts,
+        debug_info=debug_info,
     )
 
 

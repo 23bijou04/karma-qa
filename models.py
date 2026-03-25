@@ -104,3 +104,4 @@ class HybridResult:
     sparql_query: Optional[str] = None  # executed SPARQL query (provenance)
     kg_context: str = ""  # formatted KG facts injected into text prompt
     sub_question_log: list[dict] = field(default_factory=list)  # per-sub-Q method/query/answer
+    debug_info: dict = field(default_factory=dict)

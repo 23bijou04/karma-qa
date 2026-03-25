@@ -14,9 +14,11 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import signal
 import sys
 import time
+import traceback
 from collections import defaultdict
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -180,6 +182,10 @@ def main():
     em_sum, f1_sum = 0.0, 0.0
     by_method = defaultdict(lambda: {"count": 0, "em": 0.0, "f1": 0.0})
 
+    _HEDGE_RE = re.compile(
+        r"(?:not sure|unclear|cannot determine|could not find|no information)", re.I,
+    )
+
     print(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
 
     for i, q in enumerate(remaining):
@@ -211,11 +217,13 @@ def main():
             record["route_source"] = result.route_source
             record["sparql_fallback"] = result.sparql_fallback
             record["sparql_query"] = getattr(result, "sparql_query", None) or ""
-            record["kg_context"] = (getattr(result, "kg_context", None) or "")[:200]
+            record["kg_context"] = getattr(result, "kg_context", None) or ""
             if result.sub_question_log:
                 record["sub_question_log"] = result.sub_question_log
+            record["debug_info"] = getattr(result, "debug_info", {})
+            record["has_hedging"] = bool(_HEDGE_RE.search(record["raw_answer"]))
             record["error"] = ""
-        except Exception as e:
+        except Exception:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
             record["method"] = "error"
@@ -223,7 +231,9 @@ def main():
             record["sparql_fallback"] = False
             record["sparql_query"] = ""
             record["kg_context"] = ""
-            record["error"] = str(e)
+            record["debug_info"] = {}
+            record["has_hedging"] = False
+            record["error"] = traceback.format_exc()
 
         # Compute metrics
         pred = record["predicted_answer"]
