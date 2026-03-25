@@ -258,7 +258,8 @@ def _solve_rag(question, entities, known_facts, relation_hints,
 
     top_chunks = rag_index.retrieve(question, top_k=20, seed_titles=seed_titles)
     _last_solve_meta["rag_chunks_retrieved"] = len(top_chunks)
-    _last_solve_meta["rag_pages_in_top"] = list({c.page_title for c in top_chunks})
+    # top_chunks is list[(WikiChunk, float)] from RAGIndex.retrieve()
+    _last_solve_meta["rag_pages_in_top"] = list({c.page_title for c, _ in top_chunks})
 
     if not top_chunks:
         if verbose:
