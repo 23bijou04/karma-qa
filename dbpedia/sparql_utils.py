@@ -71,4 +71,6 @@ def escape_sparql_uri(uri: str) -> str:
         .replace("{", "%7B")
         .replace("}", "%7D")
         .replace("\n", "%0A")
-        .replace("\r", "%0D"))
+        .replace("\r", "%0D")
+        .replace("'", "%27")
+        .replace("?", "%3F"))

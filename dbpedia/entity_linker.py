@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from typing import Optional
 
 import httpx
@@ -35,6 +36,20 @@ _MENTION_BLOCKLIST = frozenset({
     "first", "last", "born", "died", "older", "younger",
     "earlier", "later", "more", "fewer", "same", "different",
     "performer", "publisher", "composer", "musician",
+})
+
+# Keywords that precede entity titles in benchmark questions.
+# Used to extract "song Aren'T You Kind Of Glad We Did?" → entity name.
+_TITLE_KEYWORDS = frozenset({
+    "song", "film", "movie", "book", "novel", "album",
+    "series", "show", "play", "opera", "poem", "painting",
+})
+
+# Lowercase words allowed inside Title Cased entity names.
+_TITLE_CONNECTORS = frozenset({
+    "of", "the", "a", "an", "in", "on", "at", "to", "for",
+    "and", "or", "du", "le", "la", "el", "de", "von", "van",
+    "di", "des", "les", "un", "et", "vs", "as", "by", "no",
 })
 
 # Maps question keywords to the type of SUBJECT entities being compared.
@@ -80,6 +95,9 @@ _TYPE_SUFFIX_MAP = {
     'dbo:MusicalWork': 'album',
     'dbo:Country': 'country',
     'dbo:Company': 'company',
+    'dbo:Person': 'person',
+    'dbo:MusicalArtist': 'musician',
+    'dbo:City': 'city',
 }
 
 
@@ -119,30 +137,124 @@ class DBpediaEntityLinker:
         """
         doc = _nlp(question)
         mentions: list[str] = []
+        # Track possessor-derived mentions so they survive substring removal.
+        # "Dr. Dre's real name" → possessor "Dr. Dre" is a better entity
+        # candidate than the full noun chunk.
+        possessor_derived: set[str] = set()
 
-        # Quoted strings
-        mentions.extend(re.findall(r'"([^"]+)"', question))
+        # Quoted strings (ASCII and curly double quotes)
+        mentions.extend(re.findall(r'["\u201C]([^"\u201D]+)["\u201D]', question))
 
-        # Noun chunks with stopword stripping
+        # Noun chunks with stopword stripping + possessive splitting
         for chunk in doc.noun_chunks:
             words = chunk.text.split()
+            original_words = list(words)
             while words and words[0].lower() in _STRIP_WORDS:
                 words.pop(0)
             text = " ".join(words).strip()
-            if text:
-                mentions.append(text)
+            stripping_occurred = len(words) < len(original_words)
+
+            if not words:
+                # Stripping removed all words — entity might start with strip word
+                text_original = " ".join(original_words).strip()
+                if text_original and len(text_original) > 1:
+                    mentions.append(text_original)
+                continue
+
+            mentions.append(text)
+            # When stripping removed leading words, also keep the original in case
+            # the article/preposition is part of the entity name (e.g. "The Who",
+            # "A Clockwork Orange", "The Band").
+            if stripping_occurred:
+                text_original = " ".join(original_words).strip()
+                if text_original.lower() != text.lower() and len(text_original) > 1:
+                    mentions.append(text_original)
+            # Split at possessive "'s" to extract the possessor as a
+            # separate mention (e.g., "Dr. Dre's real name" → "Dr. Dre")
+            poss_match = re.match(r"^(.+?)[''\u2019]s\b", text)
+            if poss_match:
+                possessor = poss_match.group(1).strip()
+                if possessor and len(possessor) > 1:
+                    mentions.append(possessor)
+                    possessor_derived.add(possessor.lower())
 
         # Named entities (skip numeric types)
         # Split on " or " for bridge_comparison patterns ("X or Y?")
+        # NOTE: don't split on "and" — it's common inside titles
+        # ("Angel And The Badman", "Joseph And The Amazing...").
         for ent in doc.ents:
             if ent.label_ not in ("CARDINAL", "ORDINAL", "QUANTITY", "PERCENT"):
                 if " or " in ent.text:
-                    for part in ent.text.split(" or "):
-                        part = part.strip()
-                        if part:
-                            mentions.append(part)
+                    parts = ent.text.split(" or ")
                 else:
-                    mentions.append(ent.text)
+                    parts = [ent.text]
+                for part in parts:
+                    part = part.strip()
+                    # Strip trailing "or" that spaCy sometimes leaves on
+                    # entity spans in comparison questions.
+                    # e.g. "The Singing Fool or" → "The Singing Fool"
+                    # Only strip "or" — other connectors (and, in, the, of)
+                    # can legitimately end titles ("The Girl In", "Joseph And").
+                    ent_words = part.split()
+                    while ent_words and ent_words[-1].lower() == "or":
+                        ent_words.pop()
+                    part = " ".join(ent_words).strip()
+                    if part:
+                        mentions.append(part)
+
+        # Title-after-keyword extraction: "song Aren'T You Kind Of Glad We
+        # Did?" → extract entity name by following capitalized words after
+        # a title keyword (song, film, book, etc.). Handles entity names
+        # with special chars that spaCy/Spotlight miss.
+        words = question.split()
+        for i, w in enumerate(words):
+            if w.lower().rstrip(".,?!:;") in _TITLE_KEYWORDS and i + 1 < len(words):
+                nxt = words[i + 1]
+                first_char = nxt.lstrip("'\"(\u2018\u201C")[:1]
+                if not first_char or not first_char.isupper():
+                    continue
+                # Collect Title Cased sequence. Connectors (of, the, and,
+                # or...) are only included if the NEXT word is capitalized
+                # — prevents "Inception or the" from leaking past the entity.
+                title_words = []
+                j = i + 1
+                while j < len(words):
+                    word = words[j]
+                    clean = word.lstrip("'\"(\u2018\u201C").rstrip(".,;")
+                    if not clean:
+                        break
+                    first = clean[0]
+                    if first.isupper():
+                        title_words.append(word)
+                        j += 1
+                    elif clean.lower() in _TITLE_CONNECTORS:
+                        # Look past consecutive connectors for a capitalized word
+                        k = j + 1
+                        found_upper = False
+                        while k < len(words):
+                            peek_word = words[k].lstrip("'\"\u2018\u201C(")
+                            peek_clean = peek_word.rstrip(".,;")
+                            if not peek_clean:
+                                break
+                            if peek_clean[0].isupper():
+                                # Found uppercase after connector chain → include all connectors
+                                for ci in range(j, k):
+                                    title_words.append(words[ci])
+                                found_upper = True
+                                j = k  # advance j to the capitalized word (next iter appends it)
+                                break
+                            elif peek_clean.lower() in _TITLE_CONNECTORS:
+                                k += 1
+                                continue
+                            else:
+                                break
+                        if not found_upper:
+                            break
+                    else:
+                        break
+                if len(title_words) >= 1:
+                    title = " ".join(title_words).rstrip(".,;")
+                    mentions.append(title)
 
         # Deduplicate case-insensitively, filter blocklisted words
         seen: set[str] = set()
@@ -155,11 +267,15 @@ class DBpediaEntityLinker:
                 seen.add(key)
                 unique.append(m)
 
-        # Remove substring mentions
+        # Remove substring mentions, but keep possessor-derived mentions
+        # even if they're substrings (they're more precise entity candidates).
         final: list[str] = []
         for m in unique:
-            if not any(
-                m.lower() != o.lower() and m.lower() in o.lower()
+            m_lower = m.lower()
+            if m_lower in possessor_derived:
+                final.append(m)  # always keep possessor-derived
+            elif not any(
+                m_lower != o.lower() and m_lower in o.lower()
                 for o in unique
             ):
                 final.append(m)
@@ -301,11 +417,11 @@ class DBpediaEntityLinker:
         unlinked: list[str] = []
 
         for mention in mentions:
-            m_lower = mention.lower().strip()
+            m_lower = unicodedata.normalize("NFC", mention.lower().strip())
             m_words = set(m_lower.split())
             matched = False
             for sf in surface_forms:
-                sf_lower = sf.lower().strip()
+                sf_lower = unicodedata.normalize("NFC", sf.lower().strip())
                 sf_words = set(sf_lower.split())
                 # Jaccard similarity
                 intersection = m_words & sf_words
@@ -314,7 +430,11 @@ class DBpediaEntityLinker:
                 # Substring: mention IN surface_form is a match,
                 # but surface_form IN mention is a MISLINK (partial match)
                 mention_in_sf = m_lower in sf_lower
-                if jaccard >= 0.5 or mention_in_sf:
+                sf_in_mention = sf_lower in m_lower and sf_lower != m_lower
+                if mention_in_sf:
+                    matched = True
+                    break
+                if jaccard >= 0.5 and not sf_in_mention:
                     matched = True
                     break
             if not matched:
