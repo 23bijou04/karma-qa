@@ -101,6 +101,20 @@ _TYPE_SUFFIX_MAP = {
     'dbo:City': 'city',
 }
 
+# Disambiguation suffixes to probe via SPARQL ASK (priority order).
+# DBpedia uses parenthetical suffixes: dbr:Being_Human_(TV_series),
+# dbr:1984_(novel). Persons rarely have suffixes, so empty list.
+_URI_PROBE_SUFFIXES: dict[str, list[str]] = {
+    'dbo:Film': ['film', 'movie'],
+    'dbo:Book': ['novel', 'book'],
+    'dbo:MusicalWork': ['song', 'album'],
+    'dbo:MusicalArtist': ['band', 'musician'],
+    'dbo:Person': [],
+    'dbo:Country': ['country'],
+    'dbo:Company': ['company'],
+    'dbo:City': ['city'],
+}
+
 
 class DBpediaEntityLinker:
     """Entity linker using DBpedia Spotlight with SPARQL fallback."""
@@ -376,27 +390,16 @@ class DBpediaEntityLinker:
             except Exception:
                 pass  # can't verify, try fallback
 
-            # Direct URI probe: try dbr:Name_(type) pattern before text search.
-            # DBpedia uses this for disambiguation (e.g., Thomas_Jefferson_(film)).
-            probe_local = entity.label.replace(' ', '_')
-            # DBpedia URIs always capitalize the first letter (MediaWiki convention)
-            if probe_local and probe_local[0].islower():
-                probe_local = probe_local[0].upper() + probe_local[1:]
-            probe_uri = f"http://dbpedia.org/resource/{probe_local}_({suffix})"
-            try:
-                probe_types = self.sparql_client.get_entity_types(probe_uri)
-                type_short = expected_type.replace('dbo:', '')
-                if any(type_short in t for t in probe_types):
-                    logger.info(
-                        f"URI probe hit: '{entity.label}' -> {probe_uri}"
-                    )
-                    validated.append(Entity(
-                        uri=probe_uri, label=entity.label,
-                        source="type_corrected",
-                    ))
-                    continue
-            except Exception:
-                pass  # probe failed, fall through to search
+            # Direct URI probe using shared helper (e.g., Thomas_Jefferson_(film))
+            base_uri = self._construct_dbpedia_uri(entity.label)
+            probe_uri = f"{base_uri}_({suffix})"
+            probed = self._probe_single_uri(probe_uri, expected_type)
+            if probed:
+                logger.info(f"URI probe hit: '{entity.label}' -> {probe_uri}")
+                probed.label = entity.label
+                probed.source = "type_corrected"
+                validated.append(probed)
+                continue
 
             # Type mismatch: search with cleaned phrase + type suffix
             search_query = f"{clean_obj} {suffix}" if clean_obj else f"{obj_phrase} {suffix}"
@@ -457,6 +460,81 @@ class DBpediaEntityLinker:
                 unlinked.append(mention)
 
         return unlinked
+
+    # ------------------------------------------------------------------
+    # Direct URI construction probe
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _construct_dbpedia_uri(mention: str) -> str:
+        """Convert a mention string to a DBpedia resource URI.
+
+        Preserves original casing from spaCy NER (DBpedia URIs are
+        case-sensitive and follow MediaWiki conventions). First letter
+        is always uppercased.
+        """
+        local = mention.strip().rstrip(".,;:!?").replace(" ", "_")
+        if local and local[0].islower():
+            local = local[0].upper() + local[1:]
+        return f"http://dbpedia.org/resource/{local}"
+
+    def _probe_single_uri(self, uri: str, type_hint: str | None) -> Entity | None:
+        """Probe a single URI: check existence, follow redirects, verify type.
+
+        Shared by both _probe_uri_variants() and _validate_entity_types().
+        Returns a validated Entity or None.
+        """
+        if not self.sparql_client.ask_entity_exists(uri):
+            return None
+
+        # Check redirect/disambiguation status
+        check = self.sparql_client.validate_entity_uri(uri)
+        if check["is_disambiguation"]:
+            return None
+        if check["redirect_target"]:
+            uri = check["redirect_target"]
+
+        # Verify type if hint provided
+        if type_hint:
+            type_short = type_hint.replace("dbo:", "")
+            try:
+                types = self.sparql_client.get_entity_types(uri)
+                if not any(type_short in t for t in types):
+                    return None
+            except Exception:
+                return None
+
+        return Entity(uri=uri, label="", source="uri_probe")
+
+    def _probe_uri_variants(
+        self, mention: str, type_hint: str | None,
+    ) -> Entity | None:
+        """Probe DBpedia URI naming conventions for a mention.
+
+        Cascade (max ~3-4 ASK queries):
+          1. Plain URI: dbr:{Mention_Text}
+          2. Type-suffixed: dbr:{Mention_Text}_(film), etc.
+        Returns first validated Entity or None.
+        """
+        base_uri = self._construct_dbpedia_uri(mention)
+
+        # 1. Plain URI probe
+        result = self._probe_single_uri(base_uri, type_hint)
+        if result:
+            result.label = mention
+            return result
+
+        # 2. Type-suffixed probes (only when type hint available)
+        if type_hint:
+            suffixes = _URI_PROBE_SUFFIXES.get(type_hint, [])
+            for suffix in suffixes:
+                suffixed_uri = f"{base_uri}_({suffix})"
+                result = self._probe_single_uri(suffixed_uri, type_hint)
+                if result:
+                    result.label = mention
+                    return result
+
+        return None
 
     # ------------------------------------------------------------------
     # LLM-based candidate disambiguation
@@ -655,6 +733,24 @@ class DBpediaEntityLinker:
             reranker = self._build_reranker(q_ctx) if self.llm_client else None
 
             for mention in unlinked:
+                # Layer 1: Direct URI probe (fast SPARQL ASK, ~150ms)
+                probed = self._probe_uri_variants(mention, type_hint)
+                if probed and probed.uri not in existing_uris:
+                    logger.info(
+                        f"URI probe resolved '{mention}' -> {probed.uri}"
+                    )
+                    # Replace low-confidence Spotlight entity for same mention
+                    mention_lower = mention.lower().strip()
+                    entities = [
+                        e for e in entities
+                        if not (e in low_conf
+                                and e.label.lower().strip() == mention_lower)
+                    ]
+                    entities.append(probed)
+                    existing_uris.add(probed.uri)
+                    continue
+
+                # Layer 2: bif:contains fulltext search (existing)
                 found = self.sparql_client.search_entity_by_name(
                     mention, entity_type=type_hint, reranker=reranker,
                 )
