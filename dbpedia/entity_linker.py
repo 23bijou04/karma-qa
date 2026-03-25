@@ -13,6 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from ..models import Entity
 from .cache import CacheManager
 from .client import DBpediaSPARQLClient
+from .wiki_resolver import WikipediaResolver
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ class DBpediaEntityLinker:
         high_confidence_threshold: float = 0.7,
         llm_client=None,
         llm_model: str = "llama-3.3-70b-versatile",
+        wiki_resolver: Optional[WikipediaResolver] = None,
     ):
         self.spotlight_endpoint = spotlight_endpoint
         self.sparql_client = sparql_client or DBpediaSPARQLClient()
@@ -140,6 +142,7 @@ class DBpediaEntityLinker:
         self.high_confidence_threshold = high_confidence_threshold
         self.llm_client = llm_client  # OpenAI-compatible client for disambiguation
         self.llm_model = llm_model
+        self.wiki_resolver = wiki_resolver
         self._http_client = httpx.Client(timeout=30.0)
 
     def __del__(self):
@@ -767,6 +770,45 @@ class DBpediaEntityLinker:
                     ]
                     entities.append(found)
                     existing_uris.add(found.uri)
+                    continue
+
+                # Layer 3: Wikipedia search + redirect resolution (last resort)
+                if self.wiki_resolver:
+                    wiki_uris = self.wiki_resolver.resolve_to_dbpedia_uris(
+                        mention, type_hint
+                    )
+                    wiki_candidates = []
+                    for uri in wiki_uris:
+                        if uri not in existing_uris:
+                            try:
+                                if self.sparql_client.ask_entity_exists(uri):
+                                    wiki_candidates.append(
+                                        Entity(uri=uri, label=mention,
+                                               source="wiki_resolve")
+                                    )
+                            except Exception:
+                                pass
+                    if wiki_candidates:
+                        if len(wiki_candidates) == 1:
+                            wiki_found = wiki_candidates[0]
+                        elif reranker:
+                            wiki_found = reranker(mention, wiki_candidates)
+                            if wiki_found is None:
+                                wiki_found = wiki_candidates[0]
+                        else:
+                            wiki_found = wiki_candidates[0]
+                        if wiki_found and wiki_found.uri not in existing_uris:
+                            logger.info(
+                                f"Wiki resolve resolved '{mention}' -> {wiki_found.uri}"
+                            )
+                            mention_lower = mention.lower().strip()
+                            entities = [
+                                e for e in entities
+                                if not (e in low_conf
+                                        and e.label.lower().strip() == mention_lower)
+                            ]
+                            entities.append(wiki_found)
+                            existing_uris.add(wiki_found.uri)
 
         # Fallback: if nothing found at all, try old SPARQL label fallback
         if not entities:

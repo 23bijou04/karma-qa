@@ -27,7 +27,7 @@ _parent = os.path.dirname(PROJECT_ROOT)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery, WikipediaResolver
 from dbpedia_qa.models import extract_final_answer
 
 from llm_provider import create_llm_client
@@ -169,6 +169,7 @@ def main():
         sys.exit(1)
     linker = DBpediaEntityLinker(
         min_confidence=0.5, llm_client=llm_client, llm_model=args.model,
+        wiki_resolver=WikipediaResolver(),
     )
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()

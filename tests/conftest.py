@@ -58,6 +58,7 @@ def linker_no_network(mock_sparql_client):
     linker.high_confidence_threshold = 0.7
     linker.llm_client = None
     linker.llm_model = "llama-3.3-70b-versatile"
+    linker.wiki_resolver = None
     return linker
 
 
