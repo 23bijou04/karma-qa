@@ -18,7 +18,7 @@ fallback) results are in the JSON output. Run on 2026-03-11.
 **Phase 1 — Offline check** (no API calls):
 1. **DBpedia property coverage**: From pre-computed `coverage_analysis_1000.json`
    — checks if the evidence property exists as a structured DBpedia property.
-   *Note (2026-03-25)*: Live verification found the original PROPERTY_MAP understated coverage — corrected property coverage is 42.2% (422/1000), not 38.5%. This affects Phase 1 DBpedia counts: ~81 additional hops have DBpedia properties under alternative predicates (e.g., `dbp:country` for "country of origin"). See `plans/reports/verify-260325-1500-coverage-consolidated.md`.
+   *Note (2026-03-25)*: Hop-by-hop verification against live DBpedia found 36.8% (368/1000) of questions have all required predicates at every hop; 31.8% (318/1000) are fully chain-traversable (date-tolerant). The original PROPERTY_MAP understated coverage; the hop verification is now the ground truth. Source: `data/eval_1000q/hop_verification_results.json`, script: `scripts/verify_hop_coverage.py`.
 2. **Benchmark context check**: The 2WikiMultiHopQA benchmark provides curated
    Wikipedia paragraph excerpts per question (10 paragraphs each). For each
    evidence hop `(entity, property, value)`, we first check the paragraph

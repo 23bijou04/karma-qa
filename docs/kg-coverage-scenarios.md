@@ -14,13 +14,15 @@ and context assembly.
 **Data source:** `data/eval_1000q/scenario_classification_1000.json` (1000 questions from
 2WikiMultiHopQA, classified by `scripts/classify_1000q_scenarios.py`).
 
+> **Note (2026-03-25):** The counts below are from the original property-existence analysis (narrow PROPERTY_MAP). Hop-by-hop verification (`data/eval_1000q/hop_verification_results.json`) gives more rigorous numbers: 368/1000 (36.8%) have all predicates at every hop, 318/1000 (31.8%) are fully chain-traversable (date-tolerant). The scenario table has not been regenerated from hop verification data.
+
 ---
 
 ## Overview
 
 | Scenario | Label | Count | % | Description |
 |----------|-------|------:|---:|-------------|
-| **A** | KG_COMPLETE | 346 | 34.6 | Both hops have structured KG properties |
+| **A** | KG_COMPLETE | 346 | 34.6 | Both hops have structured KG properties (original analysis; hop-verified: 368) |
 | **B** | HOP1_MISSING | 304 | 30.4 | Seed exists, hop-1 property missing |
 | **C** | HOP2_MISSING | 158 | 15.8 | Hop-1 works, bridge entity missing hop-2 property |
 | **D** | BOTH_HOPS_MISSING | 128 | 12.8 | Both seed and bridge missing their needed properties |
@@ -51,7 +53,7 @@ and context assembly.
 
 ---
 
-## Scenario A: KG-Complete (346 questions, 34.6%)
+## Scenario A: KG-Complete (346 original / 368 hop-verified / 318 chain-traversable)
 
 **Definition:** Both the seed entity's hop-1 property and the bridge entity's hop-2 property
 exist as structured triples in DBpedia. The full SPARQL chain can resolve end-to-end.

@@ -25,7 +25,7 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 - `baselines/LinearRAG/` — LinearRAG baseline (self-contained)
 - `tests/` — Unit tests for routing, schema, decomposition, etc.
 
-**Data:** 12,576 questions total, 1,000-question eval subset (346 answerable).
+**Data:** 12,576 questions total, 1,000-question eval subset (318 KG-answerable via hop verification, date-tolerant; evaluations ran on original 346-question set).
 
 **Baselines:** SPARQL-only, GRASP (external), LinearRAG, Hybrid (ours).
 

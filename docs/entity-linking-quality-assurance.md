@@ -65,9 +65,9 @@ pytest -m stress
 
 **Scope**: Entity linking impact on 2WikiMultiHopQA benchmark (1,000 question eval set).
 
-- 1,000 question evaluation set (346 answerable)
+- 1,000 question evaluation set (318 KG-answerable via hop verification, date-tolerant)
 - Entity coverage analysis: 93.6% of questions have resolvable entities (verified 2026-03-25: 248/248 sampled confirmed live, 65/65 missing confirmed absent)
-- Property coverage analysis: 42.2% of required relations present in DBpedia (corrected from original 38.5% after live verification found incomplete predicate mapping — see verification report)
+- Property coverage analysis: 36.8% (368/1000) of questions have all required predicates at every hop (hop-verified against live DBpedia). Chain-traversable (date-tolerant): 31.8% (318/1000). Source: `data/eval_1000q/hop_verification_results.json`
 - Answerability classification by KG coverage scenario
 
 ---
@@ -276,8 +276,9 @@ Failures block PR merge until resolved (P0 immediately, P1 within sprint).
 | Metric | Value | Status |
 |--------|-------|--------|
 | Entity coverage (1000q) | 93.6% | Verified 2026-03-25 (100% accuracy on live DBpedia) |
-| Property coverage (1000q) | 42.2% | Corrected from 38.5% after expanded predicate verification |
-| Answerability (1000q) | 34.6% (346/1000) | Based on original mapping; ~37-38% with corrected predicates |
+| Property coverage (1000q) | 36.8% (368/1000) | Hop-verified: all predicates exist at every hop (`hop_verification_results.json`) |
+| KG-answerable (1000q) | 31.8% (318/1000) | Date-tolerant chain traversal (`scripts/verify_hop_coverage.py`) |
+| KG-answerable strict (1000q) | 11.9% (119/1000) | Strict value match — low due to date format mismatch (xsd:date vs text) |
 
 ---
 

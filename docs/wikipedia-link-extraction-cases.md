@@ -26,7 +26,7 @@ describe HOW the pipeline fails — a complementary but distinct taxonomy.
 
 | Scenario | Label | Count | % | Representative Case |
 |----------|-------|------:|----:|---------------------|
-| **A** | KG_COMPLETE | 346 | 34.6% | _(SPARQL works end-to-end)_ |
+| **A** | KG_COMPLETE | 346 | 34.6% | _(original analysis; hop-verified: 368 predicate-complete, 318 chain-traversable)_ |
 | **B** | HOP1_MISSING | 304 | 30.4% | Case 1 (Katka), Case 2 (Bea Ballard) |
 | **C** | HOP2_MISSING | 158 | 15.8% | Case 5 (My Three Merry Widows) |
 | **D** | BOTH_HOPS_MISSING | 128 | 12.8% | Case 3 (Consort Liang) |
