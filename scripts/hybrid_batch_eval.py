@@ -32,6 +32,20 @@ from dbpedia_qa.models import extract_final_answer
 
 from llm_provider import create_llm_client
 
+# Per-question timeout (seconds). Prevents a single degraded-service question
+# from blocking the entire batch run. 5 minutes is generous — typical questions
+# complete in 10-60s; anything beyond 5 min indicates a stuck service.
+QUESTION_TIMEOUT = 300
+
+
+class _QuestionTimeout(Exception):
+    """Raised when a question exceeds QUESTION_TIMEOUT seconds."""
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise _QuestionTimeout(f"Question exceeded {QUESTION_TIMEOUT}s timeout")
+
 # Load metrics directly to avoid evaluation/__init__.py heavy imports
 _spec = importlib.util.spec_from_file_location(
     "metrics", os.path.join(PROJECT_ROOT, "evaluation", "metrics.py")
@@ -207,6 +221,9 @@ def main():
             "is_answerable": is_answerable,
         }
 
+        # Set per-question timeout to prevent indefinite blocking
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(QUESTION_TIMEOUT)
         try:
             result = hybrid_answer(
                 question, args.api_key, model=args.model,
@@ -226,6 +243,18 @@ def main():
             record["debug_info"] = getattr(result, "debug_info", {})
             record["has_hedging"] = bool(_HEDGE_RE.search(record["raw_answer"]))
             record["error"] = ""
+        except _QuestionTimeout:
+            record["raw_answer"] = ""
+            record["predicted_answer"] = ""
+            record["method"] = "timeout"
+            record["route_source"] = ""
+            record["sparql_fallback"] = False
+            record["sparql_query"] = ""
+            record["kg_context"] = ""
+            record["debug_info"] = {}
+            record["has_hedging"] = False
+            record["error"] = f"Timeout after {QUESTION_TIMEOUT}s"
+            print(f"  !! TIMEOUT after {QUESTION_TIMEOUT}s, skipping")
         except Exception:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
@@ -237,6 +266,9 @@ def main():
             record["debug_info"] = {}
             record["has_hedging"] = False
             record["error"] = traceback.format_exc()
+        finally:
+            signal.alarm(0)  # Cancel any pending alarm
+            signal.signal(signal.SIGALRM, old_handler)
 
         # Compute metrics
         pred = record["predicted_answer"]

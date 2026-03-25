@@ -19,6 +19,47 @@ logger = logging.getLogger(__name__)
 
 _nlp = spacy.load("en_core_web_sm")
 
+
+# Circuit breaker for Spotlight API — skip quickly after repeated failures
+# instead of wasting ~93s (3 retries × 30s timeout) per question.
+# Reuses the same pattern as graphrag_wiki._CircuitBreaker for DuckDuckGo.
+class _SpotlightCircuitBreaker:
+    """Lightweight circuit breaker for Spotlight API."""
+
+    def __init__(self, threshold: int = 3, cooldown: float = 120.0):
+        self._failures = 0
+        self._threshold = threshold
+        self._tripped_at: float | None = None
+        self._cooldown = cooldown
+
+    def is_open(self) -> bool:
+        if self._tripped_at is None:
+            return False
+        import time
+        if time.time() - self._tripped_at >= self._cooldown:
+            self._failures = 0
+            self._tripped_at = None
+            return False
+        return True
+
+    def record_failure(self):
+        self._failures += 1
+        if self._failures >= self._threshold:
+            import time
+            self._tripped_at = time.time()
+            logger.warning(
+                "Spotlight circuit breaker tripped after %d failures, "
+                "cooldown %.0fs", self._threshold, self._cooldown,
+            )
+
+    def record_success(self):
+        self._failures = 0
+        self._tripped_at = None
+
+
+# Module-level singleton — shared across all DBpediaEntityLinker instances
+_spotlight_cb = _SpotlightCircuitBreaker(threshold=3, cooldown=120.0)
+
 # Words to strip from the front of noun chunks
 _STRIP_WORDS = frozenset({
     "who", "what", "when", "where", "which", "how", "why",
@@ -693,19 +734,24 @@ class DBpediaEntityLinker:
 
         entities: list[Entity] = []
 
-        # Step 1: Spotlight
-        try:
-            result = self._call_spotlight(text)
-            resources = result.get("Resources", [])
-            for resource in resources:
-                entities.append(Entity(
-                    uri=resource["@URI"],
-                    label=resource["@surfaceForm"],
-                    confidence=float(resource.get("@similarityScore", 0.5)),
-                    source="spotlight",
-                ))
-        except Exception as e:
-            logger.warning(f"Spotlight failed: {e}")
+        # Step 1: Spotlight (with module-level circuit breaker to skip when down)
+        if _spotlight_cb.is_open():
+            logger.info("Spotlight circuit breaker open, skipping to spaCy fallback")
+        else:
+            try:
+                result = self._call_spotlight(text)
+                resources = result.get("Resources", [])
+                for resource in resources:
+                    entities.append(Entity(
+                        uri=resource["@URI"],
+                        label=resource["@surfaceForm"],
+                        confidence=float(resource.get("@similarityScore", 0.5)),
+                        source="spotlight",
+                    ))
+                _spotlight_cb.record_success()
+            except Exception as e:
+                logger.warning(f"Spotlight failed: {e}")
+                _spotlight_cb.record_failure()
 
         # Post-hoc type validation: if we can infer the expected type from the
         # question context, check Spotlight entities against it. If a Spotlight

@@ -30,7 +30,7 @@ _last_solve_meta: dict = {}
 # ---------------------------------------------------------------------------
 
 _WRITE_OPS = re.compile(
-    r'\b(INSERT|DELETE|DROP|CLEAR|CREATE|LOAD|COPY|MOVE|ADD)\b',
+    r'\b(INSERT|DELETE|DROP|CLEAR|CREATE|LOAD|COPY|MOVE|ADD|SERVICE)\b',
     re.IGNORECASE,
 )
 
