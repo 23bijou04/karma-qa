@@ -3,6 +3,7 @@
 import logging
 import re
 import unicodedata
+from collections.abc import Callable
 from typing import Optional
 
 import httpx
@@ -114,6 +115,8 @@ class DBpediaEntityLinker:
         # Entities below this threshold still enter the pipeline but don't
         # block the unlinked resolution loop from re-resolving the same mention.
         high_confidence_threshold: float = 0.7,
+        llm_client=None,
+        llm_model: str = "llama-3.3-70b-versatile",
     ):
         self.spotlight_endpoint = spotlight_endpoint
         self.sparql_client = sparql_client or DBpediaSPARQLClient()
@@ -121,6 +124,8 @@ class DBpediaEntityLinker:
         self.min_confidence = min_confidence
         self.min_support = min_support
         self.high_confidence_threshold = high_confidence_threshold
+        self.llm_client = llm_client  # OpenAI-compatible client for disambiguation
+        self.llm_model = llm_model
         self._http_client = httpx.Client(timeout=30.0)
 
     def __del__(self):
@@ -424,7 +429,11 @@ class DBpediaEntityLinker:
         unlinked: list[str] = []
 
         for mention in mentions:
-            m_lower = unicodedata.normalize("NFC", mention.lower().strip())
+            # Strip trailing punctuation that leaks from question text
+            # (e.g. "Lincoln." fails matching without this)
+            m_lower = unicodedata.normalize(
+                "NFC", mention.lower().strip().rstrip(".,;:!?"),
+            )
             m_words = set(m_lower.split())
             matched = False
             for sf in surface_forms:
@@ -449,6 +458,113 @@ class DBpediaEntityLinker:
 
         return unlinked
 
+    # ------------------------------------------------------------------
+    # LLM-based candidate disambiguation
+    # ------------------------------------------------------------------
+
+    def _llm_rerank_candidates(
+        self, question: str, mention: str, candidates: list[Entity],
+    ) -> Entity | None:
+        """Ask LLM to pick the best candidate entity for a mention.
+
+        Enriches each candidate with types and abstract (first sentence),
+        then asks the LLM to select the best match given the question context.
+
+        Returns the selected Entity, or None on any failure (caller falls
+        back to heuristic scoring).
+        """
+        # Lazy import cached on instance to avoid circular dependency
+        # (entity_linker is inside dbpedia package; llm_provider is top-level)
+        if not hasattr(self, "_call_llm"):
+            import importlib
+            self._call_llm = importlib.import_module("llm_provider").call_llm
+        call_llm = self._call_llm
+
+        # Enrich candidates with types + first-sentence abstract
+        enriched = []
+        for c in candidates:
+            try:
+                details = self.sparql_client.get_entity_by_uri(c.uri)
+            except Exception:
+                details = None
+            types_str = ""
+            abstract_str = ""
+            if details:
+                # Filter to dbo: types only, extract local names
+                dbo_types = [
+                    t.split("/")[-1] for t in (details.types or [])
+                    if "dbpedia.org/ontology/" in t
+                ]
+                types_str = ", ".join(dbo_types[:5]) if dbo_types else "unknown"
+                if details.abstract:
+                    # First sentence only (keep prompt small)
+                    first_sent = details.abstract.split(". ")[0]
+                    abstract_str = first_sent[:200]
+            enriched.append({
+                "entity": c,
+                "label": details.label if details else c.label,
+                "types": types_str or "unknown",
+                "abstract": abstract_str or "no description",
+            })
+
+        # Build numbered candidate list for the prompt
+        lines = []
+        for i, info in enumerate(enriched, 1):
+            lines.append(
+                f"{i}. {info['label']} (types: {info['types']}) "
+                f"- {info['abstract']}"
+            )
+        candidate_list = "\n".join(lines)
+
+        prompt = (
+            f'Given this question: "{question}"\n'
+            f'Which entity best matches the mention "{mention}"?\n\n'
+            f"{candidate_list}\n\n"
+            f"Reply with ONLY the number (1-{len(enriched)}) of the best "
+            f'match, or "none" if no candidate fits.'
+        )
+
+        try:
+            response = call_llm(
+                self.llm_client, prompt, self.llm_model,
+                max_tokens=10, temperature=0, max_attempts=2,
+            )
+        except Exception as e:
+            logger.warning(f"LLM reranking failed: {e}")
+            return None
+
+        # Parse response: try number first, then check for "none"
+        response = response.strip().lower()
+        match = re.search(r"(\d+)", response)
+        if not match:
+            # No number found — check for explicit "none" rejection
+            if "none" in response:
+                return None
+            logger.warning(f"LLM reranker unparseable response: {response!r}")
+            return None
+        idx = int(match.group(1))
+        if 1 <= idx <= len(enriched):
+            selected = enriched[idx - 1]["entity"]
+            logger.info(
+                f"LLM reranker selected #{idx} '{enriched[idx - 1]['label']}' "
+                f"for mention '{mention}'"
+            )
+            return selected
+        logger.warning(f"LLM reranker index {idx} out of range [1-{len(enriched)}]")
+        return None
+
+    def _build_reranker(
+        self, question: str,
+    ) -> Callable[[str, list[Entity]], Entity | None]:
+        """Create a reranker callback that closes over the LLM client + question.
+
+        The callback signature matches what client.py expects:
+          reranker(mention: str, candidates: list[Entity]) -> Entity | None
+        """
+        def reranker(mention: str, candidates: list[Entity]) -> Entity | None:
+            return self._llm_rerank_candidates(question, mention, candidates)
+        return reranker
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, max=10))
     def _call_spotlight(self, text: str) -> dict:
         """Call DBpedia Spotlight API."""
@@ -469,7 +585,9 @@ class DBpediaEntityLinker:
             logger.warning(f"Spotlight API error: {e}")
             raise
 
-    def link_entities(self, text: str, use_cache: bool = True) -> list[Entity]:
+    def link_entities(
+        self, text: str, use_cache: bool = True, question: str | None = None,
+    ) -> list[Entity]:
         """Extract and link entities from text using Spotlight + bif:contains.
 
         Cascade:
@@ -481,6 +599,7 @@ class DBpediaEntityLinker:
         Args:
             text: Input text to extract entities from
             use_cache: Whether to use cached results
+            question: Original question text for LLM disambiguation context
 
         Returns:
             List of linked Entity objects (every entity has a resolved URI)
@@ -531,9 +650,13 @@ class DBpediaEntityLinker:
                 type_hint = self._extract_type_hint(text)
             existing_uris = {e.uri for e in entities}
 
+            # Build reranker callback if LLM client is available
+            q_ctx = question or text
+            reranker = self._build_reranker(q_ctx) if self.llm_client else None
+
             for mention in unlinked:
                 found = self.sparql_client.search_entity_by_name(
-                    mention, entity_type=type_hint
+                    mention, entity_type=type_hint, reranker=reranker,
                 )
                 if found and found.uri not in existing_uris:
                     logger.info(

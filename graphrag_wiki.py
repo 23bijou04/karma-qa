@@ -128,7 +128,7 @@ def link_entities_to_dbpedia(question: str,
     Spotlight -> spaCy mention extraction -> bif:contains fallback.
     Every returned entity has a resolved URI (no more Entity(uri="")).
     """
-    return linker.link_entities(question)
+    return linker.link_entities(question, question=question)
 
 
 # ---------------------------------------------------------------------------

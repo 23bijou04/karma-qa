@@ -428,8 +428,8 @@ UNLINKED_CASES = [
         id="p3_066_empty_entities", marks=pytest.mark.p3,
     ),
     pytest.param(
-        ["Lincoln."], [("x", "Lincoln", "s")], ["Lincoln."],
-        "trailing period → false positive unlinked",
+        ["Lincoln."], [("x", "Lincoln", "s")], [],
+        "trailing period stripped → now matches correctly",
         id="p2_067_trailing_period", marks=pytest.mark.p2,
     ),
 ]

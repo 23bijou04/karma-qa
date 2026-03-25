@@ -167,7 +167,9 @@ def main():
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
-    linker = DBpediaEntityLinker(min_confidence=0.5)
+    linker = DBpediaEntityLinker(
+        min_confidence=0.5, llm_client=llm_client, llm_model=args.model,
+    )
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
 

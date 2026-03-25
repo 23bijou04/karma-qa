@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any, Optional
 
 from SPARQLWrapper import JSON, SPARQLWrapper
@@ -493,11 +494,19 @@ class DBpediaSPARQLClient:
         self,
         name: str,
         entity_type: Optional[str] = None,
+        reranker: Optional[Callable] = None,
     ) -> Optional[Entity]:
         """Find the best DBpedia entity for a name string.
 
         Cascade: exact label match -> bif:contains fulltext search.
-        Disambiguation: exact label > type match > shortest URI.
+        Disambiguation: exact label > LLM reranker > type match > shortest URI.
+
+        Args:
+            name: Entity name to search for.
+            entity_type: Optional dbo: type hint (e.g. 'dbo:Film').
+            reranker: Optional callback(mention, candidates) -> Entity | None.
+                      Called when >1 candidate exists. If it returns an Entity,
+                      that entity is used; otherwise falls through to heuristics.
         """
         # Step 1: exact match
         exact = self.get_entity_by_label(name)
@@ -531,11 +540,21 @@ class DBpediaSPARQLClient:
 
         # Step 4: disambiguate among valid candidates
         name_lower = name.lower().strip()
-        # Prefer exact label match among candidates
+        # 4a: Prefer exact label match (no LLM needed)
         for c in valid_candidates:
             if c.label.lower().strip() == name_lower:
                 return c
-        # When entity_type is specified, prefer type-matching candidates
+
+        # 4b: LLM reranker — only when >1 candidate and callback provided
+        if len(valid_candidates) > 1 and reranker:
+            try:
+                selected = reranker(name, valid_candidates)
+                if selected:
+                    return selected
+            except Exception as e:
+                logger.warning(f"Reranker failed for '{name}': {e}")
+
+        # 4c: Heuristic fallback — type match among candidates
         if entity_type:
             type_short = entity_type.replace('dbo:', '')
             for c in valid_candidates:
@@ -545,7 +564,7 @@ class DBpediaSPARQLClient:
                         return c
                 except Exception:
                     continue
-        # Fallback: shortest URI (less likely to be a disambiguation/list page)
+        # 4d: Last resort — shortest URI
         return min(valid_candidates, key=lambda e: len(e.uri))
 
     def get_wikipedia_page_id(self, entity_uri: str) -> Optional[str]:

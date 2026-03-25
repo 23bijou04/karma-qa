@@ -55,6 +55,9 @@ def linker_no_network(mock_sparql_client):
     linker.cache = None
     linker.min_confidence = 0.5
     linker.min_support = 5
+    linker.high_confidence_threshold = 0.7
+    linker.llm_client = None
+    linker.llm_model = "llama-3.3-70b-versatile"
     return linker
 
 

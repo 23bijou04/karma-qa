@@ -75,7 +75,9 @@ def hybrid_answer(question: str, api_key: str = None,
         verbose = True
     sep = "=" * 70
     llm_client = llm_client or create_llm_client(provider, api_key=api_key)
-    linker = linker or DBpediaEntityLinker(min_confidence=0.5)
+    linker = linker or DBpediaEntityLinker(
+        min_confidence=0.5, llm_client=llm_client, llm_model=model,
+    )
     kg_client = kg_client or DBpediaSPARQLClient()
     schema_disc = schema_disc or SchemaDiscovery()
     t_start = time.time()
