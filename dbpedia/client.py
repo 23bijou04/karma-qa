@@ -116,6 +116,43 @@ class DBpediaSPARQLClient:
             logger.warning(f"Type query failed for {entity_uri}: {e}")
             return []
 
+    def validate_entity_uri(self, uri: str) -> dict:
+        """Check if a URI is a valid entity (not a redirect stub or disambiguation page).
+
+        Returns dict with:
+          - 'exists': bool — URI has at least one triple
+          - 'redirect_target': str | None — target URI if this is a redirect stub
+          - 'is_disambiguation': bool — True if this is a disambiguation page
+        """
+        safe_uri = escape_sparql_uri(uri)
+        # Single query checks both redirect and disambiguation status
+        query = f"""
+        SELECT ?redirect ?disambig WHERE {{
+            OPTIONAL {{ <{safe_uri}> dbo:wikiPageRedirects ?redirect . }}
+            OPTIONAL {{ <{safe_uri}> dbo:wikiPageDisambiguates ?disambig . }}
+        }}
+        LIMIT 1
+        """
+        try:
+            raw = self.query(query)
+            bindings = raw.get("results", {}).get("bindings", [])
+            if not bindings:
+                # No results — URI might not exist; caller should verify separately
+                return {"exists": True, "redirect_target": None,
+                        "is_disambiguation": False}
+            b = bindings[0]
+            redirect = b.get("redirect", {}).get("value")
+            disambig = b.get("disambig", {}).get("value")
+            return {
+                "exists": True,
+                "redirect_target": redirect,
+                "is_disambiguation": disambig is not None,
+            }
+        except Exception as e:
+            logger.warning(f"URI validation failed for {uri}: {e}")
+            return {"exists": False, "redirect_target": None,
+                    "is_disambiguation": False}
+
     def get_entity_by_label(self, label: str, lang: str = "en") -> Optional[Entity]:
         """Find entity by exact label match."""
         query = f"""
@@ -474,16 +511,34 @@ class DBpediaSPARQLClient:
         if not candidates:
             return None
 
-        # Step 3: disambiguate
+        # Step 3: filter out redirect stubs and disambiguation pages
+        valid_candidates = []
+        for c in candidates:
+            check = self.validate_entity_uri(c.uri)
+            if check["redirect_target"]:
+                # Follow redirect to canonical entity
+                target_uri = check["redirect_target"]
+                logger.debug(f"Redirect: {c.uri} -> {target_uri}")
+                c = Entity(uri=target_uri, label=c.label, source="redirect_resolved")
+            if check["is_disambiguation"]:
+                logger.debug(f"Skipping disambiguation page: {c.uri}")
+                continue
+            valid_candidates.append(c)
+
+        if not valid_candidates:
+            # All candidates were invalid; fall back to original list
+            valid_candidates = candidates
+
+        # Step 4: disambiguate among valid candidates
         name_lower = name.lower().strip()
         # Prefer exact label match among candidates
-        for c in candidates:
+        for c in valid_candidates:
             if c.label.lower().strip() == name_lower:
                 return c
         # When entity_type is specified, prefer type-matching candidates
         if entity_type:
             type_short = entity_type.replace('dbo:', '')
-            for c in candidates:
+            for c in valid_candidates:
                 try:
                     types = self.get_entity_types(c.uri)
                     if any(type_short in t for t in types):
@@ -491,7 +546,7 @@ class DBpediaSPARQLClient:
                 except Exception:
                     continue
         # Fallback: shortest URI (less likely to be a disambiguation/list page)
-        return min(candidates, key=lambda e: len(e.uri))
+        return min(valid_candidates, key=lambda e: len(e.uri))
 
     def get_wikipedia_page_id(self, entity_uri: str) -> Optional[str]:
         """Get Wikipedia page ID for a DBpedia entity."""

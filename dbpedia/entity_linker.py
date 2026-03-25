@@ -111,12 +111,16 @@ class DBpediaEntityLinker:
         cache_manager: Optional[CacheManager] = None,
         min_confidence: float = 0.5,
         min_support: int = 5,
+        # Entities below this threshold still enter the pipeline but don't
+        # block the unlinked resolution loop from re-resolving the same mention.
+        high_confidence_threshold: float = 0.7,
     ):
         self.spotlight_endpoint = spotlight_endpoint
         self.sparql_client = sparql_client or DBpediaSPARQLClient()
         self.cache = cache_manager or CacheManager()
         self.min_confidence = min_confidence
         self.min_support = min_support
+        self.high_confidence_threshold = high_confidence_threshold
         self._http_client = httpx.Client(timeout=30.0)
 
     def __del__(self):
@@ -370,6 +374,9 @@ class DBpediaEntityLinker:
             # Direct URI probe: try dbr:Name_(type) pattern before text search.
             # DBpedia uses this for disambiguation (e.g., Thomas_Jefferson_(film)).
             probe_local = entity.label.replace(' ', '_')
+            # DBpedia URIs always capitalize the first letter (MediaWiki convention)
+            if probe_local and probe_local[0].islower():
+                probe_local = probe_local[0].upper() + probe_local[1:]
             probe_uri = f"http://dbpedia.org/resource/{probe_local}_({suffix})"
             try:
                 probe_types = self.sparql_client.get_entity_types(probe_uri)
@@ -508,8 +515,16 @@ class DBpediaEntityLinker:
             entities = self._validate_entity_types(entities, text, type_hint)
 
         # Step 2: spaCy mention extraction + unlinked detection
+        # Split entities by confidence: only high-confidence Spotlight links
+        # block the unlinked loop. Low-confidence links are kept as fallbacks
+        # but their surface forms don't prevent re-resolution.
         mentions = self._extract_mentions(text)
-        unlinked = self._find_unlinked(mentions, entities)
+        high_conf = [e for e in entities
+                     if e.confidence >= self.high_confidence_threshold]
+        low_conf = [e for e in entities
+                    if e.confidence < self.high_confidence_threshold
+                    and e.source == "spotlight"]
+        unlinked = self._find_unlinked(mentions, high_conf)
 
         if unlinked:
             if type_hint is None:
@@ -524,6 +539,13 @@ class DBpediaEntityLinker:
                     logger.info(
                         f"bif:contains resolved '{mention}' -> {found.uri}"
                     )
+                    # Replace low-confidence Spotlight entity for same mention
+                    mention_lower = mention.lower().strip()
+                    entities = [
+                        e for e in entities
+                        if not (e in low_conf
+                                and e.label.lower().strip() == mention_lower)
+                    ]
                     entities.append(found)
                     existing_uris.add(found.uri)
 
