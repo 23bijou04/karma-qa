@@ -66,8 +66,8 @@ pytest -m stress
 **Scope**: Entity linking impact on 2WikiMultiHopQA benchmark (1,000 question eval set).
 
 - 1,000 question evaluation set (346 answerable)
-- Entity coverage analysis: 93.6% of questions have resolvable entities
-- Property coverage analysis: 38.5% of required relations present in DBpedia
+- Entity coverage analysis: 93.6% of questions have resolvable entities (verified 2026-03-25: 248/248 sampled confirmed live, 65/65 missing confirmed absent)
+- Property coverage analysis: 42.2% of required relations present in DBpedia (corrected from original 38.5% after live verification found incomplete predicate mapping — see verification report)
 - Answerability classification by KG coverage scenario
 
 ---
@@ -275,9 +275,9 @@ Failures block PR merge until resolved (P0 immediately, P1 within sprint).
 
 | Metric | Value | Status |
 |--------|-------|--------|
-| Entity coverage (1000q) | 93.6% | Good |
-| Property coverage (1000q) | 38.5% | Acceptable (schema gap) |
-| Answerability (1000q) | 34.6% (346/1000) | Expected (schema-limited) |
+| Entity coverage (1000q) | 93.6% | Verified 2026-03-25 (100% accuracy on live DBpedia) |
+| Property coverage (1000q) | 42.2% | Corrected from 38.5% after expanded predicate verification |
+| Answerability (1000q) | 34.6% (346/1000) | Based on original mapping; ~37-38% with corrected predicates |
 
 ---
 

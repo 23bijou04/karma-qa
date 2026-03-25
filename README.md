@@ -95,13 +95,13 @@ Evaluated on 346 DBpedia-answerable questions from a 1000-question stratified sa
 
 Based on analysis of the full 2WikiMultiHopQA dev set (12,576 questions):
 
-| Metric | Value |
-|--------|-------|
-| Entity Coverage | 92.5% |
-| Property Coverage (per pair) | 60.1% |
-| **Full Answerability (SPARQL only)** | **31.1%** |
+| Metric | Full Dev Set (12,576q) | 1000q Eval Subset |
+|--------|:---:|:---:|
+| Entity Coverage | 92.5% | 93.6% (verified live) |
+| Property Coverage | 60.1% (per pair) | 42.2% (per question, verified live) |
+| **Full Answerability** | **31.1%** | **34.6%** |
 
-Property coverage is the bottleneck. The Wikipedia text fallback (GraphRAG) covers the remaining ~69% of questions. See [docs/wikimultihop-dbpedia-answerability.md](docs/wikimultihop-dbpedia-answerability.md) for the full analysis.
+Property coverage is the bottleneck. Live verification (2026-03-25) confirmed entity coverage is accurate and property coverage was slightly understated due to incomplete predicate mapping (original 38.5% → corrected 42.2%). The Wikipedia text fallback (GraphRAG) covers the remaining questions. See [docs/wikimultihop-dbpedia-answerability.md](docs/wikimultihop-dbpedia-answerability.md) for the full analysis.
 
 ## Installation
 

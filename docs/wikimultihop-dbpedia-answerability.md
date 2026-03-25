@@ -336,7 +336,22 @@ For properties that cannot be found in any knowledge graph:
 
 ---
 
-*Analysis Date: February 2026*
+---
+
+## Verification Note (2026-03-25)
+
+A live verification of the 1000-question eval subset against DBpedia SPARQL found:
+
+- **Entity coverage (93.6%) confirmed**: 248/248 sampled existing entities confirmed live; all 65 missing entities confirmed truly absent.
+- **Property coverage understated**: The original PROPERTY_MAP was incomplete. Exhaustive checking of all 212 missing (entity, property) pairs for 9 suspect properties found 81 actually exist in DBpedia. The corrected 1000q property coverage is **42.2%** (422/1000), up from 38.5%.
+- **Biggest mapping gaps**: `country of origin` (79% of "missing" actually found via `dbp:country`), `performer` (56% found via `dbo:artist`), `place of burial` (54% found via `dbp:burialPlace`/`dbo:restingPlace`).
+- **Full-dataset (12,576q) numbers above are likely also understated** for the same predicate-mapping reasons, particularly for `inception` (reported 0%, verified 45% found rate) and `place of burial` (reported 1.3%, verified 54%).
+
+See `plans/reports/verify-260325-1500-coverage-consolidated.md` for full verification methodology and results.
+
+---
+
+*Analysis Date: February 2026 (verified March 2026)*
 *Dataset: 2WikiMultiHopQA dev set (12,576 questions)*
 *DBpedia Endpoint: https://dbpedia.org/sparql*
 *Ontology: data/ontology/dbpedia-ontology.owl*
