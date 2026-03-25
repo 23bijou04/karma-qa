@@ -33,6 +33,49 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 
 ---
 
+## 2026-03-25
+
+### Entity Linking Stress Test Implementation & Bug Fixes
+
+- **[testing]**: Created comprehensive 106-case entity linking stress test suite across 5 test files:
+  - `tests/test_mention_extraction_stress.py` (47 tests covering noun chunks, possessives, NER, title extraction, dedup)
+  - `tests/test_type_system_stress.py` (17 tests for type hinting and validation)
+  - `tests/test_sparql_escaping_stress.py` (15 tests for URI/string escaping injection surface)
+  - `tests/test_unlinked_comparison_stress.py` (13 tests for unlinked entity detection and comparison patterns)
+  - `tests/test_fallback_cache_spacy_stress.py` (16 tests for SPARQL fallback, cache behavior, spaCy NER limits)
+- **[testing]**: Extended `tests/conftest.py` with `@pytest.mark.stress` marker and shared fixtures
+- **[testing]**: Created `tests/test_data/stress_test_cases.py` with 106 parametrized test cases as source of truth
+- **[testing]**: Full suite: 733 passed, 4 skipped, 3 xfailed, 0 failures
+
+### Bug Fixes Delivered
+
+**P0 Severity (2 bugs):**
+1. **#26 — Connector chain truncation** in title-after-keyword extraction: `"Lord of the Rings"` → only `"Lord"` extracted. Root cause: lookahead breaks when next word is lowercase connector. Fixed by checking if current word is connector before breaking loop. Affects all multi-word titles with lowercase connectors (Wizard of Oz, War of the Worlds, Bridge on the River Kwai, Lord of the Flies).
+2. **#50 — Missing `_TYPE_SUFFIX_MAP` entries**: `dbo:Person`, `dbo:MusicalArtist`, `dbo:City` type hints had no suffix mapping → type validation silently skipped. Fixed by adding entries mapping types to their URI suffixes ('Person', 'musician', 'city').
+
+**P1 Severity (6 bugs):**
+3. **#80 — Apostrophe URI escaping**: Apostrophe `'` not percent-encoded in `escape_sparql_uri` → potential SPARQL syntax errors for entities like "Aren't You Kind of Glad We Did?". Fixed by adding `'` → `%27` to escaper.
+4. **#81 — Question mark URI escaping**: `?` not percent-encoded → looks like SPARQL variable. Fixed by adding `?` → `%3F` to escaper.
+5. **#42/#105 — Curly quote regex blindness**: Both `_extract_mentions` quoted-entity regex and comparison patterns only matched ASCII `"`. Curly quotes `\u201C`/`\u201D` (common in formatted text) invisible. Fixed by extending regex to include `\u201C|\u201D|\u2018|\u2019` (left/right double/single curly quotes).
+6. **#104 — Unicode NFC/NFD normalization**: `"Beyoncé"` (NFC) vs `"Beyoncé"` (NFD) treated as different strings in Jaccard similarity and dedup. Fixed by normalizing both mention and surface form to NFC before comparison.
+7. **#2-5 — `_STRIP_WORDS` destroying entity names**: Strip logic was too aggressive on special cases ("The Who", "It", "The Band", "A Clockwork Orange"). Fixed by checking stripped result length and preserving original if stripping too destructive.
+
+### Deferred Bugs (Separate PR)
+
+Six additional P1/P2 issues identified but deferred for follow-up:
+- **#9 (P1)**: `bif:contains` for pure-stopword entities ("A", "The One") — needs guard
+- **#25 (P1)**: `_SPARQL_FALLBACK` on all-lowercase questions — needs fallback logic
+- **#58 (P1)**: `obj_phrase` cleaning strips title keywords (year, determiners) too aggressively
+- **#69 (P1)**: Entity `"It"` (film) ambiguous in `bif:contains` search
+- **#72 (P1)**: Entity `"A"` (film) filtered out by length guard
+- **#95 (P1)**: Short common-word entities ("Her", "Us", "Up") invisible across extraction paths
+
+### Documentation
+
+- Updated `docs/entity-linking-stress-test-catalog.md` with corrected case verifications and severity mapping
+- All 8 bugs now have verified test cases confirming the root cause and demonstrating the fix
+- Test coverage spans 10 functional areas: mention extraction (noun chunks, possessives, NER, title extraction, dedup, quoted entities), type system (hinting, validation, URI probes), SPARQL security (escaping, injection), unlinked detection (Jaccard, substring matching, comparison patterns), fallback paths (capitalized phrases, caching, spaCy limitations)
+
 ## 2026-03-18
 
 - **[docs]**: Factchecked LogicRAG vs Our Retrieval comparison report — found 2 major errors (LogicRAG's retrieval is iterative LLM-driven, not direct concatenation; uses 3-round retrieval, not single path)
