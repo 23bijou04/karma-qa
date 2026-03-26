@@ -33,48 +33,28 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 
 ---
 
+## 2026-03-26
+
+- **[metrics]**: Added `normalize_date()` to `evaluation/metrics.py` — converts ISO/DMY/MDY dates to canonical YYYY-MM-DD, closing 5pp gap between property coverage (36.8%) and strict-match answerability (11.9% → 31.8%)
+- **[bugfix]**: Fixed RAG chunk unpacking in `text_solver.py` — `RAGIndex.retrieve()` returns `(WikiChunk, float)` tuples, metadata tracking now unpacks correctly
+- **[data]**: Committed hop-verified ground truth (`hop_verification_results.json`, 318/1000 KG-answerable) and eval artifacts (corrected coverage, judged hybrid eval, LogicRAG traces)
+- **[docs]**: Updated all coverage references across 7 docs from corrected estimates (42.2%/34.6%) to hop-verified numbers (36.8%/31.8%); added `coverage-verification-1000q.md` methodology doc
+- **[scripts]**: Added LogicRAG eval infrastructure — `logicrag-instrumented.py` (trace-capturing subclass), `run-logicrag-1000q.py` (batch runner), `rerun_failed_text.py` (selective re-eval of failed text-path questions)
+- **[cleanup]**: Removed 19 outdated verification/analysis scripts and docs superseded by hop-verified ground truth
+
 ## 2026-03-25
 
-### Entity Linking Stress Test Implementation & Bug Fixes
+21 commits across 6 work streams. Busiest day on this project.
 
-- **[testing]**: Created comprehensive 106-case entity linking stress test suite across 5 test files:
-  - `tests/test_mention_extraction_stress.py` (47 tests covering noun chunks, possessives, NER, title extraction, dedup)
-  - `tests/test_type_system_stress.py` (17 tests for type hinting and validation)
-  - `tests/test_sparql_escaping_stress.py` (15 tests for URI/string escaping injection surface)
-  - `tests/test_unlinked_comparison_stress.py` (13 tests for unlinked entity detection and comparison patterns)
-  - `tests/test_fallback_cache_spacy_stress.py` (16 tests for SPARQL fallback, cache behavior, spaCy NER limits)
-- **[testing]**: Extended `tests/conftest.py` with `@pytest.mark.stress` marker and shared fixtures
-- **[testing]**: Created `tests/test_data/stress_test_cases.py` with 106 parametrized test cases as source of truth
-- **[testing]**: Full suite: 733 passed, 4 skipped, 3 xfailed, 0 failures
-
-### Bug Fixes Delivered
-
-**P0 Severity (2 bugs):**
-1. **#26 — Connector chain truncation** in title-after-keyword extraction: `"Lord of the Rings"` → only `"Lord"` extracted. Root cause: lookahead breaks when next word is lowercase connector. Fixed by checking if current word is connector before breaking loop. Affects all multi-word titles with lowercase connectors (Wizard of Oz, War of the Worlds, Bridge on the River Kwai, Lord of the Flies).
-2. **#50 — Missing `_TYPE_SUFFIX_MAP` entries**: `dbo:Person`, `dbo:MusicalArtist`, `dbo:City` type hints had no suffix mapping → type validation silently skipped. Fixed by adding entries mapping types to their URI suffixes ('Person', 'musician', 'city').
-
-**P1 Severity (6 bugs):**
-3. **#80 — Apostrophe URI escaping**: Apostrophe `'` not percent-encoded in `escape_sparql_uri` → potential SPARQL syntax errors for entities like "Aren't You Kind of Glad We Did?". Fixed by adding `'` → `%27` to escaper.
-4. **#81 — Question mark URI escaping**: `?` not percent-encoded → looks like SPARQL variable. Fixed by adding `?` → `%3F` to escaper.
-5. **#42/#105 — Curly quote regex blindness**: Both `_extract_mentions` quoted-entity regex and comparison patterns only matched ASCII `"`. Curly quotes `\u201C`/`\u201D` (common in formatted text) invisible. Fixed by extending regex to include `\u201C|\u201D|\u2018|\u2019` (left/right double/single curly quotes).
-6. **#104 — Unicode NFC/NFD normalization**: `"Beyoncé"` (NFC) vs `"Beyoncé"` (NFD) treated as different strings in Jaccard similarity and dedup. Fixed by normalizing both mention and surface form to NFC before comparison.
-7. **#2-5 — `_STRIP_WORDS` destroying entity names**: Strip logic was too aggressive on special cases ("The Who", "It", "The Band", "A Clockwork Orange"). Fixed by checking stripped result length and preserving original if stripping too destructive.
-
-### Deferred Bugs (Separate PR)
-
-Six additional P1/P2 issues identified but deferred for follow-up:
-- **#9 (P1)**: `bif:contains` for pure-stopword entities ("A", "The One") — needs guard
-- **#25 (P1)**: `_SPARQL_FALLBACK` on all-lowercase questions — needs fallback logic
-- **#58 (P1)**: `obj_phrase` cleaning strips title keywords (year, determiners) too aggressively
-- **#69 (P1)**: Entity `"It"` (film) ambiguous in `bif:contains` search
-- **#72 (P1)**: Entity `"A"` (film) filtered out by length guard
-- **#95 (P1)**: Short common-word entities ("Her", "Us", "Up") invisible across extraction paths
-
-### Documentation
-
-- Updated `docs/entity-linking-stress-test-catalog.md` with corrected case verifications and severity mapping
-- All 8 bugs now have verified test cases confirming the root cause and demonstrating the fix
-- Test coverage spans 10 functional areas: mention extraction (noun chunks, possessives, NER, title extraction, dedup, quoted entities), type system (hinting, validation, URI probes), SPARQL security (escaping, injection), unlinked detection (Jaccard, substring matching, comparison patterns), fallback paths (capitalized phrases, caching, spaCy limitations)
+- **[entity-linking]**: Built 3-phase EL cascade — Phase 1: LLM candidate disambiguation, Phase 2: direct URI construction probe, Phase 3: Wikipedia search + redirect resolution. Unit tests for all phases. Evaluated on 100q sample (`scripts/eval_entity_linking_100q.py`, `scripts/el_eval_report.py`)
+- **[entity-linking]**: Fixed URI validation (ucfirst, confidence gate), renamed `ddgs` → `duckduckgo-search` dep
+- **[bugfix]**: Fixed 8 entity linker bugs (2×P0, 6×P1): connector chain truncation (#26), missing `_TYPE_SUFFIX_MAP` (#50), apostrophe/question-mark URI escaping (#80/#81), curly quote regex (#42/#105), Unicode NFC normalization (#104), aggressive `_STRIP_WORDS` (#2-5). 6 more P1/P2 deferred
+- **[testing]**: Created 106-case stress test suite across 5 files (mention extraction, type system, SPARQL escaping, unlinked detection, fallback/cache). Extended conftest with `@pytest.mark.stress`. Full suite: 733 passed, 0 failures
+- **[security]**: Blocked SPARQL `SERVICE` injection, added Spotlight circuit breaker, batch eval timeout
+- **[coverage]**: Added live coverage verification scripts, ran against 1000q — results: 93.6% entity, property/answerability numbers fed into hop-verified ground truth pipeline
+- **[infra]**: Added full pipeline traceability for 1000q batch eval; removed corpus chunking to match LogicRAG embedding format
+- **[cleanup]**: Removed 19 outdated docs/scripts; removed obsolete eval artifacts from `eval_1000q/`
+- **[docs]**: Entity linking QA guide, benchmark error analysis, stress test catalog
 
 ## 2026-03-18
 
