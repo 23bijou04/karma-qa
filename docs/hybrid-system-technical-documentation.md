@@ -1,6 +1,6 @@
 # DBpedia Hybrid QA System — Comprehensive Technical Documentation
 
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2026-03-27
 **Scope:** Complete technical specification of the DBpedia Hybrid QA system for 2WikiMultiHopQA benchmark
 **Target Audience:** Thesis researchers, system maintainers, hyperparameter tuners
@@ -163,13 +163,13 @@ The `hybrid_answer()` function in `hybrid_qa.py` implements six sequential steps
   - Entity class (Person, Film, Company, etc.)
   - Actual properties (dbo: and dbp: prefixes)
   - Sample values for each property
-- Build EntityProfile dataclass with: uri, label, entity_type, properties_dict, values_dict
+- Build EntityProfile dataclass with: uri, label, all_classes, cached_classes, actual_properties, actual_property_set, all_2hop_chains
 - SchemaProjection renders profile for:
-  - SPARQL generation (~300 tokens, includes prefixes, full dbo/dbp listings)
-  - LogicRAG decomposition (~150 tokens, condensed)
-  - Text context (~50 tokens, minimal)
+  - SPARQL generation via `render_for_sparql()` (~300 tokens, includes prefixes, full dbo/dbp listings)
+  - Routing decision via `render_for_routing()` (~150 tokens, condensed)
+  - Text context via `render_for_text()` (~50 tokens, minimal)
 
-**Completeness Metric:** (properties_found / properties_expected_for_class) × 100
+**Completeness:** Categorical string (`"complete"`, `"partial"`, `"missing"`) via prefix-aware subset checks — only `dbo:` properties count
 **Output:** `projections` list (SchemaProjection objects), `schema_ctx` (rendered SPARQL context)
 
 #### Step 3: Route Decision (Three-Stage Routing)
@@ -201,7 +201,7 @@ The `hybrid_answer()` function in `hybrid_qa.py` implements six sequential steps
 **Process:**
 - Generate SPARQL query via `UNIFIED_SPARQL_PROMPT` using question + schema + entities
 - Execute via DBpedia SPARQL endpoint with 60s timeout
-- 2 retries on transient errors (429, 500-504, timeout, connection)
+- 2 total attempts (not 2 retries) on `URLError`, `ConnectionError`, `TimeoutError` only — HTTP status codes (429, 500) are not retried
 - Extract final answer from result using `extract_final_answer()`
 - Return: (answer_string, query_string, discovered_entities)
 
@@ -287,8 +287,8 @@ The system extracts entity mention candidates in order of confidence:
    - Pass to Spotlight if Spotlight available
 
 3. **Named Entity Recognition** (spaCy NER):
-   - Extract tokens with PERSON, ORG, GPE, PRODUCT, WORK_OF_ART tags
-   - Filter small entities
+   - Extract all entities EXCEPT those with `CARDINAL`, `ORDINAL`, `QUANTITY`, `PERCENT` labels (exclusion filter, not inclusion)
+   - Split entities containing " or " into parts
 
 4. **Title-After-Keyword** (rule-based):
    - Pattern: `"who directed|who wrote|who starred" <Title>`
@@ -326,10 +326,11 @@ High-frequency domain nouns dropped:
 Each Entity is a dataclass with:
 - `uri`: Full DBpedia resource URI (http://dbpedia.org/resource/...)
 - `label`: Human-readable name (possibly disambiguation)
-- `confidence`: Float [0, 1] from Spotlight
-- `source`: "spotlight", "spacy_ner", "title_keyword", "wiki_redirect", "fallback"
-- `discovery_relation`: Optional relation when discovered as neighbor
-- `entity_type`: Optional class (Person, Film, etc.) from type validation
+- `types`: list[str] — entity type URIs (default empty list)
+- `abstract`: Optional[str] — entity abstract text (default None)
+- `confidence`: Float [0, 1] from Spotlight (default 1.0)
+- `source`: "dbpedia", "spotlight", "sparql", "logicrag_guessed", "wiki_resolve", etc.
+- `discovery_relation`: Optional relation predicate that discovered this entity
 
 ### Type Hints & Validation
 
@@ -398,9 +399,10 @@ similarity(label_a, label_b) = |set(tokens_a) ∩ set(tokens_b)| /
 
 ### LLM Disambiguation
 
-When Spotlight returns multiple candidates for a mention:
-- Call LLM with: mention, list of candidate URIs + labels, question context
-- Prompt: "Which DBpedia resource best matches the mention?"
+When `bif:contains` text search or Wikipedia resolver returns multiple candidates (NOT Spotlight):
+- LLM reranker callback created via `create_llm_reranker()`
+- Call LLM with: mention, list of candidate URIs + labels + types, question context
+- Returns best-matching Entity from candidates
 - Temperature: 0, max_tokens: 10
 - Max 2 retry attempts
 
@@ -497,7 +499,7 @@ dbo properties:
   isbn, literaryGenre, language
 
 dbp properties:
-  author, published, publisher, pages, language, genre
+  author, publisher, published, pages, isbn, genre, language, country
 ```
 
 #### MusicalWork Class
@@ -581,10 +583,10 @@ class EntityProfile:
 
 Implements 4-step projection algorithm:
 
-1. **Class Selection**:
-   - If entity_type matches cached class (Person, Film, etc.), use cached schema
-   - Otherwise, dynamically query SPARQL for properties
-   - Handle type aliases (Scientist → Person, Band → MusicalArtist, etc.)
+1. **Class Selection** via `_score_class()`:
+   - Score each cached class by relevance to question: 3 = contains target_property, 2 = contains bridge_property, 1 = contains hop2 property, 0 = no match
+   - Pick highest-scoring class (tie-break: longer name = more specific)
+   - No SPARQL fallback or type alias handling — pure scoring against cached schemas
 
 2. **Properties Assembly**:
    - `relevant_properties`: intersection of analysis target properties with `actual_property_set`
@@ -604,33 +606,39 @@ Implements 4-step projection algorithm:
 
 ### Rendering Modes
 
-**For SPARQL Generation** (~300 tokens):
+**`render_for_sparql()`** (~300 tokens):
 ```
-@prefix dbo: <http://dbpedia.org/ontology/> .
-@prefix dbp: <http://dbpedia.org/property/> .
+SPARQL Prefixes:
+  PREFIX dbr: <http://dbpedia.org/resource/>
+  PREFIX dbo: <http://dbpedia.org/ontology/>
+  PREFIX dbp: <http://dbpedia.org/property/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-Entity: Albert Einstein [Person]
-  dbo:birthDate
-  dbo:deathDate
-  dbo:birthPlace → Place
-    dbo:country
-  dbo:spouse → Person
-    dbo:birthDate
-  ... [full schema tree]
-```
+Entity: Albert Einstein
+URI: <http://dbpedia.org/resource/Albert_Einstein>
+Class: dbo:Person
+  dbo: birthDate, deathDate, birthPlace, ...
+  dbp: ...
+  Property hints:
+    - birthDate: Date of birth
+  2-hop chains: dbo:birthPlace -> Place: country, ...
 
-**For LogicRAG** (~150 tokens):
-```
-Albert Einstein [Person]:
-  - Born: birthDate
-  - Died: deathDate
-  - Place: birthPlace (Place class)
-  - Spouse: spouse (Person class)
+Actual properties found:
+  dbo:birthDate -> 1879-03-14
+  ...
 ```
 
-**For Text Context** (~50 tokens):
+**`render_for_routing()`** (~150 tokens):
 ```
-Albert Einstein (Person): birthDate, deathDate, spouse, birthPlace
+Entity: Albert Einstein | Class: Person | Completeness: complete
+Props: dbo:birthDate, dbo:deathDate, dbo:birthPlace
+Chains: dbo:birthPlace -> Place: country, populationTotal
+```
+
+**`render_for_text()`** (~50 tokens):
+```
+Expect: Place via birthPlace
+Discovery: wikiPageWikiLink + type filter dbo:Place
 ```
 
 ---
@@ -683,7 +691,7 @@ Function: `_rule_based_route(analysis, projections, debug=False)`
    - Condition: `bridge_keyword ∈ {father, mother, parent, paternal, maternal}`
    - Check if parent properties exist:
    ```python
-   if all_actual_properties & PARENT_PROPS:  # dbo:parent, dbo:father, dbo:mother
+   if all_actual_properties & PARENT_PROPS:  # dbo:parent, dbo:father, dbo:mother, dbp:father, dbp:mother
        return ("SPARQL", "rule:parent_chain")
    ```
 
@@ -926,9 +934,10 @@ SPARQL retry is handled at two levels:
 
 **Level 1 — `execute_sparql()` (network retries)** in `sparql_evaluation.py`:
 - `max_retries=2` → `range(max_retries)` = 2 total attempts
-- Single 2s wait between attempts
-- Catches: timeouts, connection errors, HTTP 429/500/502/503/504
-- Does NOT retry on SPARQL syntax errors (HTTP 400)
+- Wait: `2 * (attempt + 1)` seconds between attempts (2s, 4s)
+- Catches ONLY: `urllib.error.URLError`, `ConnectionError`, `TimeoutError`
+- HTTP error codes (429, 500, etc.) fall to generic `except Exception` and return immediately without retry
+- Does NOT retry on SPARQL syntax errors or any HTTP status code errors
 
 **Level 2 — `solve()` (LLM-driven query correction)** in `sparql_solver.py`:
 - If first query returns empty results or error, generates retry prompt via `SPARQL_RETRY_PROMPT`
@@ -1166,7 +1175,7 @@ type_hints = {entity_label: entity_type for entity in entities}
 
 **Step 3: LLM Decomposition**
 - Call LLM with DECOMPOSE_PROMPT
-- Max tokens: 500
+- Max tokens: 1000 (default from `call_llm()` in `llm_provider.py`)
 - Temperature: 0 (deterministic)
 - Parse JSON response
 
@@ -1191,15 +1200,17 @@ type_hints = {entity_label: entity_type for entity in entities}
 For each sub-Q (in topological order):
 ```python
 # Substitute previous answers into sub-Q text
-sub_q_with_answers = substitute_answers(sub_q.text, completed_answers)
+sub_q_with_answers = _substitute_answers(sub_q.text, known_facts)
 
-# Route via _rule_based_route()
-route, source = _rule_based_route(analyzed_subq, projections)
+# Route via _rule_based_route() (rule-based only, no LLM route prompt)
+route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
 
-# Execute:
-if route == "SPARQL":
+# NOT mutually exclusive — always try SPARQL first when schema exists
+attempt_sparql = route_result is not None or bool(combined_schema)
+
+if attempt_sparql and combined_schema:
     answer = sparql_solver.solve(...)
-elif route == "TEXT":
+if not answer:  # TEXT fallback
     answer = text_solver.solve(...)
 ```
 
@@ -1207,28 +1218,30 @@ elif route == "TEXT":
 
 When sub-questions reference previous answers, substitute before routing:
 
-**Pass 1 (Indexed Substitution):**
+**Pass 1 (Indexed Placeholders):**
 ```
-"In Sub-Q 2, answer from Sub-Q 1 is: {1}"
-→ Replace {1} with actual answer
+"Who directed [Q0]?" where Q0 answer = "Parasite"
+→ Replace [Q0] with "Parasite" (case-insensitive, exact match)
 ```
 
-**Pass 2 (Positional Substitution):**
+**Pass 2 (Positional Fallback):**
 ```
-"the answer to that is" → Replace with last answer
+Any remaining [.*?] brackets → Replace with next unmatched answer (sorted index order)
+Only applies to indices not already handled in Pass 1
 ```
 
 **Pass 3 (Direct Token Substitution):**
 ```
-"[previous answer]" → Replace with answer from most relevant sub-Q
+"Q0", "sub-question 0", "answer 0" → Replace with answer (case-insensitive)
+Only if answer text not already in result string
 ```
 
 ### Entity Resolution for Bridge Linking
 
-When decomposition introduces new entities not in seed set:
-- Query SPARQL to verify entity exists
-- Type-check via `rdf:type` lookup
-- Add to all_entities with source="decomposed"
+When decomposition introduces new entities not in seed set (`_make_fallback_entity()`):
+- Construct URI from name: `http://dbpedia.org/resource/{name}`
+- Verify entity exists via `ASK { <uri> ?p ?o }` (existence check, NOT `rdf:type` lookup)
+- Add to all_entities with `source="logicrag_guessed"`
 
 ### Sub-Question Routing Example
 
@@ -1297,7 +1310,7 @@ def _try_logicrag_decomposition(...):
 ### Overview
 
 Module: `text_solver.py` (304 lines)
-Entry point: `solve(question, all_entities, known_facts, relation_hints, llm_client, model, seed_titles, ...)`
+Entry point: `solve(question, entities, known_facts, relation_hints, llm_client, model, seed_titles, ...)`
 
 ### Execution Flow
 
@@ -1361,7 +1374,7 @@ Section "Career" (5000 chars):
 - Index type: IndexFlatIP (flat brute-force, exact inner-product search)
 - No quantization (exact matching)
 - No HNSW (no approximation)
-- Batch size for indexing: 100 chunks
+- No batch size — all chunks indexed at once via single `faiss.IndexFlatIP.add()` call
 
 **Rationale:** Small corpus (~1K chunks per question), exact search preferred over approximate.
 
@@ -1369,8 +1382,9 @@ Section "Career" (5000 chars):
 
 **Step 1: Over-fetch**
 ```python
-fetch_k = 2 * top_k  # Retrieve 60 candidates (2x oversample)
-scores_raw = index.search(query_embedding, fetch_k=60)
+fetch_k = min(top_k * 2, index.ntotal)  # 2x oversample, capped at corpus size
+scores, indices = index.search(query_embedding, fetch_k)
+# With top_k=20 at call site → fetch_k=40 candidates
 ```
 
 **Step 2: Seed Boost**
@@ -1387,7 +1401,7 @@ for i, (chunk, score) in enumerate(scored_chunks):
 
 **Rationale:** Seed entities are direct targets; prioritize their pages.
 
-**Default top_k:** 20 chunks for reranking step
+**Default top_k:** 30 in `RAGIndex.retrieve()` function signature, but called with `top_k=20` at the `text_solver.solve()` call site
 
 ### Cross-Encoder Reranking
 
@@ -1400,8 +1414,9 @@ for i, (chunk, score) in enumerate(scored_chunks):
 for chunk in bi_encoder_topk:
     # Augment question with relation hints
     augmented_q = question
-    if chunk.title in relation_hints:
-        augmented_q += f" (context: {relation_hints[chunk.title]})"
+    if chunk.page_title in relation_hints:
+        relation = relation_hints[chunk.page_title]
+        augmented_q = f"{query} [context: discovered via {relation} relation]"
 
     # Score
     score = reranker.predict((augmented_q, chunk.text))
@@ -1411,55 +1426,63 @@ for chunk in bi_encoder_topk:
 **Relation Hints:** Keywords indicating semantic relations (from entity discovery)
 - Example: {"Marie Curie": "spouse", "France": "birth place"}
 
-**Output top_k:** 8 chunks
+**Output top_k:** 15 in `Reranker.rerank()` function signature, but called with `top_k=8` at the `text_solver.solve()` call site
 
 **Rationale:** Cross-encoders provide fine-grained ranking; BERT-style models capture complex semantic interactions.
 
 ### Context Assembly
 
-**Algorithm:**
+**Algorithm** (`_assemble_from_chunks()` in `text_solver.py`):
 ```
-total_budget = 12,000 characters
-per_entity_budget = 4,000 characters
+# Function defaults: max_chars=25,000, max_per_entity=4,000
+# RAG call site overrides: max_chars=12,000 (tighter budget for RAG chunks)
+# Keyword path uses defaults: max_chars=25,000
 
-for chunk in reranked_top_8:
-    if chunk.title not in assembled_by_title:
-        assembled_by_title[chunk.title] = 0
+# Prepend KG facts if available
+if kg_facts: parts.append(kg_facts)
 
-    if assembled_by_title[chunk.title] >= per_entity_budget:
-        skip  # Already have 4K from this article
+for chunk in reranked_chunks:
+    entry = f"=== {chunk.page_title} / {chunk.section_header} ===\n{chunk.text}"
 
-    chars_left = total_budget - current_length
-    if chars_left >= 500:  # Minimum meaningful chunk size
-        add_chunk(chunk)
-    elif chars_left >= 200:
-        add_partial_chunk(chunk)  # Add truncated version
-    else:
-        break
+    if total + len(entry) > max_chars:
+        break  # Hard budget stop — no partial chunks
+
+    if entity_used[chunk.page_title] + len(entry) > max_per_entity:
+        continue  # Skip — this entity already has enough context
+
+    parts.append(entry)
 ```
 
-**Output:** Concatenated text, capped at 12,000 characters
+**Output:** Concatenated text joined with `\n\n`, capped at 12,000 chars (RAG) or 25,000 chars (keyword)
 
 ### Legacy Keyword Path (Fallback)
 
 If RAG dependencies (sentence-transformers, FAISS) not installed:
 
-**Keyword Scoring:**
+**Keyword Scoring** (`extract_relevant_sections()` in `graphrag_wiki.py`):
 ```python
-def score_chunk(chunk, question):
-    tokens = set(question.lower().split())
-    matching = sum(1 for token in tokens if token in chunk.text.lower())
-    # Boost sections matching relation context
-    if chunk.section and chunk.section.lower() in RELATION_KEYWORDS:
-        score *= 2.0
-    return matching / len(tokens)
+# Paragraph-level rare-keyword scoring, not chunk-level
+# Splits text into paragraphs, scores each by keyword hits
+for para in paragraphs:
+    rare_keywords = [kw for kw in question_keywords if freq(kw) < threshold]
+    score = sum(2 if kw in rare_keywords else 1 for kw in hits)
+    # Relation-guided 2x boost via RELATION_SECTION_BOOST
+    if relation_hint in RELATION_SECTION_BOOST:
+        if any(term in para for term in RELATION_SECTION_BOOST[relation_hint]):
+            score *= 2
 ```
 
-**Relation Keyword Boost (2x):**
+**RELATION_SECTION_BOOST (25 entries):**
 ```python
-RELATION_KEYWORDS = {
-    "early life", "birth", "death", "career", "works", "awards",
-    "family", "personal life", "education", "legacy"
+RELATION_SECTION_BOOST = {
+    "director": ["early life", "personal life", "career", "biography"],
+    "producer": ["early life", "career", "biography"],
+    "author": ["early life", "career", "biography", "works"],
+    # ... 25 total entries mapping relation predicates to section keywords
+    # Full list: director, producer, author, writer, starring, birthPlace,
+    # birthDate, deathPlace, deathDate, parent, father, mother, spouse,
+    # country, foundedBy, award, performer, artist, almaMater, nationality,
+    # genre, deathCause, publicationDate, releaseDate, language
 }
 ```
 
@@ -1493,7 +1516,7 @@ RELATION_KEYWORDS = {
 **Rate Limiting:**
 - Wikipedia API: 0.5s delay between calls (politeness)
 - DuckDuckGo: Circuit breaker (3 failures, 60s cooldown)
-- HTTP timeout: 10s per request
+- HTTP timeout: 15s per request
 
 ### SQLite Cache (wiki_cache.db)
 
@@ -1814,74 +1837,77 @@ def extract_final_answer(text: str) -> str:
 #### normalize_answer() Pipeline
 
 ```python
-def normalize_answer(text: str) -> str:
+def normalize_answer(answer: str) -> str:
     """Normalize answer for EM/F1 comparison."""
-    # 1. Lowercase
-    text = text.lower()
+    # 1. Date normalization FIRST (before punctuation removal destroys date hyphens)
+    #    Short-circuits: if input is a recognized date, return canonical form immediately
+    canonical_date = normalize_date(answer)  # Note: singular, not "normalize_dates"
+    if canonical_date is not None:
+        return canonical_date  # e.g., "16 August 1932" → "1932-08-16"
 
-    # 2. Remove articles
-    text = re.sub(r'\b(a|an|the)\b', ' ', text)
+    # 2. Lowercase
+    answer = answer.lower()
 
-    # 3. Remove punctuation
-    text = re.sub(r'[!?.,:;"]', '', text)
+    # 3. Remove punctuation (ALL 32 chars in string.punctuation, not a limited regex)
+    answer = ''.join(ch for ch in answer if ch not in string.punctuation)
 
-    # 4. Remove extra whitespace
-    text = ' '.join(text.split())
+    # 4. Remove articles
+    answer = re.sub(r'\b(a|an|the)\b', ' ', answer)
 
-    # 5. Date normalization (ISO, DMY, MDY → YYYY-MM-DD)
-    text = normalize_dates(text)
+    # 5. Remove extra whitespace
+    answer = ' '.join(answer.split())
 
-    return text
+    return answer.strip()
 
-def normalize_dates(text: str) -> str:
-    """Convert date strings to ISO format YYYY-MM-DD."""
-    # ISO: 2020-01-15 → keep
-    # DMY: 15 January 2020 → 2020-01-15
-    # MDY: January 15, 2020 → 2020-01-15
-    # Numeric: 01/15/2020 → 2020-01-15
+def normalize_date(text: str) -> str | None:
+    """Convert date strings to ISO format YYYY-MM-DD. Returns None if not a date."""
+    # ISO: 1932-08-16 → keep (re-formatted with zero-padding)
+    # DMY: 16 August 1932 → 1932-08-16
+    # MDY: September 7, 1868 → 1868-09-07
+    # Does NOT handle numeric formats like 01/15/2020
 ```
 
 #### EM (Exact Match)
 
 ```python
-def exact_match(prediction: str, ground_truth: str) -> float:
+def compute_em(prediction: str, ground_truth: str) -> float:
     """Binary: normalized prediction == normalized ground truth."""
-    return 1.0 if normalize_answer(prediction) == normalize_answer(ground_truth) else 0.0
+    return float(normalize_answer(prediction) == normalize_answer(ground_truth))
 ```
 
-#### F1 (Token-Level Bag-of-Words)
+#### F1 (Token-Level with Multiplicity)
 
 ```python
-def f1_score(prediction: str, ground_truth: str) -> float:
-    """Token-level F1: harmonic mean of precision and recall."""
-    pred_tokens = set(normalize_answer(prediction).split())
-    gt_tokens = set(normalize_answer(ground_truth).split())
+def compute_f1(prediction: str, ground_truth: str) -> float:
+    """Token-level F1 using Counter (preserves token multiplicity)."""
+    pred_tokens = normalize_answer(prediction).split()
+    gold_tokens = normalize_answer(ground_truth).split()
 
-    if not gt_tokens:
-        return 1.0 if not pred_tokens else 0.0
+    if len(pred_tokens) == 0 or len(gold_tokens) == 0:
+        return float(pred_tokens == gold_tokens)
 
-    intersection = len(pred_tokens & gt_tokens)
-    precision = intersection / len(pred_tokens) if pred_tokens else 0
-    recall = intersection / len(gt_tokens)
+    # Counter intersection — NOT set intersection
+    # This preserves multiplicity: "new new york" vs "new york" differs from set-based F1
+    common = Counter(pred_tokens) & Counter(gold_tokens)
+    num_common = sum(common.values())
 
-    if precision + recall == 0:
+    if num_common == 0:
         return 0.0
 
-    return 2 * (precision * recall) / (precision + recall)
+    precision = num_common / len(pred_tokens)
+    recall = num_common / len(gold_tokens)
+    return (2 * precision * recall) / (precision + recall)
 ```
 
 #### Containment
 
 ```python
-def containment_score(prediction: str, ground_truth: str) -> float:
-    """Recall-only: what fraction of ground truth tokens appear in prediction."""
-    pred_tokens = set(normalize_answer(prediction).split())
-    gt_tokens = set(normalize_answer(ground_truth).split())
-
-    if not gt_tokens:
-        return 1.0
-
-    return len(pred_tokens & gt_tokens) / len(gt_tokens)
+def compute_containment(prediction: str, ground_truth: str) -> float:
+    """Binary substring check — NOT fractional token recall.
+    Returns 1.0 if normalized gold appears anywhere in normalized prediction, else 0.0.
+    This is an upper bound metric (intentionally lenient).
+    """
+    return float(normalize_answer(ground_truth) in normalize_answer(prediction))
 ```
 
 ### Batch Evaluation
@@ -1904,26 +1930,43 @@ def containment_score(prediction: str, ground_truth: str) -> float:
 
 **Script:** `scripts/judge_hybrid_eval.py`
 
-**Prompt Template:**
+**System Message:**
 ```
-Evaluate this QA answer against ground truth.
-
-QUESTION: {question}
-GROUND TRUTH: {ground_truth}
-PREDICTED ANSWER: {predicted_answer}
-
-Rate as:
-A) Correct (fully answers question)
-B) Partial (answers with minor errors or incomplete)
-C) Incorrect (wrong answer)
-D) Unanswerable (question unanswerable from KB)
-
-Rate:
+You are a strict evaluation judge for a QA benchmark.
+Determine if two answers refer to the exact same entity or fact.
+Precision matters more than recall — when in doubt, answer no.
 ```
+
+**Prompt Template** (binary VERDICT format):
+```
+Determine if the predicted answer is semantically equivalent to the gold answer.
+
+Question: {question}
+Gold answer: {gold}
+Predicted answer: {pred}
+
+Matching rules (answer YES):
+- Same entity/fact with different surface forms (e.g. "July 16, 2013" vs "2013-07-16")
+- Gold contained in a more specific predicted answer
+- Added title/honorific/disambiguator
+- ... (7 matching rules total)
+
+Rejection rules (answer NO):
+- Wrong, empty, or completely different entity
+- Predicted is broader/vaguer than gold
+- Year only when gold has full date
+- ... (7 rejection rules total)
+
+First, explain in ONE sentence why the answers match or don't.
+Then write your verdict on a new line: VERDICT: yes or VERDICT: no
+```
+
+**Fast-path precheck:** Before calling LLM, `_containment_precheck()` checks if gold words (≥2 words required) are a subset of prediction words. If yes, returns True without LLM call.
 
 **LLM Config:**
+- Default provider/model: `ollama` / `gemma3:12b` (configurable via `--provider` / `--model`)
 - Temperature: 0 (deterministic judging)
-- Max tokens: 100
+- Max tokens: 200
 
 ### Statistical Testing
 
@@ -2119,7 +2162,7 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 
 | Parameter | Value | Location | Type | Notes |
 |-----------|-------|----------|------|-------|
-| Memory cache max_size | 10,000 entries | dbpedia/cache.py:12 | Configurable | LRU-style capacity |
+| Memory cache max_size | 10,000 entries | dbpedia/cache.py:12 | Configurable | FIFO eviction when full |
 | Memory cache TTL | 3600 sec (1 hour) | dbpedia/cache.py:12 | Configurable | Default expiry time |
 | Redis host | localhost | dbpedia/cache.py:63 | Configurable | Redis server hostname |
 | Redis port | 6379 | dbpedia/cache.py:64 | Configurable | Standard Redis port |
@@ -2225,7 +2268,7 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 
 **Location:** `dbpedia/cache.py`
 
-**Implementation:** LRU-style dict with TTL tracking
+**Implementation:** FIFO dict with TTL tracking (evicts oldest key when full, not least recently used)
 
 **Capacity:** 10,000 entries
 **TTL:** 1 hour (3600 sec)
