@@ -505,7 +505,10 @@ def _resolve_subquestion(
 
     # Step 4: Route decision (rule-based only, no LLM route prompt)
     route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
-    attempt_sparql = route_result is not None or bool(combined_schema)
+    # Only attempt SPARQL when routing rules explicitly matched;
+    # bool(combined_schema) is nearly always True (any entity with a URI),
+    # which defeated routing and wasted LLM+SPARQL calls on TEXT sub-Qs.
+    attempt_sparql = route_result is not None
     if debug:
         tag = route_result[1] if route_result else "no rule match"
         print(f"    [DEBUG] Route: {tag}, attempt_sparql={attempt_sparql}")
