@@ -28,7 +28,7 @@ _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 from ablation_study_v3.wiki_utils import (
     get_wikipedia_text_by_title,
