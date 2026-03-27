@@ -1,7 +1,7 @@
 # DBpedia Hybrid QA System — Comprehensive Technical Documentation
 
-**Version:** 1.0
-**Last Updated:** 2026-03-26
+**Version:** 1.1
+**Last Updated:** 2026-03-27
 **Scope:** Complete technical specification of the DBpedia Hybrid QA system for 2WikiMultiHopQA benchmark
 **Target Audience:** Thesis researchers, system maintainers, hyperparameter tuners
 
@@ -268,7 +268,7 @@ All wrapped in try/except to prevent metadata failure from crashing the question
 
 **Timeout:** 30s (via httpx client)
 
-**Circuit Breaker:**
+**Circuit Breaker** (`_SpotlightCircuitBreaker` at entity_linker.py:26):
 - Threshold: 3 consecutive failures
 - Cooldown: 120s (2 minutes)
 - After cooldown, automatic retry
@@ -341,7 +341,7 @@ Each Entity is a dataclass with:
     r'\bcast\s+of\b': 'dbo:Film',
     r'\bstarring\s+in\b': 'dbo:Film',
     r'\bauthor\s+of\b': 'dbo:Book',
-    r'\bwritten\s+by\b': 'dbo:Book',
+    r'\bwrote\b': 'dbo:Book',
     # ... 13 total entries
 }
 ```
@@ -564,16 +564,18 @@ Used by routing to verify 2-hop chains without live schema queries.
 class EntityProfile:
     uri: str
     label: str
-    entity_type: str  # "Person", "Film", "Company", "Place", etc.
-    properties_dict: dict[str, list[str]]  # {property: [values]}
-    values_dict: dict[str, str]  # Sample value per property
+    all_classes: list[str] = field(default_factory=list)       # All rdf:type classes
+    cached_classes: list[str] = field(default_factory=list)     # Classes with cached schemas
+    actual_properties: dict = field(default_factory=dict)       # {"dbo": [...], "dbp": [...]}
+    actual_property_set: frozenset[str] = field(default_factory=frozenset)  # {"dbo:birthDate", ...}
+    all_2hop_chains: dict[str, tuple[str, list[str]]] = field(default_factory=dict)
 ```
 
-**Construction:** `build_entity_profile(uri, label, schema_discovery)`
-1. Query DBpedia for entity type via SPARQL `rdf:type` lookup
-2. Query dbo: and dbp: properties via SPARQL pattern
-3. Fetch sample value for each property (first result)
-4. Populate properties_dict and values_dict
+**Construction:** `build_entity_profile(uri, label, schema_disc)`
+1. Query all rdf:type classes via `schema_disc.get_all_cached_classes(uri)` (1 SPARQL query)
+2. Query actual dbo: and dbp: properties via `schema_disc.get_actual_properties(uri)` (1 SPARQL query)
+3. Build `actual_property_set`: frozenset of `"prefix:name"` strings
+4. Merge 2-hop chains from ALL matching cached class schemas
 
 ### SchemaProjection Class
 
@@ -585,19 +587,20 @@ Implements 4-step projection algorithm:
    - Handle type aliases (Scientist → Person, Band → MusicalArtist, etc.)
 
 2. **Properties Assembly**:
-   - Intersection of actual properties (from entity) with schema properties
-   - Add both dbo: and dbp: variants (ontology + Wikipedia infobox)
-   - Include property descriptions from cached schemas
+   - `relevant_properties`: intersection of analysis target properties with `actual_property_set`
+   - Includes hop2 properties if present
+   - Deduplicated, preserving order
 
 3. **Chain Assembly**:
    - `relevant_chains` dict: {property: (target_class, target_properties)}
-   - For 2-hop questions, store available chains
-   - Example: `director` → (Person, {birthDate, deathDate, birthPlace, ...})
+   - Filtered from `all_2hop_chains` — keeps chains whose entry property matches bridge or target
+   - Example: `director` → (Person, [birthDate, deathDate, birthPlace, ...])
 
-4. **Completeness Calculation**:
-   - `completeness = (matched_properties / expected_properties) * 100`
-   - Expected depends on class (Person: 15 props, Film: 12 props, etc.)
-   - Flags if < 50%: `missing_hops = True`
+4. **Completeness Calculation** (categorical, not ratio-based):
+   - Prefix-aware: only `dbo:` properties count (dbp-only properties cause false completeness)
+   - For bridge questions: checks if `bridge_property` exists in `dbo:` properties
+   - Result is a string: `"complete"` (all needed ⊆ have), `"partial"` (some overlap), `"missing"` (disjoint)
+   - `missing_hops`: list of property names not found (e.g., `["hop1:director"]`)
 
 ### Rendering Modes
 
@@ -762,35 +765,30 @@ Function: `analyze_question(question, profiles)`
 
 Extracts structural features:
 
-**hop_structure**: Detected number of hops (1, 2, 3+)
+**hop_structure**: String enum — `"direct"`, `"bridge"`, `"comparison"`, or `"compositional"`
 **is_comparison**: Boolean, ≥2 entities + comparison word detected
 
 **target_keywords_set**: Keywords extracted from question
 ```python
-# Keywords mapped to properties (60+ mappings)
-KEYWORD_TO_PROPERTIES = {
-    "director": "director",
-    "producer": "producer",
-    "writer": "writer",
-    "author": "author",
-    "composer": "musicComposer",
-    "starring": "starring",
-    "actor": "starring",
-    "actress": "starring",
-    "founded": "foundingDate",
-    "founder": "foundedBy",
-    "father": "father",
-    "mother": "mother",
-    "spouse": "spouse",
-    "married": "spouse",
-    "born": "birthDate",
-    "died": "deathDate",
-    "death": "deathDate",
-    "country": "country",
-    "nationality": "nationality",
-    "capital": "capital",
-    "population": "population",
-    # ... 40+ more mappings
+# Keywords mapped to property LISTS (53 keys, values are lists)
+KEYWORD_TO_PROPERTIES: dict[str, list[str]] = {
+    "director": ["director"], "directed": ["director"], "direct": ["director"],
+    "producer": ["producer"], "produced": ["producer"],
+    "writer": ["writer", "author"], "wrote": ["writer", "author"],
+    "author": ["author"],
+    "composer": ["musicComposer"],
+    "starring": ["starring"], "actor": ["starring"], "actress": ["starring"],
+    "founded": ["foundedBy", "foundingDate", "foundingYear"],
+    "founder": ["foundedBy"],
+    "father": ["father", "parent"], "mother": ["mother", "parent"],
+    "spouse": ["spouse"], "married": ["spouse"],
+    "born": ["birthDate", "birthPlace"],
+    "died": ["deathDate", "deathPlace"],
+    "country": ["country", "nationality"],
+    "nationality": ["nationality", "citizenship"],
+    "capital": ["capital"],
+    "population": ["populationTotal"],
+    # ... 30+ more mappings (53 total keys)
 }
 ```
 
@@ -854,7 +852,7 @@ dbo:stateOfOrigin, dbp:placeOfBirth
 
 ### Overview
 
-Module: `sparql_solver.py` (234 lines)
+Module: `sparql_solver.py` (233 lines)
 Entry point: `solve(question, schema_ctx, entities, llm_client, model, verbose, debug)`
 
 ### Execution Flow
@@ -916,33 +914,27 @@ RULES:
 ### Execution
 
 **Endpoint:** `https://dbpedia.org/sparql`
-**Method:** POST
+**Method:** POST via SPARQLWrapper
 **Format:** application/json (SPARQL JSON format)
 
-**Timeout:** 60 seconds per query
-**Rate Limiting:** 10 queries/second via token bucket (DBpediaSPARQLClient)
+**Timeout:** 60 seconds per query (via `execute_sparql(timeout=60)` in `sparql_evaluation.py:274`)
+**Rate Limiting:** 10 queries/second via token bucket (DBpediaSPARQLClient, `dbpedia/client.py:63`)
 
 ### Retry Logic
 
-**Trigger Conditions** (retryable errors):
-- HTTP 429 (rate limit)
-- HTTP 500, 502, 503, 504 (server errors)
-- Connection timeout
-- Socket timeout
+SPARQL retry is handled at two levels:
 
-**Retry Strategy:**
-```
-Attempt 1: Wait 0s, execute
-Attempt 2: Wait 2s, execute
-Attempt 3: Wait 4s, execute
-```
+**Level 1 — `execute_sparql()` (network retries)** in `sparql_evaluation.py`:
+- `max_retries=2` → `range(max_retries)` = 2 total attempts
+- Single 2s wait between attempts
+- Catches: timeouts, connection errors, HTTP 429/500/502/503/504
+- Does NOT retry on SPARQL syntax errors (HTTP 400)
 
-Exponential backoff with max 2 retries (3 total attempts).
-
-**Non-Retryable:**
-- HTTP 400 (malformed SPARQL)
-- HTTP 404 (endpoint not found)
-- Malformed result JSON
+**Level 2 — `solve()` (LLM-driven query correction)** in `sparql_solver.py`:
+- If first query returns empty results or error, generates retry prompt via `SPARQL_RETRY_PROMPT`
+- LLM generates a corrected SPARQL query
+- Corrected query executed via `execute_sparql()` (which has its own network retries)
+- Total: up to 2 LLM-generated queries × 2 network attempts each = 4 SPARQL executions max
 
 ### URI Sanitization
 
@@ -1030,14 +1022,19 @@ Module-level dict: `_last_solve_meta`
 
 ```python
 _last_solve_meta = {
-    "query_generated": str,  # Full SPARQL query
-    "query_length": int,
-    "execution_time_ms": int,
-    "result_count": int,
-    "answer_extracted": bool,
-    "null_answer_detected": bool,
-    "retry_count": int,
-    "error_msg": str (if any),
+    "sparql_gen_prompt": str,      # Full prompt sent to LLM for SPARQL generation
+    "sparql_gen_response": str,    # Raw LLM response
+    "initial_query": str,          # Extracted & sanitized SPARQL query
+    "initial_results": list,       # First 20 result rows
+    "initial_result_count": int,   # Total result count
+    "initial_error": str,          # Error message (if any)
+    "retry_prompt": str,           # Retry prompt (if retry triggered)
+    "retry_response": str,         # Retry LLM response
+    "retry_query": str,            # Corrected SPARQL query
+    "retry_results": list,         # Retry result rows
+    "retry_result_count": int,     # Retry result count
+    "retry_error": str,            # Retry error
+    "used_retry": bool,            # Whether retry was triggered
 }
 ```
 
@@ -1307,9 +1304,9 @@ Entry point: `solve(question, all_entities, known_facts, relation_hints, llm_cli
 1. **Wikipedia Retrieval**: Fetch Wikipedia text for all entities
 2. **Chunking**: Split text into 512-char sections with 64-char overlap
 3. **FAISS Indexing**: Build flat index with all-MiniLM-L6-v2 embeddings
-4. **Bi-Encoder Retrieval**: Retrieve top-30 chunks via dot-product similarity
+4. **Bi-Encoder Retrieval**: Retrieve top-20 chunks via dot-product similarity (`text_solver.py:259`)
 5. **Seed Boost**: Upweight chunks from seed entity pages (1.2x multiplier)
-6. **Cross-Encoder Reranking**: Score top-30 with ms-marco-MiniLM-L-6-v2
+6. **Cross-Encoder Reranking**: Score top-20 with ms-marco-MiniLM-L-6-v2
 7. **Context Assembly**: Select top-8 chunks, assemble 12K-char context
 8. **LLM Reasoning**: Prompt with context + question, extract final answer
 
@@ -1318,13 +1315,14 @@ Entry point: `solve(question, all_entities, known_facts, relation_hints, llm_cli
 ```python
 @dataclass
 class WikiChunk:
-    title: str  # Wikipedia article title
-    section: str  # Heading (empty for intro)
-    text: str  # Chunk content (up to 512 chars)
-    chunk_id: int  # Sequential ID
-    embedding: np.ndarray  # 384-dim vector (lazy-loaded)
-    relevance_score: float  # Set during retrieval
+    text: str              # Chunk content (up to 512 chars)
+    page_title: str        # Wikipedia article title
+    section_header: str    # Section heading (empty for intro)
+    chunk_index: int       # Sequential index within article
+    char_offset: int       # Character offset in original article text
 ```
+
+Note: No `embedding` or `relevance_score` fields — embeddings stored separately in FAISS index and SQLite cache; scores computed during retrieval.
 
 ### Chunking Strategy
 
@@ -1395,7 +1393,7 @@ for i, (chunk, score) in enumerate(scored_chunks):
 
 **Model:** `cross-encoder/ms-marco-MiniLM-L-6-v2`
 
-**Input:** (question, chunk) pairs (from bi-encoder top-30)
+**Input:** (question, chunk) pairs (from bi-encoder top-20)
 
 **Scoring:**
 ```python
@@ -1501,26 +1499,19 @@ RELATION_KEYWORDS = {
 
 **Schema:**
 ```sql
-CREATE TABLE wiki_chunks (
-    chunk_id TEXT PRIMARY KEY,
-    title TEXT,
-    section TEXT,
-    text TEXT,
-    chunk_hash TEXT,
-    created_at TIMESTAMP,
-    expires_at TIMESTAMP
-);
-
-CREATE TABLE embedding_cache (
-    chunk_id TEXT PRIMARY KEY,
-    embedding BLOB,  -- 384-dim float32 numpy array
-    created_at TIMESTAMP
+CREATE TABLE IF NOT EXISTS wiki_pages (
+    title TEXT PRIMARY KEY,
+    chunks_json TEXT,      -- JSON-serialized list of WikiChunk dicts
+    embeddings BLOB,       -- numpy array of all chunk embeddings
+    fetched_at REAL        -- Unix timestamp
 );
 ```
 
+Single table stores chunks + embeddings together per page title.
+
 **Eviction Policy:**
-- Time-based: 7 days TTL (entries expire after 7 days)
-- Chunk-count invalidation: If Wikipedia article updated (new chunks), clear old entries for that title
+- Time-based: 7 days TTL (`_EVICTION_DAYS = 7` at `rag/cache.py:13`)
+- Eviction runs on each cache instantiation: `DELETE FROM wiki_pages WHERE fetched_at < cutoff`
 
 **Location:** `data/wiki_cache.db` (auto-created)
 
@@ -1529,30 +1520,38 @@ CREATE TABLE embedding_cache (
 #### TEXT_REASON_PROMPT
 
 ```
-You are a QA expert. Answer this question using the provided context.
+Answer this question using the sources below.
 
-QUESTION: {question}
+Question: {question}
 
-CONTEXT:
-{assembled_context}
+{kg_facts}Wikipedia text:
+{context}
 
-ANSWER (concise, max 20 words):
+Instructions:
+- Knowledge graph facts (if present) are verified structured data — trust them
+- Use Wikipedia text to fill gaps not covered by KG facts
+- Show brief step-by-step reasoning
+- End with exactly: FINAL ANSWER: <answer>
 ```
 
-**Max tokens:** 500
+**Max tokens:** 1000 (default from `call_llm`)
 **Temperature:** 0
 
 #### TEXT_SUBQ_PROMPT
 
 ```
-Answer this sub-question using the provided Wikipedia context.
+Answer this sub-question using the sources below.
 
-SUB-QUESTION: {sub_question}
+Sub-question: {question}
 
-CONTEXT:
-{assembled_context}
+{kg_facts}Wikipedia text:
+{context}
 
-ANSWER:
+Instructions:
+- Knowledge graph facts (if present) are verified structured data -- trust them
+- Use Wikipedia text to fill gaps not covered by KG facts
+- Give a brief, factual answer
+- End with exactly: FINAL ANSWER: <answer>
 ```
 
 Used during LogicRAG sub-question execution.
@@ -1571,73 +1570,48 @@ Function: `discover_context_entities(seed_entities, projections, kg_client, ques
 
 **Algorithm:**
 ```python
-def discover_context_entities(seed_entities, projections, kg_client, question):
-    context_entities = list(seed_entities)
-
-    for seed_entity in seed_entities:
-        # 1. Determine expected neighbor types from schema
-        expected_types = project_expected_types(seed_entity, question)
-
-        # 2. Query neighbors via SPARQL wikiPageWikiLink
-        neighbors = kg_client.get_neighbors(
-            seed_entity.uri,
-            relation="wikiPageWikiLink",
-            limit=50
-        )
-
-        # 3. Filter neighbors by type and scoring
-        candidates = []
-        for neighbor in neighbors:
-            if neighbor.types & expected_types:  # Type match
-                score = candidate_score(neighbor, seed_entity, question)
-                candidates.append((neighbor, score))
-
-        # 4. Keep top-10 by score
-        candidates.sort(by=score, reverse=True)
-        context_entities.extend(candidates[:10])
-
-    return context_entities
+def discover_context_entities(
+    seed_entities, projections, kg_client,
+    question="", max_per_seed=5,     # Default: top-5 per seed entity
+) -> list[Entity]:
+    # For each seed entity:
+    # 1. Determine expected type from SchemaProjection's expected_target_type
+    # 2. SPARQL query: wikiPageWikiLink neighbors (limit=30, optionally type-filtered)
+    # 3. Score candidates via _score_candidates() (two-pass)
+    # 4. Keep top max_per_seed (default 5) by score
+    # Fallback chain:
+    #   1. Typed neighbors (wikiPageWikiLink + type filter)
+    #   2. Untyped neighbors (wikiPageWikiLink, no type)
+    #   3. Return seed entities only
 ```
 
-### Candidate Scoring
+### Candidate Scoring (Two-Pass)
 
-Scoring function combines multiple signals:
+Function: `_score_candidates(candidates, seed_uri, question, hop2_property, actual_uris, kg_client, ask_limit=10)`
 
+**Pass 1 — Cheap signals (no SPARQL):**
 ```python
-def candidate_score(neighbor, seed_entity, question):
-    score = 0
+# Label overlap with question words (+1 per overlapping word, stop words excluded)
+# Already-known URI penalty (-2): if URI already in entity's actual property values
+```
 
-    # Label overlap with question (+1)
-    q_tokens = set(question.lower().split())
-    n_tokens = set(neighbor.label.lower().split())
-    overlap = len(q_tokens & n_tokens)
-    score += overlap
-
-    # Known URI bonus (-2)
-    if neighbor.uri in KNOWN_URIS:
-        score -= 2  # Penalize if already well-known (reduce noise)
-
-    # Backlink count (+3)
-    # How many entities link to this one
-    backlink_count = kg_client.count_backlinks(neighbor.uri)
-    score += min(3, backlink_count / 10)
-
-    # Hop2 property match (+2)
-    if neighbor.types & hop2_properties_classes:
-        score += 2  # Target matches multi-hop properties
-
-    return score
+**Pass 2 — SPARQL ASK on top candidates only (up to ask_limit=10):**
+```python
+# Backlink check (+3): ASK { <candidate> wikiPageWikiLink <seed> }
+#   Single boolean ASK query, flat +3 if backlink exists (not count-based)
+# Hop2 property match (+2): ASK { <candidate> dbo:{hop2_property} ?x }
+#   Checks if candidate has the target hop-2 property
 ```
 
 ### ASK Limit
 
-Maximum 10 ASK queries per entity discovery (control execution time).
+Maximum 10 ASK queries per entity discovery (control execution time, `ask_limit=10`).
 
 ### Fallback Chain
 
 If typed neighbors insufficient:
-1. **Typed neighbors:** Entities matching expected classes
-2. **Untyped neighbors:** All wikiPageWikiLink neighbors (if typed empty)
+1. **Typed neighbors:** wikiPageWikiLink + type filter (limit=30)
+2. **Untyped neighbors:** wikiPageWikiLink without type (if typed returns empty)
 3. **Seed-only:** Return just seed entities (if untyped also returns nothing)
 
 ---
@@ -1646,7 +1620,7 @@ If typed neighbors insufficient:
 
 ### Overview
 
-Module: `llm_provider.py` (103 lines)
+Module: `llm_provider.py` (102 lines)
 
 Unified abstraction for three LLM providers: Groq, GitHub Models, Ollama
 
@@ -1654,85 +1628,72 @@ Unified abstraction for three LLM providers: Groq, GitHub Models, Ollama
 
 **Factory Function:**
 ```python
-def create_llm_client(provider: str, api_key: str = None) -> OpenAI:
-    if provider == "groq":
-        from groq import Groq
-        return Groq(api_key=api_key or os.getenv("GROQ_API_KEY"))
-    elif provider == "github":
-        from openai import OpenAI
-        return OpenAI(
-            api_key=api_key or os.getenv("GITHUB_TOKEN"),
-            base_url="https://models.inference.ai.azure.com"
-        )
-    elif provider == "ollama":
-        from openai import OpenAI
-        return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+PROVIDERS = {
+    "groq":   {"base_url": "https://api.groq.com/openai/v1",        "env_key": "GROQ_API_KEY"},
+    "github": {"base_url": "https://models.inference.ai.azure.com",  "env_key": "GITHUB_TOKEN"},
+    "ollama": {"base_url": "http://localhost:11434/v1",              "env_key": None},
+}
+
+def create_llm_client(provider: str = "groq", api_key: str | None = None) -> OpenAI:
+    cfg = PROVIDERS.get(provider)
+    if not cfg:
+        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(PROVIDERS)}")
+    if cfg["env_key"] is None:
+        key = api_key or "ollama"
     else:
-        raise ValueError(f"Unknown provider: {provider}")
+        key = api_key or os.environ.get(cfg["env_key"])
+        if not key:
+            raise ValueError(f"API key required: pass --api-key or set {cfg['env_key']}")
+    return OpenAI(base_url=cfg["base_url"], api_key=key)
 ```
 
-All providers follow OpenAI API contract.
+All providers use a single `OpenAI()` call — no separate `groq` import.
 
 ### call_llm() Retry Strategy
 
 **Function:**
 ```python
-def call_llm(llm_client, prompt, max_tokens=1000, temperature=0,
-             max_attempts=5, initial_wait=10.0):
-    """
-    Call LLM with exponential backoff on retryable errors.
-    """
+def call_llm(
+    client, prompt: str, model: str,          # model is REQUIRED 3rd positional arg
+    max_attempts: int = 5, initial_wait: float = 10.0,
+    max_tokens: int = 1000, temperature: float = 0,
+) -> str:
+    """Make an LLM call with retry on transient errors (429, 500, 503, timeout)."""
     for attempt in range(max_attempts):
         try:
-            response = llm_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",  # or from config
+            resp = client.chat.completions.create(
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
                 temperature=temperature,
+                max_tokens=max_tokens,
             )
-            return response.choices[0].message.content
+            return resp.choices[0].message.content.strip()
 
         except Exception as e:
-            error_code = extract_error_code(e)
-            if error_code not in ["429", "500", "502", "503", "504"]:
-                raise  # Non-retryable
-
-            wait_time = initial_wait * (2 ** attempt)
-            if wait_time > 150:  # Cap total wait at 150s
+            if _is_retryable(e) and attempt < max_attempts - 1:
+                wait = initial_wait * (2 ** attempt)
+                time.sleep(wait)
+            else:
                 raise
-
-            time.sleep(wait_time)
-
-    raise TimeoutError(f"LLM call failed after {max_attempts} attempts")
 ```
 
-**Retryable Errors (7 patterns):**
+**Retryable check:** `_is_retryable(e)` — returns `True` for `openai.RateLimitError` or if error string contains any of 7 patterns:
 ```
-429 (Rate limit exceeded)
-500 (Internal server error)
-502 (Bad gateway)
-503 (Service unavailable)
-504 (Gateway timeout)
-timeout (network timeout)
-connection (ConnectionError, ConnectionResetError, etc.)
+"429", "500", "502", "503", "504", "timeout", "connection"
 ```
 
-**Non-Retryable:**
-```
-400 (Bad request — malformed prompt)
-401 (Unauthorized — invalid API key)
-404 (Model not found)
-```
+**Non-Retryable:** All other exceptions (400, 401, 404, etc.) re-raised immediately.
 
-**Backoff Schedule:**
+**Backoff Schedule** (exponential, no cap):
 ```
-Attempt 1: 0s wait
+Attempt 1: immediate (0s wait)
 Attempt 2: 10s wait
 Attempt 3: 20s wait
 Attempt 4: 40s wait
-Attempt 5: 80s wait
-Total max: 150s
+Attempt 5: 80s wait (or re-raises if last attempt)
 ```
+
+Note: The 5th attempt's wait is only reached if `max_attempts > 5`. On the last attempt (`attempt == max_attempts - 1`), exceptions are re-raised without waiting.
 
 ### Default Configuration
 
@@ -1742,11 +1703,11 @@ Total max: 150s
 **Default provider:** `groq`
 
 **Model Options:**
-- Groq: `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`, `llama-2-70b-chat`
-- GitHub: `gpt-4o`, `gpt-4-turbo`, `claude-3.5-sonnet`
-- Ollama: `llama2`, `mistral`, `neural-chat` (local models)
+- Groq: `llama-3.3-70b-versatile` (default)
+- GitHub: `gpt-4o`
+- Ollama: any locally installed model
 
-All support OpenAI-compatible chat API.
+Model is selected at runtime via `--model` flag; no model list is hardcoded. All support OpenAI-compatible chat API.
 
 ---
 
@@ -1759,50 +1720,66 @@ All support OpenAI-compatible chat API.
 class Entity:
     uri: str
     label: str
-    confidence: float  # [0, 1] from Spotlight
-    source: str  # "spotlight", "spacy_ner", "title_keyword", etc.
-    discovery_relation: str = None  # Relation when discovered as neighbor
-    entity_type: str = None  # Class from type validation
+    types: list[str] = field(default_factory=list)  # rdf:type classes
+    abstract: Optional[str] = None                   # DBpedia abstract
+    confidence: float = 1.0                          # [0, 1] from Spotlight
+    source: str = "dbpedia"                          # "dbpedia", "spotlight", "sparql"
+    discovery_relation: Optional[str] = None         # Predicate that discovered this entity
 
     def __hash__(self):
         return hash(self.uri)
 
     def __eq__(self, other):
+        if not isinstance(other, Entity):
+            return False
         return self.uri == other.uri
 ```
+
+Note: No `entity_type` field — type information stored in `types` list.
 
 ### Triple Dataclass
 
 ```python
 @dataclass
 class Triple:
-    subject_uri: str
-    property_name: str
-    object_value: str  # Can be URI or literal
+    subject: str
+    predicate: str
+    obj: str                                    # Can be URI or literal
+    subject_label: Optional[str] = None
+    predicate_label: Optional[str] = None
+    obj_label: Optional[str] = None
+    confidence: float = 1.0
+    source: Optional[str] = None
 
     def __hash__(self):
-        return hash((self.subject_uri, self.property_name, self.object_value))
+        return hash((self.subject, self.predicate, self.obj))
 
     def __eq__(self, other):
-        return (self.subject_uri == other.subject_uri and
-                self.property_name == other.property_name and
-                self.object_value == other.object_value)
+        if not isinstance(other, Triple):
+            return False
+        return (self.subject == other.subject and
+                self.predicate == other.predicate and
+                self.obj == other.obj)
 ```
+
+Includes `to_natural_language()` method for converting triples to readable sentences.
 
 ### HybridResult Dataclass
 
 ```python
 @dataclass
 class HybridResult:
-    answer: str  # Final answer text
-    method: str  # "sparql", "logicrag_decomposed", or "text"
-    route_source: str  # Reason for routing decision
-    sparql_query: str = None  # Generated query (if applicable)
-    sparql_fallback: bool = False  # True if originally SPARQL but fell through
-    kg_context: str = None  # KG facts used for text reasoning
-    sub_question_log: list[dict] = None  # Decomposition trace
-    debug_info: dict = None  # Full metadata
+    answer: str                                              # Final answer text
+    method: str                                              # "sparql", "text", or "logicrag_decomposed"
+    route_source: str = ""                                   # "rule:*[+ask_verified|ask_missing]", "llm_prop:*", etc.
+    sparql_fallback: bool = False                            # True if routed SPARQL but fell back to text
+    sparql_query: Optional[str] = None                       # Executed SPARQL query (provenance)
+    kg_context: str = ""                                     # Formatted KG facts injected into text prompt
+    sub_question_log: list[dict] = field(default_factory=list)   # Per-sub-Q method/query/answer
+    debug_info: dict = field(default_factory=dict)               # Full metadata
 ```
+
+Note: `sparql_fallback` comes before `sparql_query`. Default values use `""`, `list()`, and `dict()` — not `None`.
 
 ### extract_final_answer() Function
 
@@ -1811,13 +1788,18 @@ def extract_final_answer(text: str) -> str:
     """Extract answer after last 'FINAL ANSWER:' marker (case-insensitive).
 
     Last-match semantics: if multiple markers, use the last one.
+    Returns text AFTER the marker (across newlines), not a single-line capture.
     Fallback: return full text if no marker found.
     """
-    matches = list(re.finditer(r"FINAL ANSWER:\s*(.*?)(?:\n|$)", text, re.IGNORECASE))
+    if not text:
+        return text or ""
+    matches = list(re.finditer(r"FINAL ANSWER:", text, re.IGNORECASE))
     if matches:
-        return matches[-1].group(1).strip()
-    return text.strip()
+        return text[matches[-1].end():].strip()
+    return text
 ```
+
+**Key detail:** The regex only matches the marker itself (`r"FINAL ANSWER:"`), then captures **all remaining text** via `text[match.end():]`. This differs from a single-line capture group — it preserves multi-line answers.
 
 **Rationale:** Multi-turn reasoning may include intermediate "FINAL ANSWER" lines; last one is definitive.
 
@@ -2013,16 +1995,16 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 
 | Parameter | Value | Location | Type | Notes |
 |-----------|-------|----------|------|-------|
-| Spotlight circuit breaker threshold | 3 failures | dbpedia/entity_linker.py:29,61 | Hardcoded | Trips breaker after 3 consecutive failures |
-| Spotlight circuit breaker cooldown | 120.0 sec | dbpedia/entity_linker.py:29,61 | Hardcoded | 2-minute cooldown before retrying Spotlight API |
+| Spotlight circuit breaker threshold | 3 failures | dbpedia/entity_linker.py:26,29 | Hardcoded | Trips breaker after 3 consecutive failures |
+| Spotlight circuit breaker cooldown | 120.0 sec | dbpedia/entity_linker.py:26,29 | Hardcoded | 2-minute cooldown before retrying Spotlight API |
 | HTTP client timeout | 30.0 sec | dbpedia/entity_linker.py:187 | Hardcoded | httpx timeout for entity linking HTTP requests |
 | min_confidence threshold | 0.5 | hybrid_qa.py:80 | Hardcoded | Minimum confidence for entity linking acceptance |
-| Spotlight disamb. max_tokens | 10 | dbpedia/entity_linker.py:652 | Hardcoded | Budget for LLM disambiguation calls |
-| Spotlight disamb. temperature | 0 | dbpedia/entity_linker.py:652 | Hardcoded | Deterministic decoding for Spotlight resolution |
-| Spotlight disamb. max_attempts | 2 | dbpedia/entity_linker.py:652 | Hardcoded | Max retry attempts for disambiguation |
+| Spotlight disamb. max_tokens | 10 | dbpedia/entity_linker.py:650-652 | Hardcoded | Budget for LLM disambiguation calls |
+| Spotlight disamb. temperature | 0 | dbpedia/entity_linker.py:650-652 | Hardcoded | Deterministic decoding for Spotlight resolution |
+| Spotlight disamb. max_attempts | 2 | dbpedia/entity_linker.py:650-652 | Hardcoded | Max retry attempts for disambiguation |
 | Wikipedia search result limit | 3 | dbpedia/wiki_resolver.py:71 | Hardcoded | srlimit=3 in Wikipedia search_candidates() |
 
-### 13.2 SPARQL Execution & DBpedia (12 Parameters)
+### 13.2 SPARQL Execution & DBpedia (9 Parameters)
 
 | Parameter | Value | Location | Type | Notes |
 |-----------|-------|----------|------|-------|
@@ -2054,7 +2036,7 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 | Wiki delay (alternate) | 0.5 sec | ablation_study_v3/wiki_utils.py:17 | Hardcoded | Alternative Wikipedia rate limit |
 | Spotlight delay (test harness) | 1.0 sec | scripts/test_ensemble_el_live.py:49 | Hardcoded | Rate limit for Spotlight in test ensemble |
 
-### 13.4 RAG (Vector Store, Chunking, Reranking) — 14 Parameters
+### 13.4 RAG (Vector Store, Chunking, Reranking) — 13 Parameters
 
 | Parameter | Value | Location | Type | Notes |
 |-----------|-------|----------|------|-------|
@@ -2086,7 +2068,7 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 
 **_COUNTRY_PROPERTIES** (10) → See Section 5
 
-**PARENT_PROPS** (4) → See Section 5
+**_PARENT_PROPS** (5) → See Section 5
 
 ### 13.6 LogicRAG Decomposition — 2 Parameters
 
@@ -2269,32 +2251,22 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 ### SQLite Wiki Cache (wiki_cache.db)
 
 **Location:** `data/wiki_cache.db`
-**Size:** ~100MB typical (100K chunks)
 
 **Schema:**
 ```sql
-CREATE TABLE wiki_chunks (
-    chunk_id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    section TEXT,
-    text TEXT NOT NULL,
-    chunk_hash TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP
-);
-
-CREATE INDEX idx_title_expires ON wiki_chunks(title, expires_at);
-
-CREATE TABLE embedding_cache (
-    chunk_id TEXT PRIMARY KEY,
-    embedding BLOB NOT NULL,  -- 384-dim float32
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS wiki_pages (
+    title TEXT PRIMARY KEY,
+    chunks_json TEXT,      -- JSON-serialized list of WikiChunk dicts
+    embeddings BLOB,       -- numpy array of all chunk embeddings
+    fetched_at REAL        -- Unix timestamp
 );
 ```
 
+Single table stores chunks + embeddings together per page title.
+
 **Eviction Policy:**
-- **Time-based:** 7-day TTL (entries expire)
-- **Chunk-count invalidation:** If Wikipedia article is updated (detected by chunk count mismatch), clear all old chunks for that title
+- **Time-based:** 7-day TTL (`_EVICTION_DAYS = 7`, `rag/cache.py:13`)
+- Eviction runs on each `WikiRAGCache` instantiation: `DELETE FROM wiki_pages WHERE fetched_at < cutoff`
 
 **Initialization:** Auto-created on first run; no manual setup required
 
@@ -2453,6 +2425,6 @@ The following parameters lack empirical justification or sensitivity analysis:
 
 **End of Technical Documentation**
 
-Total lines: 2,847 (including tables, code blocks, ASCII diagrams)
+Total lines: ~2,430 (including tables, code blocks, ASCII diagrams)
 
 This document is thesis-ready for citing specific hyperparameter choices and documenting experimental variations.
