@@ -24,6 +24,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -42,6 +43,29 @@ LOGICRAG_CORPUS = os.path.join(LOGICRAG_DIR, "dataset", "2wikimultihopqa_corpus.
 DEFAULT_OUTPUT = os.path.join(
     PROJECT_ROOT, "data", "eval_1000q", "logicrag_1000q_traced.jsonl"
 )
+
+# ---------------------------------------------------------------------------
+# TeeWriter: duplicate stdout/stderr to both terminal and log file
+# ---------------------------------------------------------------------------
+class TeeWriter:
+    """Write to multiple streams simultaneously (terminal + log file)."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+    def fileno(self):
+        # Delegate to first stream (e.g., real stdout) for signal compatibility
+        return self.streams[0].fileno()
+
 
 # ---------------------------------------------------------------------------
 # Load our metrics (bypass evaluation/__init__.py heavy imports)
@@ -196,10 +220,12 @@ def main():
                         help="Cap remaining questions (for testing)")
     parser.add_argument("--timeout", type=int, default=300,
                         help="Per-question SIGALRM timeout in seconds (default: 300)")
-    parser.add_argument("--max-rounds", type=int, default=5,
-                        help="LogicRAG max reasoning rounds (default: 5)")
-    parser.add_argument("--top-k", type=int, default=5,
-                        help="LogicRAG retrieval top-k (default: 5)")
+    parser.add_argument("--max-rounds", type=int, default=3,
+                        help="LogicRAG max reasoning rounds (default: 3, matches paper)")
+    parser.add_argument("--top-k", type=int, default=3,
+                        help="LogicRAG retrieval top-k (default: 3, paper-optimal)")
+    parser.add_argument("--log-dir", default="logs",
+                        help="Directory for log files (default: logs/)")
     args = parser.parse_args()
 
     # Register graceful shutdown handlers
@@ -208,6 +234,36 @@ def main():
 
     # Set API key before importing LogicRAG (config.py reads it at import)
     os.environ["GROQ_API_KEY"] = args.api_key
+
+    # ---------------------------------------------------------------
+    # Set up file logging (TeeWriter duplicates stdout+stderr to file)
+    # ---------------------------------------------------------------
+    today = datetime.now().strftime("%y%m%d")
+    log_dir = args.log_dir if os.path.isabs(args.log_dir) else os.path.join(PROJECT_ROOT, args.log_dir)
+    os.makedirs(log_dir, exist_ok=True)
+    log_filename = f"logicrag_1000q_{today}_topk{args.top_k}_rounds{args.max_rounds}.log"
+    log_path = os.path.join(log_dir, log_filename)
+    _log_file = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+    sys.stdout = TeeWriter(sys.__stdout__, _log_file)
+    sys.stderr = TeeWriter(sys.__stderr__, _log_file)
+
+    # ---------------------------------------------------------------
+    # Config summary
+    # ---------------------------------------------------------------
+    corpus_name = os.path.basename(LOGICRAG_CORPUS)
+    output_name = args.output
+    print("=== LogicRAG 1000q Experiment Config ===")
+    print(f"Date:       {datetime.now().strftime('%Y-%m-%d')}")
+    print("LLM:        llama-3.3-70b-versatile (Groq)")
+    print("Embedding:  all-MiniLM-L6-v2")
+    print(f"top_k:      {args.top_k}")
+    print(f"max_rounds: {args.max_rounds}")
+    print(f"timeout:    {args.timeout}s")
+    print("max_tokens: 250")
+    print(f"corpus:     {corpus_name}")
+    print(f"output:     {output_name}")
+    print(f"log:        {log_path}")
+    print("=" * 40)
 
     # ---------------------------------------------------------------
     # Load data
