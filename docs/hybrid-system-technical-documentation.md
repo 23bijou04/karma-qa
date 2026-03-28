@@ -1205,8 +1205,10 @@ sub_q_with_answers = _substitute_answers(sub_q.text, known_facts)
 # Route via _rule_based_route() (rule-based only, no LLM route prompt)
 route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
 
-# NOT mutually exclusive — always try SPARQL first when schema exists
-attempt_sparql = route_result is not None or bool(combined_schema)
+# Only attempt SPARQL when routing rules explicitly matched;
+# bool(combined_schema) is nearly always True (any entity with a URI),
+# which defeated routing and wasted LLM+SPARQL calls on TEXT sub-Qs.
+attempt_sparql = route_result is not None
 
 if attempt_sparql and combined_schema:
     answer = sparql_solver.solve(...)

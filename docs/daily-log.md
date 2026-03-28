@@ -25,7 +25,7 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 - `baselines/LinearRAG/` — LinearRAG baseline (self-contained)
 - `tests/` — Unit tests for routing, schema, decomposition, etc.
 
-**Data:** 12,576 questions total, 1,000-question eval subset (318 KG-answerable via hop verification, date-tolerant; evaluations ran on original 346-question set).
+**Data:** 12,576 questions total, 1,000-question eval subset (368 KG-answerable via hop-verified predicate existence; evaluations ran on original 346-question set).
 
 **Baselines:** SPARQL-only, GRASP (external), LinearRAG, Hybrid (ours).
 
@@ -33,12 +33,19 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 
 ---
 
+## 2026-03-27
+
+- **[eval]**: Decided to re-run LogicRAG baseline on full 1000q for fair comparison — previous 100q run used top_k=5, mismatching the paper's top_k=3 config
+- **[config]**: Final config: top_k=3, max_rounds=3, llama-3.3-70b-versatile (Groq), all-MiniLM-L6-v2 embeddings; using same LLM as all our systems (controlled variable, paper used gpt-4o-mini)
+- **[infra]**: Output → `data/eval_1000q/logicrag_1000q_traced.jsonl`; previous top_k=5 artifact backed up as `logicrag_1000q_traced_topk5.jsonl.bak`; `logs/` dir exists with prior `logicrag_100q.log`
+- **[next]**: After run completes (~6-10h): judge with `scripts/judge_hybrid_eval.py`, then run `scripts/unified_comparison.py` for final cross-pipeline table
+
 ## 2026-03-26
 
-- **[metrics]**: Added `normalize_date()` to `evaluation/metrics.py` — converts ISO/DMY/MDY dates to canonical YYYY-MM-DD, closing 5pp gap between property coverage (36.8%) and strict-match answerability (11.9% → 31.8%)
+- **[metrics]**: Added `normalize_date()` to `evaluation/metrics.py` — converts ISO/DMY/MDY dates to canonical YYYY-MM-DD, addressing date format mismatch that accounts for the dominant share of the 36.8% → 11.9% strict-match gap
 - **[bugfix]**: Fixed RAG chunk unpacking in `text_solver.py` — `RAGIndex.retrieve()` returns `(WikiChunk, float)` tuples, metadata tracking now unpacks correctly
-- **[data]**: Committed hop-verified ground truth (`hop_verification_results.json`, 318/1000 KG-answerable) and eval artifacts (corrected coverage, judged hybrid eval, LogicRAG traces)
-- **[docs]**: Updated all coverage references across 7 docs from corrected estimates (42.2%/34.6%) to hop-verified numbers (36.8%/31.8%); added `coverage-verification-1000q.md` methodology doc
+- **[data]**: Committed hop-verified ground truth (`hop_verification_results.json`, 368/1000 KG-answerable predicate-complete, 119/1000 strict) and eval artifacts (corrected coverage, judged hybrid eval, LogicRAG traces)
+- **[docs]**: Updated all coverage references across 7 docs from corrected estimates (42.2%/34.6%) to hop-verified numbers (36.8%/11.9%); added `coverage-verification-1000q.md` methodology doc
 - **[scripts]**: Added LogicRAG eval infrastructure — `logicrag-instrumented.py` (trace-capturing subclass), `run-logicrag-1000q.py` (batch runner), `rerun_failed_text.py` (selective re-eval of failed text-path questions)
 - **[cleanup]**: Removed 19 outdated verification/analysis scripts and docs superseded by hop-verified ground truth
 
