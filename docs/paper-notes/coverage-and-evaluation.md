@@ -41,6 +41,8 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 ### Hybrid vs LogicRAG — Matched 100q Comparison
 
+> **Version provenance (2026-03-28):** Numbers from 2026-03-26 JSONL snapshots (both `.bak_v1`). Files have since been re-judged. Pending re-comparison with current versions.
+
 | Metric | Hybrid | LogicRAG decomposed |
 |--------|--------|---------------------|
 | LLM judge accuracy | 89% | 80% |

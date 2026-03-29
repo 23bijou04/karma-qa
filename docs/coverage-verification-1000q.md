@@ -9,7 +9,7 @@
 
 The 2WikiMultiHopQA benchmark provides multi-hop questions where each answer requires traversing a chain of evidence triples: seed entity → hop-1 property → bridge entity → hop-2 property → answer. Our prior coverage analysis on the full dev set (12,576 questions) established entity coverage of 92.5% and per-pair property coverage of 60.1%, yielding a full-dataset answerability rate of 31.1%.
 
-To obtain more rigorous numbers for thesis reporting, we drew a stratified 1000-question evaluation subset and conducted three progressively more rigorous verification passes against live DBpedia SPARQL, culminating in a hop-by-hop chain verification that checks every evidence triple independently.
+To obtain more rigorous numbers for thesis reporting, we used a 1000-question evaluation subset (from LinearRAG's evaluation set, Zly0523/linear-rag) and conducted three progressively more rigorous verification passes against live DBpedia SPARQL, culminating in a hop-by-hop chain verification that checks every evidence triple independently.
 
 ## 2. Methodology Progression
 
@@ -52,24 +52,20 @@ Re-checked all 361 (entity, property) pairs previously marked "missing" for the 
 
 The most rigorous methodology. For each question, independently resolves every evidence triple's subject entity against DBpedia (fresh entity resolution, not reusing cached URIs), checks predicate existence, retrieves actual values, and verifies value match against the benchmark's expected object.
 
-Three metrics are computed:
+Two metrics are computed:
 
 - **Property exists:** All required predicates exist at every hop
-- **Date-tolerant chain traversal:** All predicates exist AND values match, except date properties where predicate existence suffices (rationale: DBpedia stores dates as `xsd:date` like `1923-04-09` while the benchmark uses human text like `9 April 1923` --- the data is equivalent, any QA system performs this normalization trivially)
 - **Strict value match:** All predicates exist AND all value strings match exactly
 
 | Metric | Value |
 |--------|-------|
 | Entity coverage | 93.6% (936/1000) |
 | Property exists (all hops) | **36.8% (368/1000)** |
-| Chain-traversable (date-tolerant) | **31.8% (318/1000)** |
 | Chain-traversable (strict) | 11.9% (119/1000) |
 
 **Why Pass 3 < Pass 2 (36.8% vs 41.6%):** Pass 3 resolves entities independently per evidence triple, catching cases where the entity resolves to the wrong DBpedia URI (e.g., "Thomas Jefferson" → the president, not the film). Pass 2 reused pre-resolved URIs from Pass 1, which masked entity disambiguation errors.
 
-**Why date-tolerant < property-exists (31.8% vs 36.8%):** 50 questions have all predicates but values don't match --- primarily entity disambiguation issues (DBpedia returns a different but valid value) and label normalization differences.
-
-**Why strict is so low (11.9%):** Date format mismatch dominates. Bridge_comparison questions (24% of dataset) require date comparisons; DBpedia returns `1923-04-09` while the benchmark expects `9 April 1923`. These are informationally identical --- the strict metric is artificially low and should not be reported as the primary number.
+**Why strict is so low (11.9%):** The 249-question gap (368→119) arises from three compounding sources: (1) date format mismatch (dominant) — DBpedia stores `1923-04-09` while the benchmark expects `9 April 1923`; (2) entity disambiguation — DBpedia returns a valid but different entity than the benchmark expects; (3) label normalization — DBpedia returns a URI where the benchmark expects a label string. The strict metric is artificially low and should not be reported as the primary number.
 
 ## 3. Entity Coverage: 93.6% (Verified)
 
@@ -124,10 +120,11 @@ The original `PROPERTY_MAPPINGS` in `archive/scripts/coverage_analysis.py` conta
 
 ### 4.3 The Value Match Gap
 
-Of the 368 questions where all predicates exist, only 318 (86.4%) have matching values (date-tolerant). The 50-question gap comes from:
+Of the 368 questions where all predicates exist, only 119 have exact-string matching values. The 249-question gap (368→119) comes from:
 
+- **Date format mismatch (dominant):** DBpedia stores `xsd:date` values like `1923-04-09` while the benchmark expects human-readable text like `9 April 1923`. These are informationally identical but produce zero string-match score.
 - **Entity disambiguation:** DBpedia returns a valid but different entity than the benchmark expects (e.g., the entity exists but is the wrong "Thomas Jefferson")
-- **Label normalization:** DBpedia returns a URI where the benchmark expects a label, or vice versa
+- **Label normalization:** DBpedia returns a URI where the benchmark expects a label string, or vice versa
 - **Multi-valued properties:** DBpedia has multiple values (e.g., multiple nationalities) and the benchmark expects a specific one
 
 ## 5. Answerable Subset: Which Number to Report?
@@ -136,11 +133,10 @@ Of the 368 questions where all predicates exist, only 318 (86.4%) have matching 
 |--------|-------|------------------|----------|
 | Original answerable | 34.6% (346) | Predicate exists (narrow map) | Historical: evaluations ran on this set |
 | Predicate-corrected | 37.5% (375) | Predicate exists (expanded map) | Superseded |
-| Property-complete (hop) | **36.8% (368)** | All predicates exist per hop | "DBpedia has the right schema" |
-| **Chain-traversable** | **31.8% (318)** | Predicates exist AND values match (date-tolerant) | **Primary thesis number** |
+| **Property-complete (hop)** | **36.8% (368)** | All predicates exist per hop | **Primary thesis number** |
 | Strict match | 11.9% (119) | Exact value string match | Artificially low (date format artifact) |
 
-**Recommendation:** Report **31.8% (318/1000)** as the primary "KG-answerable" rate. It is the most honest and defensible number: it verifies the actual evidence chain can be walked end-to-end, assuming basic date normalization (which any QA system implements). The gap between 36.8% (predicates exist) and 31.8% (values match) is itself a finding worth discussing --- it quantifies the cost of entity disambiguation and value normalization errors.
+**Recommendation:** Report **36.8% (368/1000, hop-verified predicate existence)** as the primary "KG-answerable" rate. It is the most honest and defensible number: it verifies that every evidence predicate exists at every hop via live SPARQL traversal, without baking in assumptions about value normalization. The gap between 36.8% (predicates exist) and 11.9% (strict match) quantifies date format mismatch, entity disambiguation, and label normalization costs — these are reported as data quality findings, not adjustments to the primary number.
 
 **Note on evaluation subset:** The SPARQL and GRASP evaluations were run on the original 346-question answerable set (based on Pass 1). This does not invalidate those results --- the 346 questions are a subset of the 368 property-complete questions, and the evaluation measured system accuracy, not KG coverage.
 
@@ -150,21 +146,21 @@ Of the 368 questions where all predicates exist, only 318 (86.4%) have matching 
 |--------|:---:|:---:|-------|
 | Entity coverage | 92.5% | 93.6% | Consistent |
 | Property coverage | 60.1% (per-pair) | 36.8% (per-question, hop-verified) | Different granularity: per-pair vs per-question |
-| Answerability | 31.1% | 31.8% (chain-traversable) | Remarkably consistent |
+| Answerability | 31.1% | 36.8% (hop-verified, predicate existence) | 1000q is the more rigorous measurement |
 
-The 1000q chain-traversable rate (31.8%) closely matches the full dev set answerability (31.1%), providing confidence that the 1000q subset is representative. The full dev set numbers have **not** been hop-verified and likely suffer from the same property mapping gaps identified here; the true full-dataset chain-traversable rate may be lower.
+The 1000q hop-verified rate (36.8%) is moderately higher than the full dev set answerability (31.1%). The full dev set numbers have **not** been hop-verified and likely suffer from the same property mapping gaps identified here; the 31.1% figure uses a narrower predicate mapping and may understate true predicate coverage.
 
 ## 7. Key Findings
 
 1. **Entity coverage is solid (93.6%)** and confirmed against live DBpedia with 100% accuracy on sampled URIs. The 65 missing entities are genuinely absent --- obscure historical figures with non-standard naming.
 
-2. **Property coverage depends heavily on methodology.** The original narrow PROPERTY_MAP (38.5%) understates coverage by ~3pp due to missing predicate mappings. But even with perfect mapping (41.6%), fresh entity resolution drops it to 36.8%, and value matching drops it further to 31.8%.
+2. **Property coverage depends heavily on methodology.** The original narrow PROPERTY_MAP (38.5%) understates coverage by ~3pp due to missing predicate mappings. But even with perfect mapping (41.6%), fresh entity resolution drops it to 36.8%.
 
 3. **The property mapping gap is a known, fixable limitation** of the analysis pipeline, not of DBpedia itself. The five unmapped properties and four with narrow predicates could be corrected in the analysis code. However, for thesis reporting, the hop-verified numbers are more honest because they also capture entity disambiguation errors that the analysis pipeline masks.
 
-4. **Date format mismatch is an artifact, not a real coverage gap.** The 36.8% → 11.9% drop from date-tolerant to strict matching is entirely due to DBpedia storing `xsd:date` values while the benchmark uses human-readable text. Reporting 11.9% would be misleading.
+4. **The 36.8% → 11.9% strict-match gap is dominated by date format mismatch** (DBpedia stores `xsd:date` values while the benchmark uses human-readable text), plus entity disambiguation and label normalization. The 249-question gap between predicate-complete and strict-match is a data quality finding, not a reason to adjust the primary number.
 
-5. **31.8% chain-traversable matches the full-dataset 31.1%,** providing cross-validation between the independent 1000q verification and the original full-dataset analysis.
+5. **36.8% (hop-verified) vs 31.1% (full-dataset):** The 1000q subset is moderately higher, consistent with the expanded predicate mapping applied to the 1000q analysis. The full-dataset figure is based on a narrower predicate set and likely understates true predicate coverage.
 
 ---
 

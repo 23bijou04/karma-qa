@@ -5,6 +5,8 @@
 **Judge:** gemma3:12b via Ollama (local), with word-level containment fast path
 **Data:** `hybrid_eval_1000_judged.jsonl` (Hybrid), `logicrag_1000q_traced_judged.jsonl` (LogicRAG)
 
+> **Version provenance (2026-03-28):** This comparison used file versions from 2026-03-26 (both `.bak_v1`). Both JSONL files have since been re-judged (Hybrid: Mar 28, LogicRAG: Mar 27). Numbers below reflect the Mar 26 snapshot and may differ with current file versions. A re-comparison with current versions is pending.
+
 > For architectural differences between the two retrieval systems, see [logicrag-vs-our-retrieval.md](logicrag-vs-our-retrieval.md).
 
 ---

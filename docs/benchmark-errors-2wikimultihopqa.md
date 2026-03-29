@@ -252,7 +252,7 @@ This methodology targets **data-provenance errors** (incorrect Wikidata triples 
 
 Single-annotator limitation: all manual review was performed by one annotator (the thesis author). Inter-annotator agreement (e.g., Cohen's kappa) was not measured, which would be required for publication-quality error reporting. For thesis purposes, the single-annotator assessment is stated explicitly.
 
-The 1000q evaluation subset is answerability-filtered (31.8% KG-answerable via hop verification, date-tolerant; original property-existence analysis gave 34.6%). Evaluations were run on the original 346-question answerable set. Error rate estimates apply only to this subset. Source: `data/eval_1000q/hop_verification_results.json`.
+The 1000q evaluation subset is answerability-filtered (36.8% KG-answerable via hop-verified predicate existence; original property-existence analysis gave 34.6%). Evaluations were run on the original 346-question answerable set. Error rate estimates apply only to this subset. Source: `data/eval_1000q/hop_verification_results.json`.
 
 ### Raw Scan Summary
 

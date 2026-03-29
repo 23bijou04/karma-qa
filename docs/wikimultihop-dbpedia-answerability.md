@@ -343,8 +343,8 @@ For properties that cannot be found in any knowledge graph:
 A live verification of the 1000-question eval subset against DBpedia SPARQL found:
 
 - **Entity coverage (93.6%) confirmed**: 248/248 sampled existing entities confirmed live; all 65 missing entities confirmed truly absent.
-- **Property coverage (hop-verified)**: Hop-by-hop verification checked every evidence triple against live DBpedia. **36.8%** (368/1000) have all required predicates at every hop. **31.8%** (318/1000) are fully chain-traversable (date-tolerant). Strict value match: 11.9% (119/1000) — artificially low due to date format mismatch (`1923-04-09` vs `9 April 1923`).
-- **Methodology progression**: original PROPERTY_MAP (38.5%) → predicate-expanded (41.6%) → hop verification (36.8% property, 31.8% answerable). The hop verification is the ground truth because it verifies the actual chain can be walked, not just that predicates exist per-entity.
+- **Property coverage (hop-verified)**: Hop-by-hop verification checked every evidence triple against live DBpedia. **36.8%** (368/1000) have all required predicates at every hop. Strict value match: 11.9% (119/1000) — low due to date format mismatch (`1923-04-09` vs `9 April 1923`), entity disambiguation, and label normalization.
+- **Methodology progression**: original PROPERTY_MAP (38.5%) → predicate-expanded (41.6%) → hop verification (36.8% property, 11.9% strict). The hop verification is the ground truth because it verifies the actual chain can be walked, not just that predicates exist per-entity.
 - **Biggest mapping gaps**: `country of origin` (75% of "missing" actually found via `dbp:country`), `performer` (55% found via `dbo:artist`), `place of burial` (54% found via `dbp:burialPlace`/`dbo:restingPlace`).
 - **Full-dataset (12,576q) numbers above are likely also understated** for the same predicate-mapping reasons, particularly for `inception` (reported 0%, verified 45% found rate) and `place of burial` (reported 1.3%, verified 54%).
 

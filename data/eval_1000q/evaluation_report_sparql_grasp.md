@@ -1,7 +1,7 @@
 # Evaluation Report: Schema-Guided SPARQL vs GRASP (1000q Subset)
 
 **Date:** 2026-02-23 (corrected SPARQL numbers from latest eval)
-**Dataset:** 2WikiMultiHopQA dev split — 1000-question stratified sample
+**Dataset:** 2WikiMultiHopQA dev split — 1000-question subset (from LinearRAG evaluation set, Zly0523/linear-rag)
 **Evaluation subset:** 346 DBpedia-answerable questions (all required properties verified)
 
 ---

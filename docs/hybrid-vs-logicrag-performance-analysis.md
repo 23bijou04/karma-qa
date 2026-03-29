@@ -4,6 +4,8 @@
 **Source data:** `hybrid_eval_1000_judged.jsonl`, `logicrag_1000q_traced_judged.jsonl` (first 100 questions)
 **Companion:** [hybrid-vs-logicrag-100q-comparison.md](hybrid-vs-logicrag-100q-comparison.md), [logicrag-vs-our-retrieval.md](logicrag-vs-our-retrieval.md)
 
+> **Version provenance (2026-03-28):** Based on file versions from 2026-03-26 (both `.bak_v1`). Both JSONL files have since been re-judged. Numbers may differ with current versions.
+
 > Every conclusion below is traced to a code path or data record. No interpretive claims without evidence.
 
 ---

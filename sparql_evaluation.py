@@ -71,7 +71,10 @@ DEFAULT_COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
 def load_answerable_questions(coverage_file: str) -> list[dict]:
     with open(coverage_file) as f:
         data = json.load(f)
-    answerable = [q for q in data["questions"] if q["is_answerable"]]
+    answerable = [
+        q for q in data["questions"]
+        if q.get("hop_verified_answerable", q.get("is_answerable", False))
+    ]
     print(f"Loaded {len(answerable)} answerable questions from {coverage_file}")
     return answerable
 

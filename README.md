@@ -74,7 +74,7 @@ Answer
 
 ## Evaluation Results
 
-Evaluated on 346 DBpedia-answerable questions from a 1000-question stratified sample:
+Evaluated on 346 DBpedia-answerable questions from a 1000-question subset (LinearRAG evaluation set):
 
 | System | EM | F1 | Judge EM | Best At |
 |--------|-----|------|----------|---------|
@@ -99,9 +99,9 @@ Based on analysis of the full 2WikiMultiHopQA dev set (12,576 questions):
 |--------|:---:|:---:|
 | Entity Coverage | 92.5% | 93.6% (verified live) |
 | Property Coverage | 60.1% (per pair) | 36.8% (368/1000, hop-verified) |
-| **KG-Answerable** | **31.1%** | **31.8% (318/1000, date-tolerant chain traversal)** |
+| **KG-Answerable** | **31.1%** | **36.8% (368/1000, hop-verified predicate existence)** |
 
-Property coverage is the bottleneck. Hop-by-hop verification (2026-03-25) checked every evidence triple against live DBpedia: 36.8% have all required predicates, 31.8% are fully chain-traversable (date-tolerant). The 5pp gap comes from entity disambiguation and value normalization issues. Ground truth: `data/eval_1000q/hop_verification_results.json` (script: `scripts/verify_hop_coverage.py`). See [docs/wikimultihop-dbpedia-answerability.md](docs/wikimultihop-dbpedia-answerability.md) for the full analysis.
+Property coverage is the bottleneck. Hop-by-hop verification (2026-03-25) checked every evidence triple against live DBpedia: 36.8% have all required predicates at every hop. Strict value match is 11.9% (119/1000), low due to date format mismatch, entity disambiguation, and label normalization. Ground truth: `data/eval_1000q/hop_verification_results.json` (script: `scripts/verify_hop_coverage.py`). See [docs/wikimultihop-dbpedia-answerability.md](docs/wikimultihop-dbpedia-answerability.md) for the full analysis.
 
 ## Installation
 
