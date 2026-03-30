@@ -31,12 +31,14 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 ## System Evaluation Results
 
-### Hybrid System — 100q Pilot (current-current, 2026-03-30)
-| Metric | Value |
-|--------|-------|
-| LLM judge accuracy | 88% |
-| Exact match (EM) | 63% |
-| F1 | 73.3% |
+### Hybrid System — First 100 of 1000q (regression reference)
+| Metric | Hybrid | LogicRAG |
+|--------|--------|----------|
+| LLM judge accuracy | 89% | 76% |
+| EM | 67.0% | 61.0% |
+| F1 | 78.6% | 69.5% |
+
+**Source:** first 100 questions (by hybrid eval order) from `hybrid_eval_1000_judged.jsonl` / `logicrag_1000q_traced_judged.jsonl`.
 
 ### Hybrid vs LogicRAG — Full 1000q Comparison
 
@@ -48,40 +50,61 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 **Delta:** +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
 
-### By Question Type (100q pilot, current-current 2026-03-30)
+### By Question Type — Full 1000q
 
 | Type | n | Hybrid judge | LogicRAG judge | Delta |
 |------|---|-------------|----------------|-------|
-| Comparison | 24 | 95.8% | 87.5% | +8.3 pp |
-| Bridge comparison | 20 | 90.0% | 75.0% | +15.0 pp |
-| Inference | 13 | 100.0% | 92.3% | +7.7 pp |
-| Compositional | 43 | 79.1% | 58.1% | +20.9 pp |
+| Comparison | 244 | 91.4% | 92.6% | -1.2 pp |
+| Bridge comparison | 235 | 80.9% | 72.8% | +8.1 pp |
+| Inference | 108 | 90.7% | 86.1% | +4.6 pp |
+| Compositional | 413 | 79.9% | 61.7% | +18.2 pp |
 
-Hybrid leads on all types. Prior .bak_v1 data showed LogicRAG winning inference (100% vs 80%) — re-judging corrected this.
+Hybrid leads on 3/4 types. Comparison is the only type where LogicRAG is marginally better (-1.2 pp) — both systems score >91% there, likely a ceiling effect.
 
-### KG-Answerable Segment (n=32, 100q subset, hop_verified)
+### By Question Type — First 100 (regression reference)
+
+| Type | n | Hybrid judge | LogicRAG judge | Delta |
+|------|---|-------------|----------------|-------|
+| Comparison | 20 | 95.0% | 90.0% | +5.0 pp |
+| Bridge comparison | 19 | 94.7% | 84.2% | +10.5 pp |
+| Inference | 15 | 80.0% | 73.3% | +6.7 pp |
+| Compositional | 46 | 87.0% | 67.4% | +19.6 pp |
+
+**100→1000q regression note:** Hybrid advantage shrinks at scale on bridge_comparison (+10.5→+8.1 pp) and inference (+6.7→+4.6 pp). Compositional gap persists (+19.6→+18.2 pp). Comparison flips from +5.0 to -1.2 pp — small samples overestimate Hybrid's advantage on simple comparisons where both systems are >90%.
+
+### KG-Answerable Segment (hop_verified, all_properties_exist=True)
+
+**Full 1000q (n=368):**
 
 | System | Judge accuracy |
 |--------|---------------|
-| Hybrid | 93.8% (30/32) |
-| LogicRAG decomposed | 65.6% (21/32) |
-| Delta | +28.1 pp |
+| Hybrid | 88.0% (324/368) |
+| LogicRAG decomposed | 73.9% (272/368) |
+| Delta | +14.1 pp |
 
-**Key insight:** On KG-answerable questions (where DBpedia has the answer), hybrid system substantially outperforms text-only decomposition approach. Delta is even larger than previously reported (+28pp vs +14pp) due to corrected answerability flag and re-judging.
+**First 100 (n=38):**
+
+| System | Judge accuracy |
+|--------|---------------|
+| Hybrid | 97.4% (37/38) |
+| LogicRAG decomposed | 76.3% (29/38) |
+| Delta | +21.1 pp |
+
+**Key insight:** On KG-answerable questions, hybrid consistently outperforms text-only decomposition. Delta narrows at scale (21→14 pp) as the 368-question set includes harder cases. Source: `hop_verification_results.json` (all_properties_exist=True).
 
 ---
 
-## Hyperparameter Catalog (Verified, 93.9% correct)
+## Hyperparameter Catalog (Verified against code 2026-03-30)
 
 ### RAG / Retrieval
 | Parameter | Value | Source |
 |-----------|-------|--------|
 | Chunk size | 512 characters | `rag/chunker.py` |
-| Chunk overlap | 64 tokens | `rag/chunker.py` |
+| Chunk overlap | 64 characters | `rag/chunker.py` |
 | Bi-encoder model | `all-MiniLM-L6-v2` | `rag/vector_store.py` |
 | Cross-encoder model | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `rag/reranker.py` |
-| Retrieval top_k | 30 | `rag/vector_store.py` |
-| Reranker top_k | 15 | `rag/reranker.py` |
+| Retrieval top_k | 20 | `text_solver.py:259` (overrides `vector_store.py` default of 30) |
+| Reranker top_k | 8 | `text_solver.py:271` (overrides `reranker.py` default of 15) |
 | Max context chars | 12,000 | `text_solver.py` |
 | Seed entity boost | 1.2 | `rag/vector_store.py` |
 
@@ -141,5 +164,14 @@ Hybrid leads on all types. Prior .bak_v1 data showed LogicRAG winning inference 
 - Hybrid LLM judge accuracy: 84.1% (1000q), EM: 68.1%, F1: 75.4%
 - LogicRAG LLM judge accuracy: 74.5% (1000q), EM: 61.1%, F1: 67.5%
 - Delta (Hybrid vs LogicRAG): +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
-- KG-answerable segment (100q pilot): Hybrid 97.2% vs LogicRAG 83.3% (+13.9 pp)
-- Bridge comparison (100q pilot): Hybrid 94.7% vs LogicRAG 73.7% (+21.0 pp)
+- Compositional (1000q): Hybrid 79.9% vs LogicRAG 61.7% (+18.2 pp) — largest gap
+- Comparison (1000q): Hybrid 91.4% vs LogicRAG 92.6% (-1.2 pp) — only type LogicRAG leads
+- KG-answerable (1000q, n=368): Hybrid 88.0% vs LogicRAG 73.9% (+14.1 pp)
+- KG-answerable (first 100, n=38): Hybrid 97.4% vs LogicRAG 76.3% (+21.1 pp)
+
+### Baseline Results (hop-verified 368q, updated 2026-03-30)
+
+- Schema-Guided SPARQL (n=368): EM 68.5%, F1 81.3%, Judge EM 91.6%, Containment 86.1%
+- GRASP (n=338/368): EM 32.5%, F1 48.2%, Judge EM 76.3%, Containment 88.2%
+- Head-to-head (n=338): SPARQL EM 69.2% vs GRASP 32.5% (+36.7 pp), Judge 93.5% vs 76.3% (+17.2 pp)
+- Judge models: gemma3:12b (SPARQL), qwen2.5:7b (GRASP) — cross-validation pending
