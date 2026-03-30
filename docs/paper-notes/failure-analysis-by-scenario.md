@@ -1,6 +1,6 @@
 # Failure Analysis by Scenario
 
-**Source:** `plans/reports/scenario_{a-f}_failure_analysis.md`
+**Sources:** Consolidated from scenario investigation sessions (2026-03-20). Original session reports no longer available; facts verified against `data/eval_1000q/scenario_eval_hybrid_judged.jsonl`.
 **Scenario classification:** A=KG_COMPLETE, B=HOP1_MISSING, C=HOP2_MISSING, D=BOTH_HOPS_MISSING, E=ENTITY_NOT_FOUND, F=ENTITY_NOT_FOUND+PROP
 
 ---
@@ -9,13 +9,13 @@
 
 **Definition:** Both hops fully present in DBpedia KG.
 
-**Performance:** 90% raw EM / 100% LLM judge EM
+**Performance:** 80% raw EM / 90% LLM judge accuracy
 
-**Failures (1):**
+**Failures (2 EM / 1 judge):**
 - Compound DBpedia literal: `"New York City, New York"` vs gold `"New York City"` — containment=1.0, EM=0.0
 - Root cause: DBpedia stores city+state as a compound literal; gold is city-only
 
-**Key insight:** Near-perfect on KG-complete questions. Single failure is metric artifact (containment passes, EM fails due to over-specific KG value).
+**Key insight:** Near-perfect on KG-complete questions. EM failures are metric artifacts (containment passes, EM fails due to over-specific KG value).
 
 ---
 
@@ -23,7 +23,7 @@
 
 **Definition:** First hop property absent from DBpedia; second hop present.
 
-**Performance:** 80% LLM judge EM
+**Performance:** 80% raw EM / 90% LLM judge accuracy
 
 **Failures (2):**
 1. Transient DBpedia + multi-valued property truncation: SPARQL returned first listed value, not the intended one (data ordering issue)
@@ -37,9 +37,9 @@
 
 **Definition:** First hop present; second hop property absent from DBpedia.
 
-**Performance:** 80% LLM judge EM
+**Performance:** 70% raw EM / 80% LLM judge accuracy
 
-**Failures (5):**
+**Failures (3 EM / 2 judge):**
 - 3/5 systemic: dbp-only bridge triggers false `ask_verified` routing
   - `dbp:` properties exist in the KG but ASK query uses `dbo:` namespace → query succeeds spuriously → system routes to SPARQL → SPARQL execution fails silently
 - 1/5 benchmark annotation error (gold answer incorrect in dataset)
@@ -55,7 +55,7 @@
 
 **Definition:** Both hop properties absent from DBpedia; entity URIs present.
 
-**Performance:** 10% raw EM / 30% LLM judge EM
+**Performance:** 20% raw EM / 30% LLM judge accuracy
 
 **Failures (7):**
 - 2 pure knowledge gaps: information not in Wikipedia or DBpedia
@@ -72,13 +72,13 @@
 
 **Definition:** Entity URI not found in DBpedia; entity may be identifiable by name.
 
-**Performance:** 40% raw EM / 90% LLM judge EM — **+50 percentage point gap**
+**Performance:** 50% raw EM / 90% LLM judge accuracy — **+40 percentage point gap**
 
 **Failures (5 EM-only, 1 genuine):**
 - 5 metric-only failures: LLM judge accepts answer as correct; EM rejects due to format differences (e.g., "United States" vs "USA")
 - 1 genuine failure: geographic granularity error (city vs country)
 
-**Key insight:** The 50pp gap between EM and judge is metric pathology, not system failure. Over-specific or paraphrased correct answers fail EM but pass semantic judge. This scenario demonstrates strongest case for using LLM-as-judge.
+**Key insight:** The 40pp gap between EM and judge is metric pathology, not system failure. Over-specific or paraphrased correct answers fail EM but pass semantic judge. This scenario demonstrates strongest case for using LLM-as-judge.
 
 ---
 
@@ -86,7 +86,7 @@
 
 **Definition:** Entity URI absent AND property missing; hardest scenario.
 
-**Performance:** 20% raw EM / 30% LLM judge EM
+**Performance:** 30% raw EM / 60% LLM judge accuracy
 
 **Failures (7):**
 - F4, F5, F6, F7, F8 (5/7): fixable with better entity linking + text retrieval
@@ -103,17 +103,17 @@
 
 ## Cross-Scenario Summary
 
-| Scenario | n | Raw EM | Judge EM | Primary Failure Mode |
-|----------|---|--------|----------|---------------------|
-| A (KG_COMPLETE) | 10 | 90% | 100% | Metric artifact (compound literal) |
-| B (HOP1_MISSING) | 10 | — | 80% | Comparison UNION bug |
-| C (HOP2_MISSING) | 10 | — | 80% | dbp/dbo prefix asymmetry (3/5) |
-| D (BOTH_MISSING) | 10 | 10% | 30% | Text retrieval + entity pollution |
-| E (ENTITY_NOT_FOUND) | 10 | 40% | 90% | Metric pathology (+50pp gap) |
-| F (ENT_NOT_FOUND+PROP) | 10 | 20% | 30% | Entity linking + knowledge gaps |
+| Scenario | n | Raw EM | Judge Accuracy | Primary Failure Mode |
+|----------|---|--------|----------------|---------------------|
+| A (KG_COMPLETE) | 10 | 80% | 90% | Metric artifact (compound literal) |
+| B (HOP1_MISSING) | 10 | 80% | 90% | Comparison UNION bug |
+| C (HOP2_MISSING) | 10 | 70% | 80% | dbp/dbo prefix asymmetry (3/5) |
+| D (BOTH_MISSING) | 10 | 20% | 30% | Text retrieval + entity pollution |
+| E (ENTITY_NOT_FOUND) | 10 | 50% | 90% | Metric pathology (+40pp gap) |
+| F (ENT_NOT_FOUND+PROP) | 10 | 30% | 60% | Entity linking + knowledge gaps |
 
 **Systemic bugs identified:**
-1. Comparison guard bug — `sparql_rows` always empty for comparison queries (kills 7 correct answers across B/C)
+1. Comparison guard bug — `sparql_rows` always empty for comparison queries (kills 7 correct answers across B/C) **(FIXED — `sparql_rows` variable removed)**
 2. dbp/dbo prefix asymmetry — false `ask_verified` routing (3/5 Scenario C failures)
-3. Entity pollution — parent entities passed to all sub-questions without scoping (D/F failures)
+3. Entity pollution — parent entities passed to all sub-questions without scoping (D/F failures) **(FIXED — scoping implemented at `logicrag_decomposition.py:623-643`)**
 4. RAG volume bias — no per-entity chunk cap; seed_boost=1.2 too weak (D failures)

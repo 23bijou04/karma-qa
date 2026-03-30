@@ -1,6 +1,6 @@
 # Coverage and Evaluation
 
-**Sources:** `plans/reports/factcheck-260325-1507-coverage-claims.md`, `plans/reports/factcheck-260326-0038-100q-pilot-report.md`, `plans/reports/factcheck-260326-1033-100q-results.md`, `plans/reports/factcheck-260326-1033-architecture-claims.md`, `plans/reports/factcheck-260326-1033-hyperparameter-catalog.md`, `plans/reports/verify-260325-1302-entity-coverage.md`, `plans/reports/verify-260325-1500-coverage-consolidated.md`, `plans/reports/rag-volume-bias-investigation.md`
+**Sources:** Consolidated from investigation sessions (2026-03-25 through 2026-03-27). Original session reports no longer available; facts verified against code and data files directly.
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### Entity Coverage Breakdown
 - 936/1000 entities found in DBpedia
-- 54 truly missing (entity URI absent)
+- 53 truly missing (entity URI absent)
 - 11 wrong disambiguation (generic variant URIs returned by Spotlight)
 
 ### Methodology Progression Note
@@ -39,17 +39,17 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 | F1 | 78.6% |
 | Average latency | 7.2s/question |
 
-### Hybrid vs LogicRAG — Matched 100q Comparison
-
-> **Version provenance (2026-03-28):** Numbers from 2026-03-26 JSONL snapshots (both `.bak_v1`). Files have since been re-judged. Pending re-comparison with current versions.
+### Hybrid vs LogicRAG — Full 1000q Comparison
 
 | Metric | Hybrid | LogicRAG decomposed |
 |--------|--------|---------------------|
-| LLM judge accuracy | 89% | 80% |
-| EM | — | 62% |
-| F1 | — | 69.8% |
+| LLM judge accuracy | 84.1% (841/1000) | 74.5% (745/1000) |
+| EM | 68.1% | 61.1% |
+| F1 | 75.4% | 67.5% |
 
-### By Question Type (100q, hybrid vs logicrag)
+**Delta:** +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
+
+### By Question Type (100q pilot only — not updated to 1000q)
 
 | Type | Hybrid judge | LogicRAG judge | Delta |
 |------|-------------|----------------|-------|
@@ -75,12 +75,12 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 ### RAG / Retrieval
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| Chunk size | 512 tokens | `rag/chunker.py` |
+| Chunk size | 512 characters | `rag/chunker.py` |
 | Chunk overlap | 64 tokens | `rag/chunker.py` |
 | Bi-encoder model | `all-MiniLM-L6-v2` | `rag/vector_store.py` |
 | Cross-encoder model | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `rag/reranker.py` |
-| Retrieval top_k | 20 | `rag/vector_store.py` |
-| Reranker top_k | 8 | `rag/reranker.py` |
+| Retrieval top_k | 30 | `rag/vector_store.py` |
+| Reranker top_k | 15 | `rag/reranker.py` |
 | Max context chars | 12,000 | `text_solver.py` |
 | Seed entity boost | 1.2 | `rag/vector_store.py` |
 
@@ -93,7 +93,7 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 ### LLM
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| Default model | `llama-3.3-70b-versatile` | `llm_provider.py` |
+| Default model | `llama-3.3-70b-versatile` | `hybrid_qa.py` |
 | Temperature | 0 | `llm_provider.py` |
 | Retry initial wait | 10s (doubles per attempt) | `llm_provider.py` |
 
@@ -101,16 +101,16 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 | Parameter | Value | Source |
 |-----------|-------|--------|
 | Cached class schemas | 7 (Person, Film, Company, Place, MusicalArtist, Book, MusicalWork) | `dbpedia/schema_discovery.py` |
-| Wikipedia API delay | 0.5s between calls | `graphrag_wiki.py` |
+| Wikipedia API delay | 0.5s between calls | `dbpedia/wiki_resolver.py` |
 
 ---
 
 ## RAG Volume Bias (Thomas Jefferson / Ken Burns Case)
 
-**Problem:** Single flat FAISS index with no per-entity chunk cap. Thomas Jefferson (large Wikipedia article) produces far more chunks than Ken Burns → dominates retrieval results.
+**Problem:** Single flat FAISS index with no per-entity chunk cap at the retrieval stage. Thomas Jefferson (large Wikipedia article) produces far more chunks than Ken Burns → dominates retrieval results. Note: `text_solver.py` has a `max_per_entity=4_000` char cap in the assembled context, but this does not apply at the FAISS retrieval/ranking stage.
 
 **3 identified defects:**
-1. No per-entity chunk cap: high-profile entities crowd out answer entity
+1. No per-entity chunk cap at retrieval stage: high-profile entities crowd out answer entity (assembly-level 4,000-char cap exists but does not fix ranking bias)
 2. Seed boost too weak: `seed_boost=1.2` insufficient to prioritize answer entity chunks
 3. Routing gap: some questions that need text retrieval fall through to SPARQL, then fail
 
@@ -137,6 +137,8 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 - Entity coverage: 93.6% (ground truth, verified)
 - Property/hop coverage: 36.8% (368/1000, ground truth, hop-verified predicate existence)
 - Strict value match: 11.9% (119/1000, lower bound due to date format + disambiguation mismatch)
-- Hybrid judge: 84% (100q pilot), 89% (matched 100q vs logicrag)
-- KG-answerable segment: Hybrid 97.2% vs LogicRAG 83.3% (+13.9 pp)
-- Bridge comparison: Hybrid 94.7% vs LogicRAG 73.7% (+21.0 pp)
+- Hybrid LLM judge accuracy: 84.1% (1000q), EM: 68.1%, F1: 75.4%
+- LogicRAG LLM judge accuracy: 74.5% (1000q), EM: 61.1%, F1: 67.5%
+- Delta (Hybrid vs LogicRAG): +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
+- KG-answerable segment (100q pilot): Hybrid 97.2% vs LogicRAG 83.3% (+13.9 pp)
+- Bridge comparison (100q pilot): Hybrid 94.7% vs LogicRAG 73.7% (+21.0 pp)

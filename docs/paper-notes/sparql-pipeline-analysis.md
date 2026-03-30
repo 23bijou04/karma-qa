@@ -1,6 +1,6 @@
 # SPARQL Pipeline Analysis
 
-**Sources:** `plans/reports/260320-sparql-routing-execution-gap-report.md`, `plans/reports/260320-sparql-solver-failure-modes.md`, `plans/reports/Explore-260327-1313-sparql-consistency.md`
+**Sources:** Consolidated from investigation sessions (2026-03-20 through 2026-03-27). Original session reports no longer available; facts verified against code and data files directly.
 
 ---
 
@@ -25,21 +25,28 @@
 - Comparison routing: date/country property detection
 - Bridge/parent chain: keyword pattern match
 
-**Stage 2 — SPARQL ASK verification** (`verify_sparql_feasibility()`):
+**Stage 2 — LLM property extraction** (`route_question()`):
+- If Stage 1 rules return None, LLM extracts properties from question text
+- Re-runs deterministic rules with LLM-extracted properties + ASK verification
+- NOT a binary SPARQL/TEXT classifier — uses LLM for vocabulary mapping only
+
+**Stage 2b — SPARQL ASK verification** (`verify_sparql_feasibility()`):
 - Direct property match and date comparison: pass through without ASK
 - Bridge/hop2/parent rules: verify via SPARQL ASK that triple exists
 - Returns `ask_verified` or `ask_missing` (downgrades to DECOMPOSE)
 
-**Stage 3 — LLM fallback:**
-- If rules return `None`, LLM decides SPARQL vs TEXT
+**Stage 3 — TEXT fallback:**
+- If no property match after Stage 2, unconditionally falls back to TEXT
 
 ---
 
-## Comparison Guard Bug (Critical)
+## Comparison Guard Bug (Critical) — FIXED
 
 **Location:** `sparql_solver.py` — comparison query result checking
 
 **Bug:** After executing a comparison SPARQL query, the code checks `if sparql_rows:` to determine if results were returned. However, for comparison queries, results are stored in a different variable — `sparql_rows` is always `[]`.
+
+**Status:** Fixed. The `sparql_rows` variable no longer exists in `sparql_solver.py`. Comparison results are now handled correctly.
 
 **Impact:** 7 correct SPARQL answers discarded for comparison questions. System falls through to text path unnecessarily.
 
@@ -88,7 +95,7 @@
 |-------------|-----------|-------------|
 | dbp/dbo prefix mismatch | High | False ask_verified; SPARQL then fails on wrong namespace |
 | Multi-valued property ordering | Medium | DBpedia returns first listed value; not always the intended one |
-| Comparison guard bug | High | `sparql_rows` always empty for comparison queries |
+| Comparison guard bug (FIXED) | High | `sparql_rows` always empty for comparison queries |
 | Transient DBpedia errors | Low | Endpoint timeout; auto-resume handles most |
 | Complex aggregation | Medium | COUNT/GROUP BY over large result sets times out |
 

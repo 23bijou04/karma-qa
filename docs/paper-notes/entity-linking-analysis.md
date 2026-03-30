@@ -1,6 +1,6 @@
 # Entity Linking Analysis
 
-**Sources:** `plans/reports/260320-entity-linking-failure-analysis.md`, `plans/reports/entity-linking-investigation.md`, `plans/reports/parent-entities-pollution-investigation.md`
+**Sources:** Consolidated from investigation sessions (2026-03-20). Original session reports no longer available; facts verified against code and data files directly.
 
 ---
 
@@ -47,9 +47,9 @@
 4. SPARQL query attempts to find director of Thomas Jefferson (not the film)
 5. Wrong answer or no answer returned
 
-**Root cause:** `entity_discovery.py` returns all question entities; `logicrag_decomposition.py` passes full parent list to every sub-question without scoping.
+**Root cause:** `entity_discovery.py` returns all question entities; `logicrag_decomposition.py` passes full parent list to every sub-question without scoping. Note: scoping fix was implemented at `logicrag_decomposition.py:623-643`.
 
-**Fix needed:** Scope parent entities to the sub-question they are relevant to (only pass entities mentioned/needed in that sub-question).
+**Fix:** Scope parent entities to the sub-question they are relevant to (only pass entities mentioned/needed in that sub-question). **Status: FIXED** — root sub-Qs get the full set; dependent sub-Qs get only their relevant entities.
 
 ---
 
@@ -65,9 +65,11 @@
 
 ---
 
-## Parent Entity Pollution (Sub-question Scoping)
+## Parent Entity Pollution (Sub-question Scoping) — FIXED
 
 **Location:** `logicrag_decomposition.py` — `_resolve_subquestion()` call
+
+**Status:** Fixed at `logicrag_decomposition.py:623-643`. Parent entities are now scoped: root sub-Qs get the full set; dependent sub-Qs get only their relevant entities.
 
 **Mechanism:**
 - `_try_logicrag_decomposition()` decomposes question into N sub-questions
@@ -86,6 +88,6 @@
 ## Key Numbers for Paper
 
 - 93.6% entity coverage (DBpedia Spotlight + SPARQL fallback on 1000q)
-- 54 questions with truly missing entities (entity URI absent from DBpedia)
+- 53 questions with truly missing entities (entity URI absent from DBpedia; 1000-936=64, 64-11=53)
 - 11 questions with wrong disambiguation (generic variants)
 - Property gap is 1.8x more common than entity linking failure as root cause of system failure

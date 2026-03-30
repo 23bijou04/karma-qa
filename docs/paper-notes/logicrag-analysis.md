@@ -1,6 +1,6 @@
 # LogicRAG Analysis
 
-**Sources:** `plans/reports/Explore-260327-0919-logicrag-baseline.md`, `plans/reports/Explore-260327-0919-logicrag-readiness.md`, `plans/reports/researcher-260327-0919-logicrag-methodology.md`, `plans/reports/researcher-260327-1001-logicrag-paper-analysis.md`, `plans/reports/debug-260326-0000-logicrag-failure-analysis.md`, `plans/reports/logic-validation-260326-1040-hybrid-logicrag-analysis.md`
+**Sources:** Consolidated from investigation sessions (2026-03-26 through 2026-03-27). Original session reports no longer available; facts verified against code and data files directly.
 
 ---
 
@@ -60,8 +60,10 @@ Our `logicrag_decomposition.py` is NOT a reproduction of the LogicRAG paper (AAA
 |--------|-------|
 | EM | 62% |
 | F1 | 69.8% |
-| Questions answered via logicrag_decomposed path | 47/100 |
-| Wrong answers (of decomposed) | 24/47 = 48.9% error rate |
+| Questions with decomposition (rounds>=1) | 72/100 |
+| Multi-round decomposition (rounds>=2) | 47/100 |
+| Error rate (all decomposed, EM=0) | 28/72 = 38.9% |
+| Error rate (multi-round only) | 22/47 = 46.8% |
 | Remaining 900q infrastructure | Ready (auto-resume) |
 
 ### Scenario breakdown (60-question scenario eval, complete)
@@ -69,17 +71,30 @@ Our `logicrag_decomposition.py` is NOT a reproduction of the LogicRAG paper (AAA
 
 ---
 
+## Full 1000q Results (current)
+
+| Metric | Value |
+|--------|-------|
+| LLM judge accuracy | 74.5% (745/1000) |
+| EM | 61.1% |
+| F1 | 67.5% |
+| Decomposed (rounds>=1) | 514/1000 |
+| Decomposed error rate (EM) | 51.4% |
+
+---
+
 ## LogicRAG Failure Analysis (100q debug)
 
-**Primary failure cause: RAG `page_title` bug**
+**Primary failure cause: RAG `page_title` bug (FIXED)**
 - Location: `text_solver.py:262`
 - Bug: `page_title` variable not properly scoped; wrong Wikipedia page retrieved for sub-questions
 - Impact: 19/24 wrong answers (79%) traced to this single bug
 - Remaining 5 failures: genuine knowledge gaps or entity linking issues
+- **Note:** This bug was identified and fixed. Line 262 is now metadata logging. The statistics below reflect the pre-fix state and are retained for historical context.
 
 **Secondary failures:**
-- Entity pollution: parent entities passed to all sub-questions (see entity-linking-analysis.md)
-- RAG volume bias: no per-entity chunk cap; dominant entity drowns out target entity
+- Entity pollution: parent entities passed to all sub-questions (FIXED — scoping implemented at logicrag_decomposition.py:623-643) (see entity-linking-analysis.md)
+- RAG volume bias: per-entity cap exists in assembled context (4,000 chars) but retrieval ranking still has volume bias
 
 ### Statistical Validity Note (from logic-validation report)
 - Observed correlation: more sub-questions → lower accuracy (round-count degradation)
@@ -88,11 +103,11 @@ Our `logicrag_decomposition.py` is NOT a reproduction of the LogicRAG paper (AAA
 
 ---
 
-## Our System vs LogicRAG Paper (Fair Comparison Framework)
+## Our System vs LogicRAG Paper (Comparison Framework)
 
 ### What makes comparison fair
 - Same dataset: 2WikiMultiHopQA 1000q validation subset ✓
-- Same LLM: **NOT SAME** -- LogicRAG paper uses GPT-4o-mini; our system uses llama-3.3-70b-versatile (Groq). Our LogicRAG reproduction also uses llama-3.3-70b for controlled comparison. ✗
+- Same LLM: **NO** — LogicRAG paper uses GPT-4o-mini; our system uses llama-3.3-70b-versatile via Groq ✗
 - Same embedding model: all-MiniLM-L6-v2 ✓
 - Same evaluation: string-based + LLM-based accuracy ✓
 
@@ -112,14 +127,17 @@ Our `logicrag_decomposition.py` is NOT a reproduction of the LogicRAG paper (AAA
 1. SPARQL brittleness: KG topology gaps → wrong routing
 2. Property coverage only 36.8% (LogicRAG: 100% via text fallback)
 3. More failure modes (rules, ASK, LLM routing, schema projection)
-4. RAG page_title bug affects 79% of wrong decomposed answers
+4. RAG page_title bug affects 79% of wrong decomposed answers (pre-fix; now resolved)
 
 ---
 
 ## Key Numbers for Paper
 
 - LogicRAG paper: 64.7% string / 62.5% LLM on 2WikiMQA 1000q
+- Our system full 1000q: 74.5% LLM judge / 61.1% EM / 67.5% F1
 - Our logicrag_decomposed pilot (100q): 62% EM / 69.8% F1
-- 19/24 wrong decomposed answers caused by single fixable bug (page_title)
-- 47/100 questions answered via decomposition path; error rate 48.9% (pre-bugfix)
+- 100q pilot: 72/100 decomposed (rounds>=1), 47/100 multi-round (rounds>=2)
+- 100q pilot error rates: 38.9% (all decomposed), 46.8% (multi-round only) — pre-bugfix
+- 19/24 wrong decomposed answers caused by single fixable bug (page_title, now fixed)
+- 1000q: 514/1000 decomposed; 51.4% decomposed error rate (EM)
 - Round-count correlation is confounded by question difficulty — not a causal claim
