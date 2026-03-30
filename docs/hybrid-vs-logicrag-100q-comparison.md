@@ -1,11 +1,11 @@
 # Hybrid vs LogicRAG Baseline: 100-Question Head-to-Head Comparison
 
-**Date:** 2026-03-26
+**Date:** 2026-03-30 (updated from 2026-03-26 pilot)
 **Sample:** First 100 questions from `data/eval_1000q/` (same question set for both systems)
 **Judge:** gemma3:12b via Ollama (local), with word-level containment fast path
 **Data:** `hybrid_eval_1000_judged.jsonl` (Hybrid), `logicrag_1000q_traced_judged.jsonl` (LogicRAG)
 
-> **Version provenance (2026-03-28):** This comparison used file versions from 2026-03-26 (both `.bak_v1`). Both JSONL files have since been re-judged (Hybrid: Mar 28, LogicRAG: Mar 27). Numbers below reflect the Mar 26 snapshot and may differ with current file versions. A re-comparison with current versions is pending.
+> **Version provenance (2026-03-30):** Updated to use current judged files (both re-judged Mar 27–28). Previous comparison used `.bak_v1` snapshots from Mar 26 with mixed versions, producing a misleading +9pp delta. This version uses consistent current-current pairing.
 
 > For architectural differences between the two retrieval systems, see [logicrag-vs-our-retrieval.md](logicrag-vs-our-retrieval.md).
 
@@ -15,13 +15,11 @@
 
 | Metric | Hybrid | LogicRAG | Delta |
 |--------|--------|----------|-------|
-| **Judge Correct** | **89%** (89/100) | 80% (80/100) | **+9pp** |
-| **Exact Match** | **67%** (67/100) | 62% (62/100) | **+5pp** |
-| **F1** | **78.6%** | 69.8% | **+8.8pp** |
-| Mean Latency | 7.2s | 13.9s | −6.7s |
-| Median Latency | 6.5s | 2.9s | +3.6s |
+| **Judge Correct** | **88%** (88/100) | 73% (73/100) | **+15pp** |
+| **Exact Match** | **63%** (63/100) | 54% (54/100) | **+9pp** |
+| **F1** | **73.3%** | 60.4% | **+12.8pp** |
 
-Hybrid wins on all accuracy metrics. LogicRAG has lower median latency (most questions exit in 0–1 rounds), but higher mean latency (multi-round questions are slow: up to 3 rounds of retrieval + LLM calls).
+Hybrid wins on all accuracy metrics. The delta is larger than previously reported (+15pp vs the +9pp from mixed-version comparison) because current re-judging corrected several false positives in LogicRAG results.
 
 ---
 
@@ -29,12 +27,12 @@ Hybrid wins on all accuracy metrics. LogicRAG has lower median latency (most que
 
 | Category | Count | % |
 |----------|-------|---|
-| Both correct | 76 | 76% |
-| Hybrid-only correct | 13 | 13% |
+| Both correct | 69 | 69% |
+| Hybrid-only correct | 19 | 19% |
 | LogicRAG-only correct | 4 | 4% |
-| Neither correct | 7 | 7% |
+| Neither correct | 8 | 8% |
 
-**Key insight:** Hybrid wins more than 3× as many exclusive questions (13 vs 4). The 76 shared correct answers form a strong common core.
+**Key insight:** Hybrid wins nearly 5× as many exclusive questions (19 vs 4). The 69 shared correct answers form a common core.
 
 ---
 
@@ -42,17 +40,17 @@ Hybrid wins on all accuracy metrics. LogicRAG has lower median latency (most que
 
 | Type | n | Hybrid Judge | LogicRAG Judge | Delta | Hybrid EM | LogicRAG EM | Hybrid F1 | LogicRAG F1 |
 |------|---|-------------|---------------|-------|-----------|-------------|-----------|-------------|
-| comparison | 20 | 95.0% | 95.0% | 0pp | 95.0% | 95.0% | 95.0% | 95.0% |
-| bridge_comparison | 19 | **94.7%** | 73.7% | **+21.1pp** | 94.7% | 68.4% | 94.7% | 71.4% |
-| inference | 15 | 80.0% | **100.0%** | **−20.0pp** | 60.0% | 73.3% | 76.5% | 92.2% |
-| compositional | 46 | **87.0%** | 69.6% | **+17.4pp** | 45.7% | 41.3% | 65.6% | 50.9% |
+| comparison | 24 | **95.8%** | 87.5% | **+8.3pp** | 95.8% | 87.5% | 95.8% | 87.5% |
+| bridge_comparison | 20 | **90.0%** | 75.0% | **+15.0pp** | 90.0% | 75.0% | 90.0% | 75.0% |
+| inference | 13 | **100.0%** | 92.3% | **+7.7pp** | 69.2% | 69.2% | 83.2% | 84.5% |
+| compositional | 43 | **79.1%** | 58.1% | **+20.9pp** | 30.2% | 20.9% | 49.9% | 31.3% |
 
 ### Interpretation
 
-- **comparison** — Tied at 95%. Both systems handle yes/no comparison questions well. These are structured queries with clear binary answers.
-- **bridge_comparison** — Hybrid's strongest advantage (+21pp). These multi-hop questions compare properties across entity chains (e.g., "Which director died first, X or Y?"). The KG-guided SPARQL path resolves the chains directly, while LogicRAG struggles to retrieve both entities' properties from its fixed corpus.
-- **inference** — LogicRAG's only win (100% vs 80%). Inference questions require extracting implicit relationships (e.g., "Who is X's maternal grandfather?"). LogicRAG's corpus-based retrieval finds direct textual evidence more reliably than our SPARQL path, which sometimes follows incorrect KG relations (see failure examples below).
-- **compositional** — Hybrid's largest absolute gain (+17pp). These are bridge questions (e.g., "Where was the director of film X born?"). Hybrid solves them via direct SPARQL 2-hop chains or LogicRAG decomposition with SPARQL sub-queries. LogicRAG frequently returns "Unknown" — its corpus lacks the connecting information.
+- **comparison** — Hybrid leads by +8.3pp. Both systems handle comparison questions well, but re-judging revealed several LogicRAG false positives in the prior run.
+- **bridge_comparison** — Hybrid's strong advantage (+15pp). These multi-hop questions compare properties across entity chains (e.g., "Which director died first, X or Y?"). The KG-guided SPARQL path resolves the chains directly, while LogicRAG struggles to retrieve both entities' properties from its fixed corpus.
+- **inference** — Hybrid now leads (+7.7pp). The prior .bak_v1 run showed LogicRAG at 100% (vs Hybrid 80%), but re-judging corrected this: several LogicRAG "correct" answers were false positives. Hybrid leads across all types in the current evaluation.
+- **compositional** — Hybrid's largest absolute gain (+20.9pp). These are bridge questions (e.g., "Where was the director of film X born?"). Hybrid solves them via direct SPARQL 2-hop chains or LogicRAG decomposition with SPARQL sub-queries. LogicRAG frequently returns "Unknown" — its corpus lacks the connecting information.
 
 ---
 
@@ -60,18 +58,20 @@ Hybrid wins on all accuracy metrics. LogicRAG has lower median latency (most que
 
 | Subset | n | Hybrid Judge | LogicRAG Judge | Delta |
 |--------|---|-------------|---------------|-------|
-| KG-answerable | 36 | **97.2%** (35/36) | 83.3% (30/36) | **+13.9pp** |
-| KG-unanswerable | 64 | **84.4%** (54/64) | 78.1% (50/64) | **+6.3pp** |
+| KG-answerable | 32 | **93.8%** (30/32) | 65.6% (21/32) | **+28.1pp** |
+| KG-unanswerable | 68 | **85.3%** (58/68) | 76.5% (52/68) | **+8.8pp** |
 
-Hybrid dominates on KG-answerable questions — SPARQL resolves these directly. On KG-unanswerable questions, both systems must rely on text retrieval; Hybrid still leads by 6pp, likely from superior entity resolution and multi-hop decomposition routing.
+Hybrid dominates on KG-answerable questions (+28pp) — SPARQL resolves these directly. On KG-unanswerable questions, both systems rely on text retrieval; Hybrid still leads by ~9pp from superior entity resolution and multi-hop decomposition routing.
 
-**Note:** `is_answerable` uses the corrected coverage analysis, not hop-verified ground truth (which is absent from these 100 records). 4 questions are known to have discrepant labels between the two sources.
+**Note:** Uses `hop_verified_answerable` (368/1000, ground truth) from coverage analysis. Prior version used `is_answerable` (375 questions, heuristic estimate).
 
 ---
 
-## Failure Analysis: Hybrid-Only Wins (13 cases)
+## Failure Analysis: Hybrid-Only Wins (19 cases)
 
-Where Hybrid succeeds and LogicRAG fails — by Hybrid's routing method:
+> **Note:** The qualitative examples below are from the original .bak_v1 analysis (13 wins). Re-judging expanded Hybrid-only wins to 19 (6 additional cases where LogicRAG false positives were corrected). The representative patterns remain valid; a detailed re-analysis of all 19 cases is pending.
+
+Where Hybrid succeeds and LogicRAG fails — by Hybrid's routing method (from .bak_v1 analysis of 13 original cases):
 
 | Hybrid Method | Count | Typical Pattern |
 |---------------|-------|-----------------|
@@ -107,7 +107,7 @@ The Vortex case is a different failure mode — nationality precision: Hybrid an
 
 ---
 
-## Neither Correct (7 cases)
+## Neither Correct (8 cases)
 
 | Type | Count |
 |------|-------|

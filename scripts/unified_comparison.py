@@ -317,6 +317,9 @@ def main():
         print("\n" + "=" * 80)
         print("TABLE 3: Hybrid QA — Full 1,000 Questions (by Route)")
         print("=" * 80)
+        print("  NOTE: Full-1000 includes 632 non-KG-answerable questions where SPARQL-only")
+        print("  systems have no text fallback. Numbers reflect overall capability, not")
+        print("  retrieval quality alone.")
 
         # Overall
         hybrid_all_metrics = compute_system_metrics(hybrid_all, gold_override=gold_map)
@@ -357,6 +360,8 @@ def main():
         print("\n" + "=" * 80)
         print("TABLE 4: LinearRAG — Full 1,000 vs Answerable Subset")
         print("=" * 80)
+        print("  NOTE: Full-1000 includes 632 non-KG-answerable questions. LinearRAG has")
+        print("  text fallback; SPARQL-only baselines (Table 1-2) do not.")
 
         lr_all_m = compute_system_metrics(linearrag_all)
         lr_sub_m = compute_system_metrics(

@@ -31,13 +31,12 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 ## System Evaluation Results
 
-### Hybrid System — 100q Pilot
+### Hybrid System — 100q Pilot (current-current, 2026-03-30)
 | Metric | Value |
 |--------|-------|
-| LLM judge accuracy | 84% |
-| Exact match (EM) | 67% |
-| F1 | 78.6% |
-| Average latency | 7.2s/question |
+| LLM judge accuracy | 88% |
+| Exact match (EM) | 63% |
+| F1 | 73.3% |
 
 ### Hybrid vs LogicRAG — Full 1000q Comparison
 
@@ -49,24 +48,26 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 **Delta:** +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
 
-### By Question Type (100q pilot only — not updated to 1000q)
+### By Question Type (100q pilot, current-current 2026-03-30)
 
-| Type | Hybrid judge | LogicRAG judge | Delta |
-|------|-------------|----------------|-------|
-| Comparison | 95% | 95% | 0 |
-| Bridge comparison | 94.7% | 73.7% | +21.0 pp |
-| Inference | 80% | 100% | -20 pp |
-| Compositional | 87% | 69.6% | +17.4 pp |
+| Type | n | Hybrid judge | LogicRAG judge | Delta |
+|------|---|-------------|----------------|-------|
+| Comparison | 24 | 95.8% | 87.5% | +8.3 pp |
+| Bridge comparison | 20 | 90.0% | 75.0% | +15.0 pp |
+| Inference | 13 | 100.0% | 92.3% | +7.7 pp |
+| Compositional | 43 | 79.1% | 58.1% | +20.9 pp |
 
-### KG-Answerable Segment (n=36, 100q subset)
+Hybrid leads on all types. Prior .bak_v1 data showed LogicRAG winning inference (100% vs 80%) — re-judging corrected this.
+
+### KG-Answerable Segment (n=32, 100q subset, hop_verified)
 
 | System | Judge accuracy |
 |--------|---------------|
-| Hybrid | 97.2% |
-| LogicRAG decomposed | 83.3% |
-| Delta | +13.9 pp |
+| Hybrid | 93.8% (30/32) |
+| LogicRAG decomposed | 65.6% (21/32) |
+| Delta | +28.1 pp |
 
-**Key insight:** On KG-answerable questions (where DBpedia has the answer), hybrid system substantially outperforms text-only decomposition approach.
+**Key insight:** On KG-answerable questions (where DBpedia has the answer), hybrid system substantially outperforms text-only decomposition approach. Delta is even larger than previously reported (+28pp vs +14pp) due to corrected answerability flag and re-judging.
 
 ---
 
