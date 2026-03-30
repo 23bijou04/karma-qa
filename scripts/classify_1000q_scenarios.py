@@ -18,8 +18,8 @@ import math
 from collections import Counter, defaultdict
 from pathlib import Path
 
-INPUT = Path("data/eval_1000q/coverage_analysis_1000.json")
-OUTPUT = Path("data/eval_1000q/scenario_classification_1000.json")
+INPUT = Path("data/eval_1000q/ground-truth/coverage_analysis_1000.json")
+OUTPUT = Path("data/eval_1000q/ground-truth/scenario_classification_1000.json")
 
 SCENARIO_LABELS = {
     "A": "KG_COMPLETE",

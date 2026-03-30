@@ -54,7 +54,7 @@ from logicrag_decomposition import _try_logicrag_decomposition  # noqa: E402
 from question_analysis import analyze_question  # noqa: E402
 from schema_projection import project  # noqa: E402
 
-DEFAULT_SCENARIO_FILE = "data/eval_1000q/scenario_classification_1000.json"
+DEFAULT_SCENARIO_FILE = "data/eval_1000q/ground-truth/scenario_classification_1000.json"
 LOGICRAG_CORPUS = os.path.join(
     PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
 )
@@ -278,7 +278,7 @@ def main():
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
     parser.add_argument("--scenario-file", default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output", default=None,
-                        help="Output JSONL (default: data/eval_1000q/scenario_eval_{mode}.jsonl)")
+                        help="Output JSONL (default: data/eval_1000q/pilot-100q/scenario_eval_{mode}.jsonl)")
     parser.add_argument("--scenarios", default=None,
                         help="Comma-separated scenarios to include (e.g. D or A,B,D; default: all)")
     parser.add_argument("--verbose", action="store_true")
@@ -287,7 +287,7 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    output_file = args.output or f"data/eval_1000q/scenario_eval_{args.mode}.jsonl"
+    output_file = args.output or f"data/eval_1000q/pilot-100q/scenario_eval_{args.mode}.jsonl"
 
     # Load and select questions
     with open(args.scenario_file) as f:

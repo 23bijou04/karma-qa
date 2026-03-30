@@ -11,7 +11,7 @@ on a 100-question sample, or use a stronger model (--provider groq --model
 llama-3.3-70b-versatile).
 
 Usage:
-    python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid_eval_1000.jsonl
+    python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid/hybrid_eval_1000.jsonl
     python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider groq --model llama-3.3-70b-versatile
     python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider github --model gpt-4o
 """

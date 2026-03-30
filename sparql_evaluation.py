@@ -566,7 +566,7 @@ def main():
     schema_disc = SchemaDiscovery()
 
     # Trace directory
-    trace_dir = "data/sparql_eval_traces"
+    trace_dir = "data/eval_1000q/sparql/traces"
     os.makedirs(trace_dir, exist_ok=True)
 
     # Load questions & resume

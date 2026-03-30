@@ -59,8 +59,8 @@ compute_containment = _metrics.compute_containment
 # Import hybrid_answer (must come after sys.path setup)
 from hybrid_qa import hybrid_answer  # noqa: E402
 
-DEFAULT_COVERAGE = "data/eval_1000q/coverage_analysis_1000.json"
-DEFAULT_OUTPUT = "data/eval_1000q/hybrid_eval_1000.jsonl"
+DEFAULT_COVERAGE = "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
+DEFAULT_OUTPUT = "data/eval_1000q/hybrid/hybrid_eval_1000.jsonl"
 LOGICRAG_CORPUS = os.path.join(
     PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
 )

@@ -24,10 +24,10 @@ sys.path.insert(0, LOGICRAG_DIR)
 
 CORPUS_FILE = os.path.join(LOGICRAG_DIR, "dataset", "2wikimultihopqa_corpus.json")
 COVERAGE_FILE = os.path.join(
-    PROJECT_ROOT, "data", "eval_1000q", "coverage_analysis_1000_corrected.json"
+    PROJECT_ROOT, "data", "eval_1000q", "ground-truth", "coverage_analysis_1000_corrected.json"
 )
 HOP_FILE = os.path.join(
-    PROJECT_ROOT, "data", "eval_1000q", "hop_verification_results.json"
+    PROJECT_ROOT, "data", "eval_1000q", "ground-truth", "hop_verification_results.json"
 )
 EMBEDDINGS_DIR = os.path.join(LOGICRAG_DIR, "cache")
 OUTPUT_FILE = os.path.join(

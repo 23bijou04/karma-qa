@@ -11,8 +11,8 @@ from pathlib import Path
 from collections import defaultdict
 
 ROOT = Path(__file__).parent.parent
-HYBRID_FILE = ROOT / "data/eval_1000q/hybrid_eval_1000_judged.jsonl"
-LOGICRAG_FILE = ROOT / "data/eval_1000q/logicrag_1000q_traced_judged.jsonl"
+HYBRID_FILE = ROOT / "data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl"
+LOGICRAG_FILE = ROOT / "data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl"
 
 
 # ---------------------------------------------------------------------------

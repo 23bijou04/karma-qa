@@ -40,7 +40,7 @@ compute_containment = _metrics.compute_containment
 from hybrid_qa import hybrid_answer  # noqa: E402
 
 QUESTION_TIMEOUT = 300
-EVAL_FILE = "data/eval_1000q/hybrid_eval_1000.jsonl"
+EVAL_FILE = "data/eval_1000q/hybrid/hybrid_eval_1000.jsonl"
 LOGICRAG_CORPUS = os.path.join(
     PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
 )

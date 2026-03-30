@@ -19,8 +19,8 @@ from SPARQLWrapper import SPARQLWrapper, JSON
 SPARQL_ENDPOINT = "https://dbpedia.org/sparql"
 RATE_LIMIT_S = 0.25  # seconds between SPARQL calls
 
-INPUT = Path("data/eval_1000q/coverage_analysis_1000.json")
-OUTPUT = Path("data/eval_1000q/coverage_analysis_1000_corrected.json")
+INPUT = Path("data/eval_1000q/ground-truth/coverage_analysis_1000.json")
+OUTPUT = Path("data/eval_1000q/ground-truth/coverage_analysis_1000_corrected.json")
 
 # Only re-check properties with >0% found rate from sampled verification.
 # Maps property_name -> list of DBpedia predicates to try (expanded mapping).

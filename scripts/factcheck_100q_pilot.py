@@ -7,8 +7,8 @@ import json
 import statistics
 from collections import defaultdict
 
-HYBRID_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/hybrid_eval_1000_judged.jsonl"
-LOGICRAG_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/logicrag_1000q_traced_judged.jsonl"
+HYBRID_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl"
+LOGICRAG_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl"
 
 
 def load_jsonl(path, limit=100):

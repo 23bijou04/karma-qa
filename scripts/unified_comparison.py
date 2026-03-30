@@ -167,13 +167,13 @@ def main():
     parser = argparse.ArgumentParser(description="Unified QA system comparison")
     parser.add_argument("--output-dir", default="data/eval_1000q")
     parser.add_argument("--coverage-file",
-                        default="data/eval_1000q/coverage_analysis_1000.json")
+                        default="data/eval_1000q/ground-truth/coverage_analysis_1000.json")
     parser.add_argument("--hybrid-file",
-                        default="data/eval_1000q/hybrid_eval_1000.jsonl")
+                        default="data/eval_1000q/hybrid/hybrid_eval_1000.jsonl")
     parser.add_argument("--sparql-file",
-                        default="data/eval_1000q/sparql_eval_1000.jsonl")
+                        default="data/eval_1000q/sparql/original-346q/sparql_eval_1000.jsonl")
     parser.add_argument("--grasp-file",
-                        default="data/eval_1000q/grasp_eval_dbpedia.jsonl")
+                        default="data/eval_1000q/grasp/original-346q/grasp_eval_dbpedia.jsonl")
     parser.add_argument("--linearrag-file",
                         default="data/eval_1000q/linearrag_predictions_1000.json")
     args = parser.parse_args()

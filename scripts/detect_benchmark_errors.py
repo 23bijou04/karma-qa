@@ -8,7 +8,7 @@ Usage:
     python scripts/detect_benchmark_errors.py --phase 1 --verbose
     python scripts/detect_benchmark_errors.py --phase 2
     python scripts/detect_benchmark_errors.py --phase all
-    python scripts/detect_benchmark_errors.py --output data/eval_1000q/benchmark_error_flags.json
+    python scripts/detect_benchmark_errors.py --output data/eval_1000q/ground-truth/benchmark_error_flags.json
 """
 
 import argparse
@@ -441,7 +441,7 @@ def main() -> None:
                         help="Which detection phase to run (default: all)")
     parser.add_argument("--limit", type=int, default=None,
                         help="Max questions to process per phase (for testing)")
-    parser.add_argument("--output", default="data/eval_1000q/benchmark_error_flags.json",
+    parser.add_argument("--output", default="data/eval_1000q/ground-truth/benchmark_error_flags.json",
                         help="Output JSON path")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()

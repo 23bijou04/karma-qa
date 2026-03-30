@@ -25,7 +25,7 @@ from SPARQLWrapper import JSON, SPARQLWrapper
 
 BASE = Path(__file__).resolve().parent.parent
 CHECKPOINT_PATH = BASE / "data/eval_1000q/hop_verification_checkpoint.json"
-OUTPUT_PATH = BASE / "data/eval_1000q/hop_verification_results.json"
+OUTPUT_PATH = BASE / "data/eval_1000q/ground-truth/hop_verification_results.json"
 
 # ── SPARQL setup ──────────────────────────────────────────────────────────
 SPARQL_ENDPOINT = "https://dbpedia.org/sparql"
@@ -124,7 +124,7 @@ _entity_cache: dict[str, str | None] = {}
 
 def _load_preresolved_uris():
     """Load URIs already resolved in coverage_analysis_1000.json."""
-    path = BASE / "data/eval_1000q/coverage_analysis_1000.json"
+    path = BASE / "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
     with open(path) as f:
         data = json.load(f)
     for q in data["questions"]:
@@ -405,7 +405,7 @@ def main():
     print("Loading benchmark data...")
     with open(BASE / "data/dev_full.json") as f:
         all_questions = json.load(f)
-    with open(BASE / "data/eval_1000q/coverage_analysis_1000.json") as f:
+    with open(BASE / "data/eval_1000q/ground-truth/coverage_analysis_1000.json") as f:
         cov = json.load(f)
     ids_1k = {q["question_id"] for q in cov["questions"]}
 

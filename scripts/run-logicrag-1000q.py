@@ -33,15 +33,15 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGICRAG_DIR = os.path.join(PROJECT_ROOT, "baselines", "LogicRAG")
 
 COVERAGE_FILE = os.path.join(
-    PROJECT_ROOT, "data", "eval_1000q", "coverage_analysis_1000_corrected.json"
+    PROJECT_ROOT, "data", "eval_1000q", "ground-truth", "coverage_analysis_1000_corrected.json"
 )
 HOP_FILE = os.path.join(
-    PROJECT_ROOT, "data", "eval_1000q", "hop_verification_results.json"
+    PROJECT_ROOT, "data", "eval_1000q", "ground-truth", "hop_verification_results.json"
 )
 LOGICRAG_DATASET = os.path.join(LOGICRAG_DIR, "dataset", "2wikimultihopqa.json")
 LOGICRAG_CORPUS = os.path.join(LOGICRAG_DIR, "dataset", "2wikimultihopqa_corpus.json")
 DEFAULT_OUTPUT = os.path.join(
-    PROJECT_ROOT, "data", "eval_1000q", "logicrag_1000q_traced.jsonl"
+    PROJECT_ROOT, "data", "eval_1000q", "logicrag", "logicrag_1000q_traced.jsonl"
 )
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ def main():
     )
     parser.add_argument("--api-key", required=True, help="Groq API key")
     parser.add_argument("--output", default=DEFAULT_OUTPUT,
-                        help="Output JSONL path (default: data/eval_1000q/logicrag_1000q_traced.jsonl)")
+                        help="Output JSONL path (default: data/eval_1000q/logicrag/logicrag_1000q_traced.jsonl)")
     parser.add_argument("--limit", type=int, default=None,
                         help="Cap remaining questions (for testing)")
     parser.add_argument("--timeout", type=int, default=300,
