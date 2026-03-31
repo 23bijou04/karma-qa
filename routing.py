@@ -340,13 +340,11 @@ def verify_sparql_feasibility(
                     hop2_dbo_prop = p[4:]  # strip "dbo:" prefix
                     break
 
-        verified = False
-        for entity in entities:
-            if not entity.uri:
-                continue
-            from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+
+        def _ask_entity(entity: Entity) -> bool:
+            """Run ASK query for a single entity. Returns True if chain exists."""
             safe_uri = escape_sparql_uri(entity.uri)
-            # Build ASK: hop-1 only, or hop-1 + hop-2 when hop2 is known
             hop1_pattern = (
                 f"<{safe_uri}> <http://dbpedia.org/ontology/{hop1_prop}> ?x"
             )
@@ -359,16 +357,28 @@ def verify_sparql_feasibility(
                 ask_query = f"ASK {{ {hop1_pattern} }}"
             try:
                 raw = kg_client.query(ask_query)
-                if raw.get("boolean", False):
-                    verified = True
-                    break
+                return raw.get("boolean", False)
             except Exception as e:
                 logger.debug("ASK query failed for %s: %s", entity.label, e)
-                continue
+                # Exception counts as verification failure
+                return False
 
-        if verified:
-            return ("SPARQL", f"{reason}+ask_verified")
-        return ("DECOMPOSE", f"{reason}+ask_missing")
+        uri_entities = [e for e in entities if e.uri]
+        if not uri_entities:
+            return (route, reason)
+
+        # Comparison questions need ALL entities verified (partial data = wrong comparison).
+        # Non-comparison questions need ANY entity verified (one source suffices).
+        if analysis.is_comparison:
+            all_verified = all(_ask_entity(e) for e in uri_entities)
+            if all_verified:
+                return ("SPARQL", f"{reason}+ask_verified")
+            return ("DECOMPOSE", f"{reason}+ask_partial")
+        else:
+            any_verified = any(_ask_entity(e) for e in uri_entities)
+            if any_verified:
+                return ("SPARQL", f"{reason}+ask_verified")
+            return ("DECOMPOSE", f"{reason}+ask_missing")
 
     return (route, reason)
 
