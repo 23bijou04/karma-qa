@@ -56,13 +56,13 @@ Bonferroni-corrected alpha=0.0083 (6 comparisons).
 
 ## Table 6: McNemar Pairwise Tests — Judge EM (Full 1000q)
 
-| Comparison            | N    | A only | B only | Net | Chi2  | Significant |
-| :-------------------- | ---: | ---:-- | ---:-- | ---: | ---:- | ---:------- |
-| Hybrid vs LinearRAG   | 1000 | 100    | 99     | -1  | 0.0   | No          |
-| Hybrid vs LogicRAG    | 1000 | 170    | 74     | -96 | 36.99 | Yes         |
-| LogicRAG vs LinearRAG | 1000 | 69     | 164    | +95 | 37.92 | Yes         |
+Bonferroni-corrected alpha=0.0167 (3 comparisons).
 
-> **Update (2026-03-31):** Hybrid 1000q numbers updated after ASK verification fix in `routing.py` (+12 bridge_comparison questions recovered). Judge EM 841→853 (84.1%→85.3%), bridge_comparison 80.9%→86.0%. McNemar tables above are pre-fix; re-run `scripts/unified_comparison.py` to regenerate pairwise statistics.
+| Comparison            | N    | A only | B only | Net  | Chi2  | Significant |
+| :-------------------- | ---: | ---:-- | ---:-- | ---: | ---:- | ---:------- |
+| Hybrid vs LinearRAG   | 1000 | 100    | 87     | +13  | 0.77  | No          |
+| Hybrid vs LogicRAG    | 1000 | 173    | 65     | +108 | 48.11 | Yes         |
+| LogicRAG vs LinearRAG | 1000 | 69     | 164    | -95  | 37.92 | Yes         |
 
 ## Methodology
 

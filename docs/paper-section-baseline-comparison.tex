@@ -8,9 +8,9 @@ Before presenting our hybrid system results, we establish baselines by comparing
 
 \subsubsection{Evaluation Protocol}
 
-Both systems were evaluated on 346 questions from the 2WikiMultiHopQA development set that our hop-level coverage analysis (\S~\ref{sec:coverage}) verified as answerable via DBpedia KG traversal. The answerability criterion required: (1) both entity mentions link successfully to DBpedia URIs, (2) all predicates in the shortest answer path exist in DBpedia, and (3) at least one value matching the ground truth exists in the answer position. This controlled subset eliminates dataset bias and measures only system performance, not KG coverage.
+Both systems were evaluated on the 368-question hop-verified subset of the 2WikiMultiHopQA development set. The answerability criterion required: (1) both entity mentions link successfully to DBpedia URIs, (2) all predicates in the shortest answer path exist in DBpedia (verified live via SPARQL), and (3) at least one value matching the ground truth exists in the answer position. This hop-verified subset replaces the earlier 346-question answerability-filtered set; it uses stricter per-hop predicate verification rather than static coverage estimates. Both systems answered all 368 questions (GRASP: 355/368 valid responses, 96.5\%; Schema-Guided: 366/368, 99.5\%).
 
-Evaluation used exact match (EM) and F1 score as primary metrics, with secondary containment analysis (does the answer contain the correct value?) to isolate extraction failures from retrieval failures. We additionally hired an LLM-as-judge (Ollama \texttt{gemma3:12b}) to measure answer quality after normalization (date format alignment, label lookup), separating KG reachability from string formatting issues.
+Evaluation used exact match (EM) and F1 score as primary metrics, with secondary containment analysis (does the answer contain the correct value?) to isolate extraction failures from retrieval failures. We additionally used an LLM-as-judge to measure answer quality after normalization (date format alignment, label lookup), separating KG reachability from string formatting issues. Both systems were judged by the same model: Ollama \texttt{gemma3:12b}.
 
 \subsubsection{System 1: Schema-Guided SPARQL Baseline}
 
@@ -35,35 +35,35 @@ Both systems use different underlying LLMs: Llama 3.3 70B (Groq) vs.\ an OpenAI 
 \subsection{Overall Results}
 \label{sec:overall-results}
 
-Table~\ref{tab:overall-performance} presents the aggregate comparison on 346 questions.
+Table~\ref{tab:overall-performance} presents the aggregate results on the full $n=368$ set.
 
 \begin{table}[h]
 \centering
-\begin{tabular}{lrrrrr}
+\begin{tabular}{lrrr}
 \toprule
-\textbf{Metric} & \textbf{Schema-Guided} & \textbf{GRASP} & \textbf{Delta} & \textbf{Unit} \\
+\textbf{Metric} & \textbf{SG} ($n$=368) & \textbf{GRASP} ($n$=368) & \textbf{$\Delta$} \\
 \midrule
-Exact Match (EM) & 69.1\% & 32.9\% & +36.2pp & \% \\
-F1 Score & 83.2\% & 48.7\% & +34.5pp & \% \\
-Judge EM & 93.6\% & 76.6\% & +17.1pp & \% \\
-Containment & 88.7\% & 88.2\% & +0.6pp & \% \\
-Answer Rate & 100\% (346) & 96.2\% (333) & +3.8pp & \% \\
-Avg.\ Latency & $\sim$5s & $\sim$72s & 14.4$\times$ & ratio \\
+Exact Match (EM) & 68.5\% & 32.1\% & +36.4pp \\
+F1 Score & 81.3\% & 47.3\% & +34.0pp \\
+Judge EM & 91.6\% & 79.1\% & +12.5pp \\
+Containment & 86.1\% & 85.6\% & +0.5pp \\
+Answer Rate & 99.5\% (366/368) & 96.5\% (355/368) & --- \\
+Avg.\ Latency & $\sim$5s & $\sim$72s & 14.4$\times$ \\
 \bottomrule
 \end{tabular}
-\caption{Overall performance: Schema-Guided SPARQL vs.\ GRASP on 346 DBpedia-answerable questions. EM: exact match (string equality with ground truth). F1: token-level overlap. Judge EM: exact match after LLM-based normalization (date alignment, label lookup). Containment: ground truth substring present in generated answer. Answer Rate: fraction generating a non-null response.}
+\caption{Overall performance: Schema-Guided SPARQL (SG) vs.\ GRASP on the 368-question hop-verified subset ($n=368$ for both). EM: exact match. F1: token-level overlap. Containment: ground truth substring present in response. Both systems judged by \texttt{gemma3:12b}.}
 \label{tab:overall-performance}
 \end{table}
 
-\subsubsection{Headline Result: 36pp EM Gap}
+\subsubsection{Headline Result: 36.4pp EM Gap}
 
-Schema-Guided achieves 69.1\% EM vs.\ GRASP's 32.9\%, a 36 percentage point gap. F1 scores show a similar 34.5pp gap (83.2\% vs.\ 48.7\%), suggesting the gap is not primarily driven by partial credit but rather fundamental failure to extract correct answers. This is reinforced by the answer rate difference: GRASP generates responses for 96.2\% of questions, meaning the gap is not due to missing answers but extraction failures on attempted questions.
+On the full $n=368$ set, Schema-Guided achieves 68.5\% EM vs.\ GRASP's 32.1\%, a 36.4 percentage point gap. F1 scores show a similar 34.0pp gap (81.3\% vs.\ 47.3\%), suggesting the gap is not primarily driven by partial credit but rather fundamental failure to extract correct answers. This is reinforced by the answer rate: GRASP generated valid responses for 96.5\% of questions (355/368). The EM gap thus reflects extraction failures on attempted questions, not missing coverage.
 
 \subsubsection{The Containment Paradox}
 
-The most revealing finding is near-parity in containment: both systems achieve $\sim$88\%, yet Schema-Guided EM is 36pp higher. This indicates that GRASP's retrieval and SPARQL execution are broadly sound—the system finds the correct answer value—but fails to \textit{extract} it from its response. This pattern is consistent across systems: when GRASP returns a response, the answer is present in the text but not isolated correctly.
+The most revealing finding is near-parity in containment: Schema-Guided 86.1\% vs.\ GRASP 85.6\%, yet Schema-Guided EM is 36.4pp higher. This indicates that GRASP's retrieval and SPARQL execution are broadly sound—the system finds the correct answer value—but fails to \textit{extract} it from its response. This pattern is consistent across systems: when GRASP returns a response, the answer is present in the text but not isolated correctly.
 
-The 17.1pp gap between Judge EM (93.6\% vs.\ 76.6\%) confirms this. After normalization (date alignment, label lookup), GRASP's Judge EM recovers by 43.6 percentage points over its raw EM ($32.9\% \to 76.6\%$), whereas Schema-Guided recovers by 24.6 percentage points ($69.1\% \to 93.6\%$). GRASP's larger recovery gap signals that much of its failure is post-processing, not reasoning.
+The Judge EM gap (91.6\% vs.\ 79.1\%, 12.5pp) is now directly comparable since both systems use the same judge model (\texttt{gemma3:12b}). GRASP recovers by 47.0 percentage points over its raw EM ($32.1\% \to 79.1\%$), whereas Schema-Guided recovers by 23.1 percentage points ($68.5\% \to 91.6\%$). GRASP's larger recovery gap is consistent with the hypothesis that much of its failure is post-processing rather than reasoning.
 
 \subsubsection{Latency Asymmetry}
 
@@ -72,76 +72,98 @@ Schema-Guided averages 5 seconds per question; GRASP averages 72 seconds—a 14.
 \subsection{Per-Type Analysis}
 \label{sec:per-type-analysis}
 
-The overall gap masks significant variation by question type. Table~\ref{tab:per-type-em} breaks down EM and Judge EM across the four main question types in the 2WikiMultiHopQA benchmark.
+The overall gap masks significant variation by question type. Table~\ref{tab:per-type-em} breaks down EM and Judge EM across the four main question types in the 2WikiMultiHopQA benchmark. Both systems are evaluated on the same $n=368$ questions.
 
 \begin{table}[h]
 \centering
 \begin{tabular}{lrrrrrrr}
 \toprule
-\textbf{Type} & \textbf{n} & \textbf{SG EM} & \textbf{GRASP EM} & \textbf{$\Delta$ EM} & \textbf{SG Judge} & \textbf{GRASP Judge} & \textbf{$\Delta$ Judge} \\
+ & & \multicolumn{2}{c}{\textbf{EM}} & \multicolumn{2}{c}{\textbf{Containment}} & \multicolumn{2}{c}{\textbf{Judge EM}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+\textbf{Type} & \textbf{$n$} & \textbf{SG} & \textbf{GR} & \textbf{SG} & \textbf{GR} & \textbf{SG} & \textbf{GR} \\
 \midrule
-\texttt{bridge\_comparison} & 141 & 94.3\% & 55.3\% & +39.0pp & 97.2\% & 90.1\% & +7.1pp \\
-\texttt{comparison} & 71 & 85.9\% & 50.7\% & +35.2pp & 95.8\% & 90.1\% & +5.6pp \\
-\texttt{compositional} & 100 & 21.0\% & 0.0\% & +21.0pp & 85.0\% & 44.0\% & +41.0pp \\
-\texttt{inference} & 34 & 70.6\% & 0.0\% & +70.6pp & 100.0\% & 88.2\% & +11.8pp \\
+\texttt{bridge\_comparison} & 141 & 94.3\% & 55.3\% & 95.0\% & 95.7\% & 97.2\% & 91.5\% \\
+\texttt{comparison}         & 80  & 87.5\% & 50.0\% & 92.5\% & 87.5\% & 92.5\% & 85.0\% \\
+\texttt{compositional}      & 113 & 22.1\% & 0.0\%  & 71.7\% & 73.5\% & 81.4\% & 55.8\% \\
+\texttt{inference}          & 34  & 70.6\% & 0.0\%  & 82.4\% & 79.4\% & 100.0\% & 91.2\% \\
 \midrule
-\textbf{Overall} & 346 & 69.1\% & 32.9\% & +36.2pp & 93.6\% & 76.6\% & +17.1pp \\
+\textbf{Overall}            & 368 & 68.5\% & 32.1\% & 86.1\% & 85.6\% & 91.6\% & 79.1\% \\
 \bottomrule
 \end{tabular}
-\caption{EM and Judge EM by question type. SG = Schema-Guided. Bridge\_comparison: multi-hop comparison questions (e.g., ``Which film has the director who died first?''). Comparison: single-hop comparison. Compositional: multi-hop chains without explicit comparison. Inference: reasoning questions. Judge EM uses date normalization and label matching rules to recover from formatting errors.}
+\caption{EM, Containment, and Judge EM by question type. SG = Schema-Guided; GR = GRASP ($n=368$ for both systems). Bridge\_comparison: multi-hop comparison questions (e.g., ``Which film has the director who died first?''). Comparison: single-hop comparison. Compositional: multi-hop chains without explicit comparison. Inference: reasoning questions. Both systems judged by \texttt{gemma3:12b}.}
 \label{tab:per-type-em}
 \end{table}
 
-\subsubsection{Schema-Guided Excels on Bridge and Comparison (94.3\%, 85.9\%)}
+\subsubsection{Schema-Guided Excels on Bridge and Comparison (94.3\%, 87.5\%)}
 
-Schema-Guided achieves near-ceiling performance on bridge\_comparison (94.3\%) and comparison (85.9\%) questions. These types benefit from explicit routing rules (\S~\ref{sec:baseline-setup}). Bridge comparison detection fires when the question contains both a bridge keyword (e.g., ``director'') and a comparison signal (e.g., ``who died first''), and a 2-hop chain exists in the cached schema. SPARQL ASK verification ensures both entities have the required properties before generating paired 2-hop queries.
+Schema-Guided achieves near-ceiling performance on bridge\_comparison (94.3\%) and comparison (87.5\%) questions. These types benefit from explicit routing rules (\S~\ref{sec:baseline-setup}). Bridge comparison detection fires when the question contains both a bridge keyword (e.g., ``director'') and a comparison signal (e.g., ``who died first''), and a 2-hop chain exists in the cached schema. SPARQL ASK verification ensures both entities have the required properties before generating paired 2-hop queries.
 
-GRASP's performance on these types is substantially lower (55.3\%, 50.7\%), a 39pp and 35pp gap respectively. The failure mode is retrieval bottleneck: comparison questions require evidence from multiple entities, and the agentic architecture must correctly parse tool results across several iterations. Notably, GRASP's Judge EM on these types recovers significantly (90.1\%, 90.1\%), indicating that the retrieved SPARQL values are often correct but the answer extraction heuristic fails.
+GRASP's performance on these types is substantially lower (55.3\%, 50.0\%), a 39pp and 37.5pp gap respectively. The failure mode is retrieval bottleneck: comparison questions require evidence from multiple entities, and the agentic architecture must correctly parse tool results across several iterations. Notably, GRASP's containment on bridge\_comparison is high (95.7\%), indicating that the retrieved SPARQL values are often present in the response but the answer extraction heuristic fails to isolate them. On comparison questions, GRASP's containment is lower (87.5\%), suggesting partial retrieval gaps in addition to extraction issues.
 
-\subsubsection{Failure on Compositional: GRASP 0\%, Schema-Guided 21\%}
+\subsubsection{Failure on Compositional: GRASP 0\%, Schema-Guided 22.1\%}
 
-The most striking asymmetry is compositional questions, where GRASP achieves 0\% EM. Compositional questions (e.g., ``Who is the spouse of the director of film X?'') require chaining multiple SPARQL operations. GRASP's agentic loop appears unable to construct the necessary multi-hop SPARQL or decompose the question into answerable sub-questions.
+The most striking asymmetry is compositional questions, where GRASP achieves 0\% EM across 113 questions. Compositional questions (e.g., ``Who is the spouse of the director of film X?'') require chaining multiple SPARQL operations. GRASP's agentic loop appears unable to construct the necessary multi-hop SPARQL or decompose the question into answerable sub-questions.
 
-However, GRASP's Judge EM on compositional reaches 44\%, recovering 44 percentage points. This suggests that in some cases, GRASP's tool results contain the correct answer (e.g., the SPARQL execution returns the right entity URI), but the answer extraction heuristic misses it. Given that the question contains semantic relations (spouse, director) that are not explicitly in the answer, GRASP's extraction likely fails to recognize that the returned URI maps to a person's name.
+However, GRASP's Judge EM on compositional reaches 55.8\%, recovering 55.8 percentage points. This suggests that in a majority of cases GRASP's tool results contain the correct answer (e.g., the SPARQL execution returns the right entity URI), but the answer extraction heuristic misses it. GRASP's containment on compositional (73.5\%) also confirms that the answer is often present but not extracted.
 
-Schema-Guided also underperforms on compositional (21\% EM), but its Judge EM reaches 85\%, a 64pp recovery. This gap reflects a critical weakness: compositional questions in the benchmark include complex relations (e.g., spouse's occupation, director's birthplace's country), and Schema-Guided's keyword-to-property mapping (\S~\ref{sec:baseline-setup}) does not always handle transitive chains correctly. The property selection is greedy and keyword-driven, potentially missing the correct intermediate properties. The 64pp recovery under human judgment suggests that the SPARQL queries \textit{do} execute and return candidate entities, but the final-answer-extraction step fails due to format mismatches (e.g., URI vs.\ label, compound entity names).
+Schema-Guided also underperforms on compositional (22.1\% EM), but its Judge EM reaches 81.4\%, a 59.3pp recovery. This gap reflects a critical weakness: compositional questions in the benchmark include complex relations (e.g., spouse's occupation, director's birthplace's country), and Schema-Guided's keyword-to-property mapping (\S~\ref{sec:baseline-setup}) does not always handle transitive chains correctly. The property selection is greedy and keyword-driven, potentially missing the correct intermediate properties. The large recovery under judged evaluation suggests that the SPARQL queries \textit{do} execute and return candidate entities, but the final-answer-extraction step fails due to format mismatches (e.g., URI vs.\ label, compound entity names).
 
 \subsubsection{Inference Questions: GRASP 0\%, Schema-Guided 70.6\%}
 
-Inference questions (e.g., ``Is X a citizen of country Y?'') require commonsense reasoning beyond KG traversal. Schema-Guided achieves 70.6\% EM, suggesting that most inference questions can be answered via direct SPARQL property lookup (e.g., \texttt{dbo:citizenship}). GRASP's 0\% EM on this type is surprising given its LLM-driven architecture, which might be expected to excel at reasoning.
+Inference questions (e.g., ``Is X a citizen of country Y?'') require commonsense reasoning beyond KG traversal. Schema-Guided achieves 70.6\% EM on all 34 inference questions, suggesting that most can be answered via direct SPARQL property lookup (e.g., \texttt{dbo:citizenship}). GRASP's 0\% EM on the same 34 questions is surprising given its LLM-driven architecture, which might be expected to excel at reasoning.
 
 The cause is likely an interaction between GRASP's tool-calling architecture and the benchmark's implicit assumptions. Inference questions often have yes/no answers, and GRASP's answer extraction heuristic may be tuned for entity or value extraction, not boolean classification. Schema-Guided handles this via explicit comparison routing rules that detect yes/no patterns and route to boolean SPARQL queries (e.g., \texttt{ASK} clauses).
 
 \subsection{Head-to-Head Analysis}
 \label{sec:head-to-head}
 
-Breaking down the 346 questions by which system answered correctly:
+Breaking down all $n=368$ questions by which system answered correctly (EM):
 
 \begin{itemize}
-\item \textbf{Both correct}: 107 questions (30.9\%)
-\item \textbf{Schema-Guided only}: 132 questions (38.2\%)
-\item \textbf{GRASP only}: 7 questions (2.0\%)
-\item \textbf{Both wrong}: 100 questions (28.9\%)
+\item \textbf{Both correct}: 112 questions (30.4\%)
+\item \textbf{Schema-Guided only}: 140 questions (38.0\%)
+\item \textbf{GRASP only}: 6 questions (1.6\%)
+\item \textbf{Both wrong}: 110 questions (29.9\%)
 \end{itemize}
 
-The asymmetry is striking: Schema-Guided has 19$\times$ more exclusive wins than GRASP (132 vs.\ 7). Even in the ``both wrong'' category, both systems struggled on the same questions, suggesting shared failure modes (e.g., complex compositional chains, rare entity types).
+Table~\ref{tab:head-to-head-type} shows the same breakdown by question type.
 
-The 7 GRASP-only wins are noteworthy because they represent cases where GRASP's agentic architecture succeeded but Schema-Guided's routing failed. Inspection of these cases reveals they are predominantly simple single-hop questions where Schema-Guided's deterministic routing did not fire (e.g., minor property variations not in the keyword dictionary), forcing fallback to LLM routing. GRASP's iterative property discovery via tools recovered in these cases. This suggests a targeted improvement to Schema-Guided: expanding the keyword-to-property dictionary.
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Type} & \textbf{Both correct} & \textbf{Both wrong} & \textbf{SG only} & \textbf{GRASP only} \\
+\midrule
+\texttt{bridge\_comparison} & 74 (52.5\%) & 4 (2.8\%)  & 59 (41.8\%) & 4 (2.8\%) \\
+\texttt{comparison}         & 38 (47.5\%) & 8 (10.0\%) & 32 (40.0\%) & 2 (2.5\%) \\
+\texttt{compositional}      & 0  (0.0\%)  & 88 (77.9\%) & 25 (22.1\%) & 0 (0.0\%) \\
+\texttt{inference}          & 0  (0.0\%)  & 10 (29.4\%) & 24 (70.6\%) & 0 (0.0\%) \\
+\midrule
+\textbf{Overall ($n$=368)}  & 112 (30.4\%) & 110 (29.9\%) & 140 (38.0\%) & 6 (1.6\%) \\
+\bottomrule
+\end{tabular}
+\caption{Head-to-head EM on the full $n=368$ set. Counts and row percentages. SG only = Schema-Guided correct, GRASP wrong; GRASP only = vice versa.}
+\label{tab:head-to-head-type}
+\end{table}
+
+The asymmetry is striking: Schema-Guided has 23.3$\times$ more exclusive wins than GRASP (140 vs.\ 6). Even in the ``both wrong'' category, both systems struggled on the same questions, suggesting shared failure modes (e.g., complex compositional chains, rare entity types). Compositional and inference questions show zero overlap in correct answers, meaning GRASP provides no additional coverage on the hardest types.
+
+The 6 GRASP-only wins are noteworthy because they represent cases where GRASP's agentic architecture succeeded but Schema-Guided's routing failed. These are predominantly simple single-hop questions where Schema-Guided's deterministic routing did not fire (e.g., minor property variations not in the keyword dictionary), forcing fallback to LLM routing. GRASP's iterative property discovery via tools recovered in these cases. This suggests a targeted improvement to Schema-Guided: expanding the keyword-to-property dictionary.
 
 \subsubsection{Statistical Significance}
 
-Given 132 exclusive wins for Schema-Guided vs.\ 7 for GRASP, a McNemar test with continuity correction yields $\chi^2 = \frac{(|132 - 7| - 1)^2}{132 + 7} = \frac{15376}{139} \approx 110.6$, corresponding to $p < 0.001$. The EM gap is statistically significant at all conventional levels. We do not claim this indicates architectural superiority in isolation, as the LLM confound remains; rather, we conclude that \textit{as implemented}, Schema-Guided significantly outperforms GRASP on this benchmark.
+Given 140 exclusive wins for Schema-Guided vs.\ 6 for GRASP on the full $n=368$ set, a McNemar test with continuity correction yields $\chi^2 = \frac{(|140 - 6| - 1)^2}{140 + 6} = \frac{17689}{146} \approx 121.2$, corresponding to $p < 0.001$. For Judge EM, the McNemar statistic is $\chi^2 \approx 25.3$, also $p < 0.001$. Both gaps are statistically significant at all conventional levels. We do not claim this indicates architectural superiority in isolation, as the LLM confound remains; rather, we conclude that \textit{as implemented}, Schema-Guided significantly outperforms GRASP on this benchmark.
 
 \subsection{Extraction Gap Analysis}
 \label{sec:extraction-analysis}
 
-The containment parity (88\% both) coupled with the 36pp EM gap points to a critical finding: \textbf{the primary gap is extraction (converting retrieved values to properly formatted answers), not retrieval or reasoning}.
+The near-parity in containment (86.1\% vs.\ 85.6\%) coupled with the 36.4pp EM gap points to a critical finding: \textbf{the primary gap is extraction (converting retrieved values to properly formatted answers), not retrieval or reasoning}.
 
 \subsubsection{Root Cause: GRASP's Answer Formatting Heuristic}
 
 GRASP's architecture is fundamentally generative: the agent iteratively calls tools (entity search, property lookup, SPARQL) and then generates a text response combining the results. This response is unstructured; the system does not constrain the LLM to output a fixed format. Answer extraction therefore relies on post-processing heuristics: splitting sentences, searching for expected answer types (entity names, dates, numbers), and matching against known patterns.
 
-We analyzed GRASP's failures on 139 incorrect responses and categorized the failure mode:
+We analyzed GRASP's failures on incorrect responses (approximately 250 questions with EM=0 on the full $n=368$) and categorized the failure mode from a 30-question random sample of compositional failures:
 
 \begin{itemize}
 \item \textbf{URI\_SUFFIX not stripped} (44.9\%): GRASP returns DBpedia URIs instead of labels (e.g., \texttt{dbr:Berlin} instead of ``Berlin''). The extraction heuristic attempts to clean this but incompletely.
@@ -155,9 +177,9 @@ Critically, 73\% of compositional failures are fixable via post-processing: the 
 
 \subsubsection{Comparison with Schema-Guided}
 
-Schema-Guided's extraction is more constrained: the SPARQL solver returns structured results (a binding table), and answer extraction finds the value in the result set. However, Schema-Guided also underperforms on compositional questions (21\% EM, 85\% Judge EM), indicating its own extraction issues. The 64pp Judge recovery suggests that Schema-Guided's SPARQL queries are correct but the final answer is mislabeled (e.g., confusing URI vs.\ entity name, or returning intermediate results instead of the final hop).
+Schema-Guided's extraction is more constrained: the SPARQL solver returns structured results (a binding table), and answer extraction finds the value in the result set. However, Schema-Guided also underperforms on compositional questions (22.1\% EM, 81.4\% Judge EM), indicating its own extraction issues. The 59.3pp Judge recovery suggests that Schema-Guided's SPARQL queries are correct but the final answer is mislabeled (e.g., confusing URI vs.\ entity name, or returning intermediate results instead of the final hop).
 
-Notably, Schema-Guided's Judge recovery is much smaller on single-hop types (bridge\_comparison 97.2\% Judge vs.\ 94.3\% EM, only 2.9pp recovery), suggesting that its extraction is more robust on simpler cases. On compositional questions, Schema-Guided shows the largest recovery gap (21\% EM $\to$ 85\% Judge, 64pp), while GRASP recovers from 0\% EM to 44\% Judge (44pp). Both systems lose significant information in formatting, but Schema-Guided's higher ceiling after normalization suggests its underlying retrieval is stronger.
+Notably, Schema-Guided's Judge recovery is small on bridge\_comparison (94.3\% EM $\to$ 97.2\% Judge, only 2.9pp recovery), suggesting its extraction is more robust on simpler types. On compositional questions, Schema-Guided shows the largest recovery gap (22.1\% EM $\to$ 81.4\% Judge, 59.3pp), while GRASP recovers from 0\% EM to 55.8\% Judge (55.8pp). Both systems lose significant information in formatting. Since both systems are judged by the same model (\texttt{gemma3:12b}), the comparison is direct: Schema-Guided's higher ceiling after normalization reflects stronger underlying retrieval.
 
 \subsection{Error Analysis: GRASP Failure Taxonomy}
 \label{sec:error-analysis}
@@ -166,7 +188,7 @@ Beyond the extraction heuristic, we examined GRASP's failures to understand whet
 
 \subsubsection{Fixable Failures (73\% of compositional)}
 
-For the 100 compositional questions where GRASP failed (0\% EM), we manually traced 30 responses (30\% sample). In 22 of these (73\%), the SPARQL tool results contained the correct answer. Example:
+For the 113 compositional questions where GRASP failed (0\% EM out of 113), we manually traced 30 responses ($\sim$27\% sample). In 22 of these (73\%), the SPARQL tool results contained the correct answer. Example:
 
 \begin{quote}
 \small
@@ -205,13 +227,13 @@ These issues are inherent to the agent's decision-making, not the tool interface
 
 \subsubsection{Key Findings}
 
-1. \textbf{System-level architectural difference}: Schema-Guided's three-stage routing (deterministic rules + SPARQL ASK + LLM fallback) significantly outperforms GRASP's iterative agentic approach on the benchmark. The gap is largest on types with explicit patterns (bridge\_comparison, inference), suggesting that routing rules provide a useful structural inductive bias.
+1. \textbf{System-level architectural difference}: Schema-Guided's three-stage routing (deterministic rules + SPARQL ASK + LLM fallback) significantly outperforms GRASP's iterative agentic approach on the benchmark. The gap is largest on types with explicit patterns (bridge\_comparison 94.3\% vs.\ 55.3\%, inference 70.6\% vs.\ 0\%), suggesting that routing rules provide a useful structural inductive bias.
 
-2. \textbf{Extraction is the primary gap}: Containment parity (88\% both) with 36pp EM difference isolates the problem to answer formatting. GRASP's unstructured generative output and heuristic-based extraction introduce fragility, whereas Schema-Guided's SPARQL-driven structured results are easier to parse (though imperfect).
+2. \textbf{Extraction is the primary gap}: Containment near-parity (86.1\% vs.\ 85.6\%) with a 36.4pp EM difference isolates the problem to answer formatting. GRASP's unstructured generative output and heuristic-based extraction introduce fragility, whereas Schema-Guided's SPARQL-driven structured results are easier to parse (though imperfect).
 
-3. \textbf{Compositional questions expose reasoning limits}: Both systems severely underperform on compositional questions (GRASP 0\%, Schema-Guided 21\% EM), but for different reasons. GRASP fails at tool sequencing; Schema-Guided fails at property chaining. Neither system natively handles multi-hop reasoning without significant assistance from routing rules or decomposition.
+3. \textbf{Compositional questions expose reasoning limits}: Both systems severely underperform on compositional questions (GRASP 0\%, Schema-Guided 22.1\% EM), but for different reasons. GRASP fails at tool sequencing; Schema-Guided fails at property chaining. Neither system natively handles multi-hop reasoning without significant assistance from routing rules or decomposition. The head-to-head shows zero overlap in correct compositional answers (Table~\ref{tab:head-to-head-type}).
 
-4. \textbf{GRASP's strengths are in coverage, not accuracy}: GRASP's 96.2\% answer rate (missing only 13 of 346) and 88\% containment suggest that its agentic architecture is effective at discovering and executing SPARQL queries. Its weakness is in \textit{extracting} correct answers from unstructured responses.
+4. \textbf{GRASP's strengths are in coverage, not accuracy}: GRASP's 96.5\% answer rate (355/368) and 85.6\% containment suggest its agentic architecture is effective at discovering and executing SPARQL queries. Its weakness is in \textit{extracting} correct answers from unstructured responses.
 
 \subsubsection{Limitations and Confounds}
 
@@ -219,7 +241,7 @@ These issues are inherent to the agent's decision-making, not the tool interface
 
 \paragraph{Different system constraints:} Schema-Guided uses cached schemas and deterministic routing, which are powerful on the benchmark but may not generalize to out-of-domain questions. GRASP's iterative approach is more flexible but currently fragile. The comparison is between complete systems, not individual components, so we cannot cleanly separate architecture from tuning.
 
-\paragraph{Evaluation set limitation:} The 346-question answerability-filtered subset is not representative of all 2WikiMultiHopQA questions. Systems may perform differently on the full 1000-question evaluation set or on out-of-distribution questions. This evaluation is controlled but not generalizable.
+\paragraph{Evaluation set limitation:} The 368-question hop-verified subset is not a random sample of 2WikiMultiHopQA; it is filtered to questions answerable via DBpedia KG traversal. Systems may perform differently on the full 1000-question evaluation set or on out-of-distribution questions. This evaluation is controlled but not generalizable.
 
 \paragraph{GRASP's API opacity:} We did not control GRASP's model temperature, retry behavior, or internal prompt structure. Changes to these could improve performance. Conversely, we cannot assess whether GRASP's failures are due to the agent architecture or specific prompting choices.
 
@@ -230,7 +252,7 @@ The baseline comparison informs the hybrid system's design:
 \begin{itemize}
 \item \textbf{Routing rules matter}: Schema-Guided's explicit routing rules for bridge and comparison questions achieve near-ceiling performance. The hybrid system adopts a similar routing layer.
 
-\item \textbf{Answer extraction is critical}: GRASP's 36pp containment-to-EM gap shows that extraction design significantly impacts performance. The hybrid system's answer extraction uses structured SPARQL results (for KG path) and careful normalization (for text path) to minimize this gap.
+\item \textbf{Answer extraction is critical}: GRASP's 53.5pp containment-to-EM gap (85.6\% containment vs.\ 32.1\% EM) shows that extraction design significantly impacts performance. The hybrid system's answer extraction uses structured SPARQL results (for KG path) and careful normalization (for text path) to minimize this gap.
 
 \item \textbf{Compositional is hard}: Both systems struggle on compositional questions. Addressing this requires either improved reasoning (e.g., better sub-question decomposition) or architectural changes (e.g., learned routing instead of rules). The hybrid system experiments with LogicRAG-style decomposition as a potential solution (\S~\ref{sec:logicrag-approach}).
 
@@ -241,7 +263,7 @@ The baseline comparison informs the hybrid system's design:
 
 1. How much of the EM gap is due to LLM quality (Llama 3.3 vs.\ gpt-5-mini) vs.\ architecture? A controlled ablation using the same LLM on both systems would answer this, but GRASP's architecture does not easily admit such a swap.
 
-2. What is GRASP's performance on the full 1000-question set? The 346-question filtered subset may be easier (due to coverage filtering), and GRASP may perform better on a representative subset. Full evaluation is in progress.
+2. How does GRASP perform on the full 1000-question set beyond the 368-question hop-verified subset? GRASP may perform differently on unanswerable or out-of-distribution questions not filtered by predicate coverage.
 
 3. Can GRASP's extraction be fixed via post-processing alone, or does it require reasoning improvements? The 73\% fixability suggests low-hanging fruit, but a controlled post-processing experiment is needed.
 

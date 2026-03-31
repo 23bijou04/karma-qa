@@ -26,12 +26,12 @@ describe HOW the pipeline fails — a complementary but distinct taxonomy.
 
 | Scenario | Label | Count | % | Representative Case |
 |----------|-------|------:|----:|---------------------|
-| **A** | KG_COMPLETE | 346 | 34.6% | _(original analysis; hop-verified: 368 predicate-complete, 119 strict)_ |
-| **B** | HOP1_MISSING | 304 | 30.4% | Case 1 (Katka), Case 2 (Bea Ballard) |
-| **C** | HOP2_MISSING | 158 | 15.8% | Case 5 (My Three Merry Widows) |
-| **D** | BOTH_HOPS_MISSING | 128 | 12.8% | Case 3 (Consort Liang) |
-| **E** | ENTITY_NOT_FOUND | 39 | 3.9% | Case 4 (Thomas Lyon-Bowes) |
-| **F** | ENTITY_NOT_FOUND + PROP_GAP | 25 | 2.5% | _(Jeanne Raunay — see below)_ |
+| **A** | KG_COMPLETE | 368 | 36.8% | _(hop-verified; 119 strict value match)_ |
+| **B** | HOP1_MISSING | 293 | 29.3% | Case 1 (Katka), Case 2 (Bea Ballard) |
+| **C** | HOP2_MISSING | 161 | 16.1% | Case 5 (My Three Merry Widows) |
+| **D** | BOTH_HOPS_MISSING | 114 | 11.4% | Case 3 (Consort Liang) |
+| **E** | ENTITY_NOT_FOUND | 42 | 4.2% | Case 4 (Thomas Lyon-Bowes) |
+| **F** | ENTITY_NOT_FOUND + PROP_GAP | 22 | 2.2% | _(Jeanne Raunay — see below)_ |
 
 **Mapping notes:**
 - Cases 1, 2, 4, 5 map cleanly to scenarios B, B, E, C respectively.
@@ -44,7 +44,7 @@ describe HOW the pipeline fails — a complementary but distinct taxonomy.
   The failure is purely a pipeline bug (keyword filter drops answer-bearing paragraph),
   not a KG coverage gap.
 
-**Scenario F example** (no dedicated case — double failure is uncommon, 2.5%):
+**Scenario F example** (no dedicated case — double failure is uncommon, 2.2%):
 "Where was the husband of Jeanne Raunay born?" (gold: Évreux). Seed entity
 `Jeanne Richomme Raunay` is not found in DBpedia. Bridge entity `André Beaunier`
 exists but is missing `place of birth`. Both KG entry points fail: no entity to
@@ -54,7 +54,7 @@ start the chain, and even if found, the bridge entity can't complete hop-2.
 
 ## Case 1: Missing Hop-1 Predicate (director not in DBpedia)
 
-**KG Scenario:** B (HOP1_MISSING) — 304 questions (30.4%)
+**KG Scenario:** B (HOP1_MISSING) — 293 questions (29.3%)
 
 **Pattern:** The seed entity exists in DBpedia with some structured properties (runtime,
 language, studio) but is **missing the specific hop-1 predicate** needed by the question.
@@ -357,7 +357,7 @@ Historical/royal questions are the main exception.
 
 ## Case 4: Entity Linking Failure (redirect stub, no person page)
 
-**KG Scenario:** E (ENTITY_NOT_FOUND) — 39 questions (3.9%)
+**KG Scenario:** E (ENTITY_NOT_FOUND) — 42 questions (4.2%)
 
 **Pattern:** The entity linking step (Spotlight + SPARQL label search) fails to link
 the entity entirely. The DBpedia entry is a redirect stub pointing to a peerage title
@@ -415,7 +415,7 @@ knowing WHICH Thomas Lyon-Bowes the question refers to, link extraction would ad
 
 ## Case 5: Hop-2 Entity is an Empty Shell
 
-**KG Scenario:** C (HOP2_MISSING) — 158 questions (15.8%)
+**KG Scenario:** C (HOP2_MISSING) — 161 questions (16.1%)
 
 **Pattern:** The seed entity has the hop-1 predicate in DBpedia, so SPARQL resolves
 hop-1 successfully. But the intermediate (hop-2) entity is a near-empty shell —

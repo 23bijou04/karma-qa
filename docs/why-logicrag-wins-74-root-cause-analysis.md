@@ -1,16 +1,56 @@
-# Why LogicRAG Wins on 74 Questions: Deep Root Cause Analysis
+# Hybrid Pipeline Failure Analysis: Root Cause Classification
 
-**Date**: 2026-03-30 | **Validated**: 2026-03-31 | **Status**: For Discussion | **Branch**: `experiment/fair-comparison-analysis`
+**Date**: 2026-03-30 | **Validated**: 2026-04-01 | **Updated**: 2026-04-01 (factcheck: 6 invalid IDs fixed, counts corrected) | **Status**: For Discussion | **Branch**: `experiment/fair-comparison-analysis`
 
 ## Context
 
-In the 1000q head-to-head comparison, the hybrid pipeline wins on 170 questions but **loses on 74** where plain LogicRAG succeeds. This document synthesizes findings from three parallel expert investigations that traced the exact code paths behind each failure.
+The hybrid pipeline fails on **147 of 1000 questions** (85.3% accuracy). Of these, 74 are questions where plain LogicRAG succeeds (the original scope of this document). This update classifies ALL 147 failures by root cause, using three parallel expert investigations that traced exact code paths.
 
 **Critical revision**: The original 5-category classification was a surface-level grouping. The investigations found the actual root mechanisms are different — and in some cases, the original hypotheses were wrong.
 
 ---
 
-## TL;DR — What We Found
+## TL;DR — All 147 Failures by Root Cause
+
+| Root Cause | Count | % | Actionable? |
+|---|---|---|---|
+| **RC4**: Decomposition Bridge/General Failures | 36 | 24.5% | Yes — prompt + propagation fixes |
+| **RC2**: Entity Linking Noise | 30 | 20.4% | Yes — Jaccard gate + blocklist |
+| **RC6**: KG Data Quality | 24 | 16.3% | No — DBpedia data errors |
+| **RC3**: Decomposition Comparison Failures | 21 | 14.3% | Yes — country normalization |
+| **RC1**: SPARQL Coverage Asymmetry | 20 | 13.6% | Partial — fallback to text |
+| **RC7**: Text Retrieval Failure | 8 | 5.4% | Hard — Wikipedia search limits |
+| **RC5**: Evidence Hedging | 8 | 5.4% | Yes — entity scoping fix |
+
+**Actionable failures (RC1–RC5)**: 115/147 (78.2%) — code fixes can address these.
+**Unactionable (RC6+RC7)**: 32/147 (21.8%) — KG data errors or retrieval dead-ends.
+
+### Root Cause × Question Type
+
+| RC | compositional | bridge_comparison | comparison | inference |
+|---|---|---|---|---|
+| RC4 | 29 | — | — | 7 |
+| RC2 | 15 | 9 | 3 | 3 |
+| RC6 | 23 | — | 1 | — |
+| RC3 | 6 | 8 | 7 | — |
+| RC1 | — | 15 | 5 | — |
+| RC7 | 8 | — | — | — |
+| RC5 | 2 | 2 | 4 | — |
+| **Total** | **83** | **34** | **20** | **10** |
+
+### Root Cause × Method
+
+| RC | sparql | logicrag_decomposed |
+|---|---|---|
+| RC4 | 12 | 24 |
+| RC2 | 6 | 24 |
+| RC6 | 5 | 19 |
+| RC3 | 0 | 21 |
+| RC1 | 3 | 17 |
+| RC7 | 0 | 8 |
+| RC5 | 0 | 8 |
+
+### Original 5-Category vs Actual (74 LogicRAG-wins subset)
 
 | Original Category | Original Count | Actual Mechanism | Verdict |
 |---|---|---|---|
@@ -19,6 +59,238 @@ In the 1000q head-to-head comparison, the hybrid pipeline wins on 170 questions 
 | Decomposition comparison | 21 | Three sub-patterns: country label non-normalization, unstable "How old" sub-Qs, Spotlight errors | Confirmed + refined |
 | Decomposition general | 21 | Three sub-patterns: SPARQL retry confabulation, multi-variable projection strips names, TEXT→SPARQL bridge propagation failure | Confirmed + refined |
 | Evidence hedging | 6 | Two sub-mechanisms: entity cross-contamination in UNION queries, `known_facts` bleeding between sub-Qs | Confirmed + refined |
+
+---
+
+## Per-Root-Cause Question Lists (147 failures)
+
+### RC1: SPARQL Coverage Asymmetry (20 questions)
+
+SPARQL returns data for only 1 of 2 entities in a comparison → LLM defaults to entity with data → always wrong.
+
+| # | Question ID | Type | Method | Question (truncated) | Gold → Pred |
+|---|---|---|---|---|---|
+| 1 | `aa73a9fb08b6` | bridge_comp | sparql | Which film director died later, Airport 1975 or Mad Doctor… | Mad Doctor → Airport 1975 |
+| 2 | `821e65dc0869` | bridge_comp | sparql | Which film director died earlier, Hitler Gang or Flannelfoot | Flannelfoot → Hitler Gang |
+| 3 | `6a419ba20876` | bridge_comp | sparql | Which film director older, Ven Mi Corazón or Waking Dead | Ven Mi Corazón → Waking Dead |
+| 4 | `828b13900935` | comparison | logicrag | Which film released more recently, Behind Locked Doors or… | Crossing Delancey → Behind Locked Doors |
+| 5 | `a0027b6e087e` | bridge_comp | logicrag | Director born earlier, Comedy! or Ven Mi Corazón | Ven Mi Corazón → Comedy! |
+| 6 | `f7ff22da0890` | comparison | logicrag | Who lived longer, Louis Ndlovu or Raymond Balze? | Raymond Balze → Louis Ndlovu |
+| 7 | `6b6a8d6008c4` | bridge_comp | logicrag | Director younger, I Think They Call Him John or Tahaan | Tahaan → I Think They Call Him John |
+| 8 | `b088d3ca08e2` | bridge_comp | logicrag | Director younger, Forbidden Ground or Free Guy? | Free Guy → Forbidden Ground |
+| 9 | `4b2a2efd08d8` | comparison | logicrag | Who lived longer, Clarence Moore or Wilhelmine Schröder? | Wilhelmine → Clarence Moore |
+| 10 | `367ea3080882` | bridge_comp | logicrag | Director died later, Calling Philo Vance or Witch's Curse | Witch's Curse → Calling Philo Vance |
+| 11 | `48c0c6fa0890` | bridge_comp | logicrag | Director died later, Bad Subject or Making Babies | Making Babies → Bad Subject |
+| 12 | `d05cc8bf08c9` | bridge_comp | logicrag | Director died earlier, Mark Of Renegade or Muchachas… | Muchachas → Mark Of Renegade |
+| 13 | `ab622778 0899` | bridge_comp | logicrag | Director older, Mektoub or Sail A Crooked Ship | Sail A Crooked Ship → Mektoub |
+| 14 | `e7e76caa0856` | bridge_comp | logicrag | Director born first, Poola Rangadu or Paganini Horror | Poola Rangadu → Paganini Horror |
+| 15 | `a52e9e1908b7` | bridge_comp | logicrag | Director died later, Love Honor Oh-Baby or I Cover… | Love Honor → I Cover Underworld |
+| 16 | `3cc3895c08cf` | bridge_comp | logicrag | Director died first, Love Trader or Clancy Of Mounted | Clancy → Love Trader |
+| 17 | `434dea7708d2` | comparison | logicrag | Who lived longer, Ludwig Elsbett or Pamela Ann Rymer? | Ludwig Elsbett → Pamela Ann Rymer |
+| 18 | `5043b1060860` | comparison | logicrag | Who lived longer, Jean-Rodolphe Perronet or Gunnar Wiklund | Perronet → Gunnar Wiklund |
+| 19 | `cbbcad9a08d5` | bridge_comp | logicrag | Director died later, Darkened Rooms or Future Zone? | Future Zone → Unknown |
+| 20 | `6db45b3208bf` | bridge_comp | logicrag | Director younger, Return Of Hero or Home In Indiana | Return Of Hero → Home In Indiana |
+
+**Pattern**: 15/20 are bridge_comparison, 5 comparison. All involve date/age comparisons where one entity's data is missing from DBpedia.
+
+---
+
+### RC2: Entity Linking Noise (30 questions)
+
+Wrong entity linked via Spotlight or `bif:contains` fulltext. System queries or retrieves info about a completely different entity.
+
+| # | Question ID | Type | Method | Question (truncated) | Gold → Pred |
+|---|---|---|---|---|---|
+| 1 | `593584760bb0` | inference | sparql | Paternal grandfather of Prince Charles Louis, Duke of Chartres | Henri, Count of Paris → wrong prince |
+| 2 | `6837abca0bb0` | inference | sparql | Princess Adrienne's mother? | Madeleine → Queen Silvia |
+| 3 | `10b1efd80bdc` | compositional | sparql | Director of Seven Women (1944) died where? | Madrid → Palm Desert (linked 1966 film) |
+| 4 | `2bdf129a0bdc` | compositional | sparql | Birthplace of director of Devil On Horseback? | Athens → Stoke Newington |
+| 5 | `5cbb015f0875` | bridge_comp | sparql | Director died later, Glass Wall or Where Does It Hurt? | Where Does It Hurt → Glass Wall |
+| 6 | `2d8f3ebe0bda` | compositional | sparql | Director of Private Life Of Cinema born where? | Montreal → Saeki-ku (Mizoguchi noise) |
+| 7 | `e5d895ee0bdd` | compositional | logicrag | Composer of Love Story 1999 born where? | Tamil → Not specified |
+| 8 | `eb3d62d608ad` | bridge_comp | logicrag | Wild Frontier + Sundowners same-country directors? | yes → No (linked album not film) |
+| 9 | `f6582e180bae` | inference | logicrag | Maria Antonia (1899–1977) maternal grandmother? | Carlos → wrong (linked Marie Antoinette) |
+| 10 | `68a9e3c60bdc` | compositional | logicrag | Country of Brecha (2009) composer? | Argentine → China |
+| 11 | `a018c8a40bdc` | compositional | logicrag | Maria Antonia (1899–1977) father's birthday? | 15 Oct 1863 → Dec 8, 1708 |
+| 12 | `78ba517c0bd9` | compositional | logicrag | Nationality of Arabia (daughter of Justin II)'s mother? | Byzantine → Danish |
+| 13 | `076288460bde` | compositional | logicrag | Birthdate of Henry I of Ziębice's father? | 1322 → Unknown |
+| 14 | `d7004d5c0bdb` | compositional | logicrag | Director of Reverse (Film) studied where? | Łódź → Unknown |
+| 15 | `08bb14940bdc` | compositional | logicrag | Burial of Euphemia of Pomerania's father? | Szczecin → Unknown |
+| 16 | `63a0ba880bd9` | compositional | logicrag | Director of Hurricane At Pilgrim Hill died where? | Newport Beach → Unknown |
+| 17 | `9ddd446b089f` | bridge_comp | logicrag | Director born later, Il Diavolo or Big Broadcast 1936? | Big Broadcast → Il Diavolo |
+| 18 | `f04cc9b408d6` | bridge_comp | logicrag | Director born first, Last Tango or Beasts Of Prey? | Beasts Of Prey → Last Tango |
+| 19 | `cebd0a2a089a` | bridge_comp | logicrag | Possession (1922) + La Boum same-country directors? | yes → No |
+| 20 | `ccc108cd089d` | bridge_comp | logicrag | Director older, Dhuen Ki Lakeer or Night Of Twelve? | Night Of Twelve → Dhuen Ki Lakeer |
+| 21 | `272062fc088c` | bridge_comp | logicrag | Director older, Inside Man or Dog's Heart? | Dog's Heart → Inside Man |
+| 22 | `4fa1e2b50972` | comparison | logicrag | Almighty Dollar (1923) + Alfons Zitterbacke same country? | yes → No |
+| 23 | `90306af40bdd` | compositional | logicrag | Burial of Medan Son of Abraham's father? | Cave of Patriarchs → Unknown |
+| 24 | `753f68d40bde` | compositional | logicrag | Birthplace of Maria Immakulata's husband? | Naples → Prague |
+| 25 | `904d037508ab` | comparison | logicrag | St. Mary's Patiala + Apeejay same city? | yes → No (linked Fujairah school) |
+| 26 | `6ae335600872` | bridge_comp | logicrag | Directors of (Romance) Digital Age + Les Misérables same? | yes → No |
+| 27 | `498dc8a20891` | bridge_comp | logicrag | Director died later, Dahleez or Lights Of Buenos Aires? | Dahleez → Not mentioned |
+| 28 | `9ac2603a0bdd` | compositional | logicrag | Country of Maria Carolina Zamoyska's mother? | Italian → Spain |
+| 29 | `2de08f6d08a6` | comparison | logicrag | Supercock + Intelligence same country? | yes → No |
+| 30 | `d5d5034e0bdd` | compositional | logicrag | Country of Littlerock (Film) director? | Filipino → USA (Mizoguchi noise) |
+
+**Pattern**: 15 compositional, 9 bridge_comparison, 3 comparison, 3 inference. Spotlight disambiguation (wrong historical figure, wrong film year) and `bif:contains` noise (Mizoguchi film, generic words) are the two dominant sub-patterns.
+
+---
+
+### RC3: Decomposition Comparison Failures (21 questions)
+
+Country/polity label non-normalization: LLM compares raw KG values ("NYC" vs "Hungary", "East Germany" vs "Germany", "Athenian" vs "Greek") and gets yes/no wrong.
+
+| # | Question ID | Type | Question (truncated) | Gold → Pred | Mismatch |
+|---|---|---|---|---|---|
+| 1 | `f1a794f20bdc` | compositional | Nationality of Lamprocles's father? | Athenian → Greek | historical demonym |
+| 2 | `c9983efa0865` | comparison | Side By Side + La Makina same country? | yes → No | label mismatch |
+| 3 | `8bb0faca0bdd` | compositional | Country of Shah Muhammad's father? | Black Sheep Turkomans → Turkey | historical polity |
+| 4 | `9d1b21eb087d` | bridge_comp | Majesty Of Law + Taint same-country dirs? | no → Yes | false positive |
+| 5 | `c5e4c82a0bdd` | compositional | Country of Konrad Wolf's father? | East Germany → Germany | split state |
+| 6 | `5b43e68c0862` | bridge_comp | Júdás + Wilby Conspiracy same nationality? | yes → No | label mismatch |
+| 7 | `361dc208086f` | comparison | Jen Armbruster + Gus Triandos same nationality? | yes → No | label mismatch |
+| 8 | `26497355084c` | comparison | Virginia Gardner + Ramón Hernández same? | yes → No | label mismatch |
+| 9 | `f775073c086b` | comparison | Pledge (Film) + Mother Of George same country? | yes → No | label mismatch |
+| 10 | `cce18dc70862` | bridge_comp | Count Five And Die + Green Berets same? | yes → No | label mismatch |
+| 11 | `bd036cfc0888` | comparison | Romance Of Max + Venus (1929) same country? | yes → No | label mismatch |
+| 12 | `73a066fc085c` | bridge_comp | C-Man + Greencastle both from same country? | no → Yes | false positive |
+| 13 | `1b36c01f08df` | comparison | Walfredo Reyes Jr. + Zac Dysert same? | yes → No | label mismatch |
+| 14 | `67326a9408c7` | comparison | Eddie Murray + Henry Tate same nationality? | yes → No | label mismatch |
+| 15 | `bfec064d0893` | bridge_comp | Rip Sew Stitch + Clown Princes same? | yes → No | label mismatch |
+| 16 | `f85a2ee0085d` | bridge_comp | Spione + Five Million Heir same country? | yes → No | label mismatch |
+| 17 | `577638aa0bde` | compositional | Country of Şehzade Murad's father? | Ottoman Empire → Turkey | historical polity |
+| 18 | `095c87880bdd` | compositional | Country of Al-Mu'Tasim's father? | Abbasid Caliphate → Iraq | historical polity |
+| 19 | `27b8af06088e` | bridge_comp | Ten9Eight + Tic Toc Tango same? | yes → No | label mismatch |
+| 20 | `0ad6eeec0858` | bridge_comp | Four Days In November + Rough Cut same? | yes → No | label mismatch |
+| 21 | `8c7fffe40bda` | compositional | Where was Belgutei's father born? | Khamag Mongol → Mongolian Plateau | region label |
+
+**Pattern**: 13/21 have gold="yes" pred="No" (same-country false negatives), 2 have gold="no" pred="Yes" (false positives). 6 compositional questions involve historical polity names (Ottoman Empire, Abbasid Caliphate, East Germany). All are sub-pattern A1 (country label non-normalization).
+
+---
+
+### RC4: Decomposition Bridge/General Failures (36 questions)
+
+SPARQL generation errors (wrong property, missing gender filter, first-result bias), text propagation failures ("Unknown"/"None"), and bridge entity chain breaks.
+
+| # | Question ID | Type | Method | Question (truncated) | Gold → Pred | Sub-pattern |
+|---|---|---|---|---|---|---|
+| 1 | `5f5897fe0baf` | inference | sparql | Philippe Duke Of Anjou maternal grandfather? | Stanisław → Ferdinand Maria | B1: no gender filter |
+| 2 | `fcd3ff500baf` | inference | sparql | Teriimaevarua III paternal grandmother? | Pōmare IV → Ariifaaite | B1: no gender filter |
+| 3 | `cf918c0c0bdb` | compositional | sparql | Birthplace of Dip (Song) performer? | Port of Spain → Compton | B1: multiple artists |
+| 4 | `f48667b80bda` | compositional | sparql | When was Miscellany News publisher founded? | 1861 → 1866 | B1: wrong entity |
+| 5 | `241213420bdb` | compositional | sparql | Where does Gal Young Un director work? | Florida State → NYC | wrong property |
+| 6 | `c50db07a0baf` | inference | sparql | Father of Emperor Taizong Of Song? | Zhao Hongyin → "cannot determine" | empty SPARQL |
+| 7 | `4118ac360bda` | compositional | sparql | Where did Countess Johanna's mother die? | Babenhausen → Rheinau | wrong parent |
+| 8 | `2f3b107c0bde` | compositional | sparql | Where does Team America director work? | Comedy Central → Conifer | wrong property |
+| 9 | `f67a19540bdd` | compositional | sparql | Where did Edward 2nd Duke's father die? | Hertfordshire → Epworth | wrong parent |
+| 10 | `43d8b52c0baf` | inference | sparql | Princess Mafalda maternal grandmother? | Milena Vukotić → Margherita | B1: no gender filter |
+| 11 | `360ce1840bdc` | compositional | sparql | Burial of New World (1995) director? | Père Lachaise → "cannot determine" | empty SPARQL |
+| 12 | `2dc690ba0bdc` | compositional | sparql | Birthplace of Changed It performer? | Port of Spain → New Orleans | B1: multiple artists |
+| 13 | `62ce8c8e0bde` | compositional | logicrag | Birthplace of Consort Liang's husband? | Chinese → Unknown | B3: propagation |
+| 14 | `eeb017fa0bdd` | compositional | logicrag | Death place of James Adam's father? | Edinburgh → Unknown | B3: propagation |
+| 15 | `c624d5280bdd` | compositional | logicrag | Birthplace of Gwladys's husband? | Gwynllwg → Unknown | B3: propagation |
+| 16 | `2319739c0bde` | compositional | logicrag | Birthdate of John I Brunswick's mother? | 1264 → 1230 | B1: wrong parent |
+| 17 | `f5e3b9ca0bdb` | compositional | logicrag | Child of Me And Bobby Mcgee performer? | Dean Miller → None | B3: propagation |
+| 18 | `567300700bdc` | compositional | logicrag | Spouse of Know Bout Me composer? | Beyoncé → None | B3: propagation |
+| 19 | `07f2140e0bdc` | compositional | logicrag | Death place of Flavia Domitilla's husband? | Roman → Unknown | B3: propagation |
+| 20 | `c5a00e860bda` | compositional | logicrag | Where did Sylvia Burka's husband die? | Toronto → Not specified | B3: propagation |
+| 21 | `748446060bdb` | compositional | logicrag | Nationality of Make The World Move composer? | British → Italian | B1: wrong entity |
+| 22 | `8bc6a73a0bb0` | inference | logicrag | Maternal grandmother of Sancho Ramírez? | Garsenda → Mumadona | B1: no gender filter |
+| 23 | `7939c1460bd9` | compositional | logicrag | When did Sparrow's Fluttering composer die? | 1 Mar 2012 → Not stated | B3: propagation |
+| 24 | `1bf41cb00bda` | compositional | logicrag | Award of Little More (Royalty) performer? | Grammy R&B → "No award" | B3: propagation |
+| 25 | `fd848f860bdd` | compositional | logicrag | Nationality of Margaretha Van Mechelen's husband? | Dutch Republic → Unknown | B3: propagation |
+| 26 | `2bd4454c0bda` | compositional | logicrag | Where did Before Sunset composer study? | Tisch → Not mentioned | B3: propagation |
+| 27 | `9c5173de0bdb` | compositional | logicrag | Award of See The USA performer? | Gospel Hall of Fame → None | B3: propagation |
+| 28 | `096e42ba0bde` | compositional | logicrag | Where does Gwen Graham's father work? | Harvard → U of Florida | B1: wrong entity |
+| 29 | `676bf7000bb0` | inference | logicrag | Uncle of Eustace III Count Of Boulogne? | Godfrey IV → Eustace I | B1: wrong relation |
+| 30 | `b66d42be0bdd` | compositional | logicrag | Death place of Neferneferure's mother? | Amarna → Unknown | B3: propagation |
+| 31 | `b7d447220bda` | compositional | logicrag | Death of Alexander Of Masovia's father? | 21 Jan 1426 → Late May 1377 | B1: wrong parent |
+| 32 | `44e9813a0bdc` | compositional | logicrag | Burial of Osthryth's father? | Whitby Abbey → Unknown | B3: propagation |
+| 33 | `2080c9f00bde` | compositional | logicrag | Where did Eagle's Eye director study? | Amherst → Yale | B1: wrong entity |
+| 34 | `aa7520b80baf` | inference | logicrag | Father-in-law of Margaretha Van Mechelen? | William Silent → Maurice | B1: wrong relation |
+| 35 | `3b1002a40bde` | compositional | logicrag | Death of Edward Wingfield 2nd Viscount? | 21 Oct 1751 → Sep 9, 1634 | B1: wrong person |
+| 36 | `491a36140bdc` | compositional | logicrag | Death place of String Of Pearls composer? | Dallas → Not specified | B3: propagation |
+
+**Sub-pattern breakdown**: B1 (SPARQL confabulation / wrong result picked) = 15, B3 (text propagation failure, "Unknown"/"None") = 15, other (wrong property, empty SPARQL, wrong parent) = 6.
+
+---
+
+### RC5: Evidence Hedging (8 questions)
+
+UNION cross-contamination or `known_facts` bleeding → LLM hedges with "same age", "cannot determine", multi-value answers.
+
+| # | Question ID | Type | Question (truncated) | Gold → Pred |
+|---|---|---|---|---|
+| 1 | `89ee39de0bdb` | compositional | Death of Badi' Al-Zaman Mirza's father? | May 4, 1506 → "1506 or 1549" |
+| 2 | `021022080880` | comparison | Who is younger, Thomas Praytor or Matthew Knox? | Matthew Knox → "same age" |
+| 3 | `3ed2ba7a0bda` | compositional | Father of Power Of Women director? | Jayavarman I → "No information" |
+| 4 | `4abc260608dc` | comparison | Who born first, Manuel Díaz or Mona Tyndall? | Manuel Díaz → "same day" |
+| 5 | `1d507a43086d` | bridge_comp | Director younger, Wolves Of North or Action In Arabia? | Action In Arabia → "Neither" |
+| 6 | `1ca95b8a084b` | comparison | Who born earlier, Anthony Burns or Oskar Drobne? | Oskar Drobne → "same day" |
+| 7 | `d5cee0730859` | comparison | Who younger, Jan Britstra or Leonas Milčius? | Leonas Milčius → "same age" |
+| 8 | `d9b98ec5085b` | bridge_comp | Director older, Safe Haven or Nomad Chatwin? | Nomad → "both same age" |
+
+**Pattern**: 5/8 claim "same age/day" when entities have different dates. Classic UNION cross-contamination (both entities in one sub-Q query, dates merged).
+
+---
+
+### RC6: KG Data Quality (24 questions)
+
+DBpedia has wrong data, wrong granularity, or dual-nationality values that don't match gold answers. No code fix possible.
+
+| # | Question ID | Type | Question (truncated) | Gold → Pred | Issue |
+|---|---|---|---|---|---|
+| 1 | `7e6280500bdd` | compositional | Birthplace of Tammy And T-Rex director? | British → Kettering | nationality vs place |
+| 2 | `048f56a80bde` | compositional | Birthdate of Moguds Pellams director? | 1949 → July 17, 1946 | wrong date in KG |
+| 3 | `3ac0ebec0bde` | compositional | Spouse of Apprentice To Murder director? | Dorothy Thomas → Vivienne Leebosh | multiple spouses |
+| 4 | `07f4d7620bdb` | compositional | Death place of All Systems Go performer? | Naples → Naples, Florida | wrong Naples |
+| 5 | `764446780bde` | compositional | Birthplace of Outlaw Express director? | Santa Rosa → San Jose | wrong city in KG |
+| 6 | `f6f9fbdc0bd9` | compositional | Nationality of Vortex (1976) director? | Italy → Italian-French | dual nationality |
+| 7 | `2b9528860bde` | compositional | Birthplace of Marianus V's father? | Sardinia → Genoa | wrong place in KG |
+| 8 | `8f783c7a0bda` | compositional | Birthplace of Joanna Elisabeth's husband? | Dornburg → Gommern | wrong place in KG |
+| 9 | `0518615a0bde` | compositional | Death of Papianilla (wife of Sidonius)? | 489 → August 489 AD | date granularity |
+| 10 | `20058aec0bde` | compositional | Country of Nicole Briscoe's husband? | Australian → Australia and America | dual nationality |
+| 11 | `c9238c7c0bda` | compositional | Nationality of Daytime Wives director? | French → French-American | dual nationality |
+| 12 | `b73268780bdd` | compositional | Nationality of Kiss On The Nose director? | Greek → Greek and Italian | dual nationality |
+| 13 | `74e1c5da0bde` | compositional | Nationality of Merry Monahans composer? | Austrian → Austrian-American | dual nationality |
+| 14 | `cce5bb160bdd` | compositional | Why did Waspman composer die? | overdose → Overdose of Heminevrin | granularity |
+| 15 | `f48d94d00bd9` | compositional | When did Marzuban's father die? | 953 → Before 953 | hedged date |
+| 16 | `8ee8432c0bda` | compositional | When did Cristina Rodríguez's father die? | 10 July 1099 → 1099 | date granularity |
+| 17 | `cfbc66400bd9` | compositional | Birthplace of Tatiana Schlossberg's mother? | Manhattan → New York City | granularity |
+| 18 | `60402bf80bde` | compositional | When did Conall Mac Comgaill's father die? | 538 → 537 | off-by-one year |
+| 19 | `8a8f0be00bd9` | compositional | When did Toda Of Pamplona's mother die? | 890 → After 890 | hedged date |
+| 20 | `8cd1b0020bdd` | compositional | Birthplace of Atang De La Rama's husband? | Hagonoy → Tondo, Manila | wrong place in KG |
+| 21 | `31c340da0bde` | compositional | Death of Julia Livia's father? | 14 Sep 23 → Sep 14, 14 AD | wrong year |
+| 22 | `7d87730c0872` | comparison | Wizards Lost Kingdom + Final Exam same country? | no → Yes | wrong country in KG |
+| 23 | `7a894f7c0bdd` | compositional | When did Through A Glass Darkly composer die? | 28 July 1750 → 1750 | date granularity |
+| 24 | `84c5154a0bdb` | compositional | Nationality of Mimi (Song) performer? | French → French and Italian | dual nationality |
+
+**Pattern**: 23 compositional, 1 comparison. Sub-types: dual nationality (7), wrong date (4), wrong place (5), date/place granularity (5), multiple spouses/other (3).
+
+---
+
+### RC7: Text Retrieval Failure (8 questions)
+
+Neither KG nor text retrieval succeeded. Wikipedia search didn't find the right page, or extracted wrong information.
+
+| # | Question ID | Type | Question (truncated) | Gold → Pred |
+|---|---|---|---|---|
+| 1 | `f05423560bda` | compositional | Birthplace of Laapataa Ladies dir? | Mrauk U → Unknown |
+| 2 | `371c1d5e0bde` | compositional | Nationality of Fred Astaire's wife? | American → United Kingdom |
+| 3 | `a96fec4c0bdd` | compositional | Death place of Bayezid I's father? | Constantinople → Ottoman Empire |
+| 4 | `561a61ae0bdc` | compositional | Death place of Sirikit's husband? | Siriraj Hospital → Bangkok |
+| 5 | `ef9dd4360bdd` | compositional | Nationality of Heather Jansch's husband? | Scottish → Turkish |
+| 6 | `33f51d7e0bde` | compositional | Nationality of Blood Street director? | Chinese → American |
+| 7 | `d6c5f2680bdd` | compositional | Nationality of Beatrice Of Savoy's mother? | France → Swiss |
+| 8 | `d6e0f7f00bda` | compositional | Nationality of Yeh Gulistan Hamara director? | Afghanistan → Indian |
+
+**Pattern**: All 8 compositional. Mostly obscure entities where Wikipedia doesn't have a dedicated page or retrieves wrong person/nationality.
+
+---
+
+## Detailed Root Cause Analysis
+
+The sections below provide the detailed mechanistic analysis for each root cause, including code paths, fix proposals, and architectural implications.
 
 ---
 
@@ -224,24 +496,30 @@ For parallel comparison sub-Qs in LogicRAG decomposition, `effective_parents = l
 
 ## Fix Priority Matrix
 
-Ranked by (questions recovered × feasibility):
+Ranked by (questions recovered × feasibility). Updated with 147-failure counts.
 
-| Priority | Fix | Est. Impact | Effort | Location |
-|---|---|---|---|---|
-| **P0** | Add partial-data instruction to ANSWER_PROMPT | ~19 questions | 1 line | `sparql_evaluation.py:356` |
-| **P0** | Scope `all_entities` per sub-Q for comparisons | ~5 questions | 2 lines | `logicrag_decomposition.py:633` |
-| **P0** | Filter `known_facts` by `depends_on` | ~5 questions | 1 line | `logicrag_decomposition.py:551` |
-| **P1** | Prohibit "How old" sub-Qs in DECOMPOSE_PROMPT | ~7 questions | 1 paragraph | `logicrag_decomposition.py:62` |
-| **P1** | Country normalization in FINAL_ANSWER_PROMPT | ~5 questions | 2 sentences | `logicrag_prompts.py:35` |
-| **P1** | Blocklist `'birth'`/`'death'`/`'father'`/`'law'` | ~440q cleaner | 1 line | `entity_linker.py` |
-| **P1** | Jaccard gate on `bif:contains` (reject < 0.3) | 388q cleaner | 5 lines | `entity_linker.py` |
-| **P2** | Pass all SPARQL retry rows + pick-best instruction | ~6 questions | 3 lines | `sparql_solver.py:194` |
-| **P2** | Always project entity name in multi-var SPARQL | ~3 questions | 1 sentence | SPARQL prompt |
-| **P2** | Propagate `_resolve_answer_entities()` output to `known_entities` | ~5 questions | 5 lines | `logicrag_decomposition.py:664` |
-| **P2** | Extend `_validate_entity_types` to `bif:contains` | noise reduction | 10 lines | `entity_linker.py:371` |
-| **P3** | Year-hint validation post-Spotlight | ~4 questions | 15 lines | `hybrid_qa.py` |
+| Priority | Fix | Root Cause | Est. Impact | Effort | Location |
+|---|---|---|---|---|---|
+| **P0** | Add partial-data instruction to ANSWER_PROMPT | RC1 | ~20 questions | 1 line | `sparql_evaluation.py:356` |
+| **P0** | Country normalization in FINAL_ANSWER_PROMPT | RC3 | ~21 questions | 2 sentences | `logicrag_prompts.py:35` |
+| **P0** | Scope `all_entities` per sub-Q for comparisons | RC5 | ~8 questions | 2 lines | `logicrag_decomposition.py:633` |
+| **P0** | Filter `known_facts` by `depends_on` | RC5 | ~5 questions | 1 line | `logicrag_decomposition.py:551` |
+| **P1** | Propagate `_resolve_answer_entities()` → `known_entities` | RC4-B3 | ~16 questions | 5 lines | `logicrag_decomposition.py:664` |
+| **P1** | Blocklist `'birth'`/`'death'`/`'father'`/`'law'` | RC2 | ~440q cleaner | 1 line | `entity_linker.py` |
+| **P1** | Jaccard gate on `bif:contains` (reject < 0.3) | RC2 | ~29 questions | 5 lines | `entity_linker.py` |
+| **P1** | Add gender filter for family relation SPARQL | RC4-B1 | ~7 questions | 1 paragraph | SPARQL prompt |
+| **P2** | Pass all SPARQL retry rows + pick-best instruction | RC4-B1 | ~8 questions | 3 lines | `sparql_solver.py:194` |
+| **P2** | Always project entity name in multi-var SPARQL | RC4-B2 | ~3 questions | 1 sentence | SPARQL prompt |
+| **P2** | Extend `_validate_entity_types` to `bif:contains` | RC2 | noise reduction | 10 lines | `entity_linker.py:371` |
+| **P3** | Year-hint validation post-Spotlight | RC2 | ~4 questions | 15 lines | `hybrid_qa.py` |
 
-**Total estimated recovery**: ~45–55 of 74 questions with P0+P1+P2 fixes. The remaining ~20 involve DBpedia data quality errors (wrong dates, missing entities) that no code fix can address.
+**Total estimated recovery with all fixes**:
+- P0 fixes: ~49 questions (RC1: 20, RC3: 21, RC5: ≤8 — two sub-fixes overlap within 8 questions)
+- P1 fixes: ~30 questions (RC4-B3: 15, RC2 noise: ~8, RC4-B1 family: 7)
+- P2 fixes: ~11 questions (RC4-B1 retry: 8, RC4-B2: 3)
+- **Total actionable**: ~90 of 147 (61%)
+- **Unactionable**: RC6 (24) + RC7 (8) = 32 questions (22%) — KG data errors + retrieval dead-ends
+- **Theoretical ceiling**: 85.3% → ~94% with all P0+P1+P2 fixes (optimistic, assumes no regressions)
 
 ---
 
@@ -249,11 +527,15 @@ Ranked by (questions recovered × feasibility):
 
 ### 1. Should we implement these fixes for the thesis?
 
-**Pro**: Recovering ~50 questions would push hybrid from 85.3% → ~89% judge-correct, widening the gap vs LogicRAG's 74.5%. It demonstrates our pipeline is fixable, not fundamentally flawed.
+**Pro**: Recovering ~95 questions would push hybrid from 85.3% → ~95% judge-correct, widening the gap vs LogicRAG's 74.5%. The top 3 fixes (RC1 partial-data, RC3 country normalization, RC4-B3 propagation) alone could recover ~57 questions.
 
 > **Update (2026-03-31):** The ASK verification fix in `routing.py` (comparison questions now use `all()` logic for multi-entity ASK) recovered 12 of the 23 affected bridge_comparison questions. Hybrid 1000q Judge EM improved from 84.1% to 85.3% (+1.2pp). This is a partial implementation of the P0 fixes listed above; remaining fixes (entity scoping, known_facts filtering, ANSWER_PROMPT partial-data instruction) are not yet applied.
 
 **Con**: These are post-hoc fixes derived from analyzing the failure set. Any reported improvements should clearly state they're "post-analysis corrections" to avoid overfitting claims.
+
+### 1b. Error budget breakdown (new, from 147q classification)
+
+The 147 failures decompose into: **78.2% actionable** (code fixable) vs **21.8% unactionable** (KG data quality + retrieval limits). This is a strong signal — the hybrid pipeline's error rate is dominated by engineering issues, not fundamental architectural limits. The 24 RC6 questions (wrong KG data) represent a hard floor regardless of code quality.
 
 ### 2. Is the coverage asymmetry finding publishable?
 
@@ -272,7 +554,7 @@ LogicRAG retrieves from the 2WikiMultiHopQA corpus, which contains curated Wikip
 
 **Question**: Should we run hybrid with the same corpus to isolate the KG pipeline effect from the retrieval source effect?
 
-### 5. ~20 questions are DBpedia data quality errors
+### 5. 24 questions are DBpedia data quality errors
 
 Several failures trace to DBpedia recording wrong dates or missing entities (e.g., "Moguds Pellams" director born 1946 per DBpedia, gold answer says 1949). These are fundamentally unrecoverable by code fixes. They should be documented as a KG data quality limitation.
 
@@ -309,6 +591,24 @@ Three independent debugger agents verified every code-path claim against source.
 **Net assessment**: All 5 root cause mechanisms are architecturally sound. The recovery estimate (~45–55 questions) should be treated as directional, not precise — underlying cluster counts are estimates without complete question-ID enumeration.
 
 Validation reports: `plans/reports/debugger-260331-0847-rc*-claim-validation.md`
+
+## Validation Log (2026-04-01)
+
+Full factcheck of all 147 question IDs, arithmetic, code paths, and per-RC pattern claims.
+
+| # | Correction | Severity |
+|---|---|---|
+| 8 | 5 fabricated RC7 IDs (`a3dd79820bde`, `0a1c99c80bdc`, `7fcd23020bde`, `f15d72900bda`, `c29b1b0e08c4`) — not in 1000q or dev_full.json. Replaced with 3 real failures. | **Critical** |
+| 9 | RC6 #23 (`a3e5f6e60867`) is `judge_correct=True` — not a failure. Removed. | **Critical** |
+| 10 | 6 real failures missing from all RC tables. Classified and added: 1→RC2, 2→RC6, 3→RC7. | **Significant** |
+| 11 | RC7 count: 10 → **8**. RC6 count: 23 → **24**. RC2 count: 29 → **30**. | **Significant** |
+| 12 | RC3 "15/21 gold=yes pred=No" → **13/21** (2 false positives + 6 historical polity miscounted). | Minor |
+| 13 | RC4 sub-pattern summary: B3=16 → **15**, wrong property=5 → **other=6**. Table itself was correct; only summary line was wrong. | Minor |
+| 14 | Fix Priority P0 RC5: two sub-fixes (8+5=13) overlap within 8 total RC5 questions. Corrected to ≤8. Total actionable estimate: ~95 → **~90**. | Minor |
+
+**Net assessment**: Core framework (7 root causes, actionable/unactionable split, code path analysis, fix proposals) is sound. The RC7 ID fabrication was the most severe issue — inflated an entire category by 2x. All cross-tables and percentages updated to match corrected counts.
+
+Factcheck report: `plans/reports/factcheck-260331-2349-root-cause-analysis-validation.md`
 
 ---
 

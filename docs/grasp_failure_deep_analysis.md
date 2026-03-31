@@ -1,6 +1,7 @@
 # GRASP Deep Failure Analysis: Architectural Roots of Performance Divergence
 
 **Date:** 2026-02-21
+**⚠️ Staleness notice (2026-03-30):** Numbers below are from the old 346q evaluation. Current evaluation uses 368 hop-verified questions with updated results (see `evaluation_report_sparql_grasp.md`). Structural analysis (failure taxonomy, root causes) still holds; specific percentages are outdated.
 **Investigation Scope:** 346 DBpedia-answerable questions from 2WikiMultiHopQA
 **Focus:** Architectural and algorithmic reasons for GRASP's output format divergence across question types
 

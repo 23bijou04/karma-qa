@@ -12,48 +12,49 @@ the same scenario can have different pipeline outcomes depending on entity linki
 and context assembly.
 
 **Data source:** `data/eval_1000q/scenario_classification_1000.json` (1000 questions from
-2WikiMultiHopQA, classified by `scripts/classify_1000q_scenarios.py`).
+2WikiMultiHopQA, classified by `scripts/classify_1000q_scenarios.py` from hop-verified
+ground truth `data/eval_1000q/ground-truth/hop_verification_results.json`).
 
-> **Note (2026-03-25):** The counts below are from the original property-existence analysis (narrow PROPERTY_MAP). Hop-by-hop verification (`data/eval_1000q/hop_verification_results.json`) gives more rigorous numbers: 368/1000 (36.8%) have all predicates at every hop, 119/1000 (11.9%) have strict value matches. The scenario table has not been regenerated from hop verification data.
+> **Recomputed 2026-03-31** from hop-verified ground truth. Previous counts (A=346, B=304, C=158, D=128, E=39, F=25) were from the original property-existence analysis (narrow PROPERTY_MAP). These hop-verified counts are authoritative.
 
 ---
 
 ## Overview
 
-| Scenario | Label | Count | % | Description |
-|----------|-------|------:|---:|-------------|
-| **A** | KG_COMPLETE | 346 | 34.6 | Both hops have structured KG properties (original analysis; hop-verified: 368) |
-| **B** | HOP1_MISSING | 304 | 30.4 | Seed exists, hop-1 property missing |
-| **C** | HOP2_MISSING | 158 | 15.8 | Hop-1 works, bridge entity missing hop-2 property |
-| **D** | BOTH_HOPS_MISSING | 128 | 12.8 | Both seed and bridge missing their needed properties |
-| **E** | ENTITY_NOT_FOUND | 39 | 3.9 | Seed entity not in DBpedia at all |
-| **F** | NOT_FOUND + PROP_GAP | 25 | 2.5 | Seed not found AND bridge missing property |
+| Scenario | Label | Count | % | 95% CI | Description |
+|----------|-------|------:|---:|--------|-------------|
+| **A** | KG_COMPLETE | 368 | 36.8 | [33.9%, 39.8%] | Both hops have structured KG properties |
+| **B** | HOP1_MISSING | 293 | 29.3 | [26.6%, 32.2%] | Seed exists, hop-1 property missing |
+| **C** | HOP2_MISSING | 161 | 16.1 | [14.0%, 18.5%] | Hop-1 works, bridge entity missing hop-2 property |
+| **D** | BOTH_HOPS_MISSING | 114 | 11.4 | [9.6%, 13.5%] | Both seed and bridge missing their needed properties |
+| **E** | ENTITY_NOT_FOUND | 42 | 4.2 | [3.1%, 5.6%] | Entity not in DBpedia at all |
+| **F** | NOT_FOUND + PROP_GAP | 22 | 2.2 | [1.5%, 3.3%] | Entity not found AND bridge missing property |
 
 ### Cross-tab: Scenario × Question Type
 
 |           | bridge_comparison | comparison | compositional | inference | **TOTAL** |
 |-----------|------------------:|-----------:|--------------:|----------:|----------:|
-| **A**     | 141               | 71         | 100           | 34        | **346**   |
-| **B**     | 32                | 173        | 81            | 18        | **304**   |
-| **C**     | 54                | 0          | 92            | 12        | **158**   |
-| **D**     | 8                 | 0          | 104           | 16        | **128**   |
-| **E**     | 0                 | 0          | 23            | 16        | **39**    |
-| **F**     | 0                 | 0          | 13            | 12        | **25**    |
+| **A**     | 141               | 80         | 113           | 34        | **368**   |
+| **B**     | 32                | 164        | 79            | 18        | **293**   |
+| **C**     | 54                | 0          | 95            | 12        | **161**   |
+| **D**     | 8                 | 0          | 90            | 16        | **114**   |
+| **E**     | 0                 | 0          | 25            | 17        | **42**    |
+| **F**     | 0                 | 0          | 11            | 11        | **22**    |
 | **TOTAL** | 235               | 244        | 413           | 108       | **1000**  |
 
 **Notable patterns:**
-- **Comparison** questions are either A (71) or B (173), never C–F. These are 1-hop questions
+- **Comparison** questions are either A (80) or B (164), never C–F. These are 1-hop questions
   ("Are X and Y in the same country?") where the property is either present or missing.
 - **Bridge_comparison** concentrates in A (141) and C (54) — requires hop-1 to work for both
   entities, so B is rare (32) and D/E/F are near-zero.
-- **Compositional** is the most evenly spread (100/81/92/104/23/13) because 2-hop questions
+- **Compositional** is the most evenly spread (113/79/95/90/25/11) because 2-hop questions
   can break at any point.
-- **Inference** appears in all scenarios, including E (16) and F (12) — family relationship
+- **Inference** appears in all scenarios, including E (17) and F (11) — family relationship
   questions for obscure historical figures.
 
 ---
 
-## Scenario A: KG-Complete (346 original / 368 hop-verified / 119 strict)
+## Scenario A: KG-Complete (368 questions, 36.8%)
 
 **Definition:** Both the seed entity's hop-1 property and the bridge entity's hop-2 property
 exist as structured triples in DBpedia. The full SPARQL chain can resolve end-to-end.
@@ -95,13 +96,13 @@ A-scenario questions. The KG data is complete; the failure is in the pipeline ex
 ### Breakdown by Question Type
 
 - **bridge_comparison (141):** Both entities have both hops → SPARQL can fetch and compare
-- **comparison (71):** Single-hop property present on both entities
-- **compositional (100):** Standard 2-hop chain
+- **comparison (80):** Single-hop property present on both entities
+- **compositional (113):** Standard 2-hop chain
 - **inference (34):** Family relationships (father → mother = "maternal grandfather")
 
 ---
 
-## Scenario B: Hop-1 Missing (304 questions, 30.4%)
+## Scenario B: Hop-1 Missing (293 questions, 29.3%)
 
 **Definition:** The seed entity exists in DBpedia but is **missing the hop-1 property** needed
 by the question. The bridge entity (if it exists) has the hop-2 property. The SPARQL chain
@@ -158,32 +159,29 @@ entity's Wikipedia page would yield the answer with 0 LLM calls for the hop-1 st
 
 | Property | Count | Notes |
 |----------|------:|-------|
-| publication date | 134 | Books, albums, films |
+| publication date | 153 | Books, albums, films |
 | director | 87 | Films |
 | father | 77 | People |
-| country of origin | 56 | Various entities |
 | country of citizenship | 38 | People |
+| country | 37 | Places, rivers |
 | date of birth | 31 | People |
-| country | 29 | Places, rivers |
 | spouse | 27 | People |
-| performer | 27 | Songs, albums |
-| composer | 24 | Musical works |
+| composer | 23 | Musical works |
 | date of death | 16 | People |
-| mother | 12 | People |
-| inception | 10 | Organizations |
+| country of origin | 15 | Various entities |
 
 ### Breakdown by Question Type
 
-- **comparison (173):** Dominates B-scenario — simple property lookups where the property is
+- **comparison (164):** Dominates B-scenario — simple property lookups where the property is
   missing. "Are X and Y in the same country?" when neither has `dbo:country`.
-- **compositional (81):** 2-hop chains where hop-1 breaks.
+- **compositional (79):** 2-hop chains where hop-1 breaks.
 - **bridge_comparison (32):** Rare — requires hop-1 to work for comparison, so B means only
   one of the two entities has a missing hop-1.
 - **inference (18):** Family relationships with missing parent/spouse property.
 
 ---
 
-## Scenario C: Hop-2 Missing (158 questions, 15.8%)
+## Scenario C: Hop-2 Missing (161 questions, 16.1%)
 
 **Definition:** The seed entity has the hop-1 property, so SPARQL resolves the first hop
 successfully. But the **bridge entity is missing the hop-2 property** — the SPARQL chain
@@ -237,29 +235,27 @@ for hop-2 vs. 2–3 for TEXT).
 
 | Property | Count | Notes |
 |----------|------:|-------|
-| country of citizenship | 137 | By far the most common hop-2 gap |
+| country of citizenship | 132 | By far the most common hop-2 gap |
 | place of birth | 34 | People |
 | date of birth | 26 | People |
 | father | 21 | People |
 | place of death | 20 | People |
 | date of death | 19 | People |
-| educated at | 13 | People |
-| place of burial | 12 | People |
-| mother | 10 | People |
+| mother | 11 | People |
+| educated at | 11 | People |
 | employer | 9 | People |
 | spouse | 8 | People |
-| award received | 7 | People |
 
 ### Breakdown by Question Type
 
-- **compositional (92):** Standard 2-hop chains breaking at hop-2.
+- **compositional (95):** Standard 2-hop chains breaking at hop-2.
 - **bridge_comparison (54):** Comparison where one or both bridge entities lack hop-2.
 - **inference (12):** Family chains where the intermediate person lacks the needed property.
 - **comparison (0):** Never — comparison questions are 1-hop, so there's no hop-2 to miss.
 
 ---
 
-## Scenario D: Both Hops Missing (128 questions, 12.8%)
+## Scenario D: Both Hops Missing (114 questions, 11.4%)
 
 **Definition:** Both the seed entity (hop-1) and the bridge entity (hop-2) are missing their
 respective properties. The SPARQL chain breaks at both hops. Full text retrieval required.
@@ -313,20 +309,20 @@ extraction for both entities would convert this to a 0-LLM-call chain.
 
 ### Breakdown by Question Type
 
-- **compositional (104):** Dominates — 2-hop chains that break at both hops.
+- **compositional (90):** Dominates — 2-hop chains that break at both hops.
 - **inference (16):** Family relationships where both entities lack the needed property.
 - **bridge_comparison (8):** Rare — both entities in the comparison having double failures.
 - **comparison (0):** Never — comparison is 1-hop.
 
 ---
 
-## Scenario E: Entity Not Found (39 questions, 3.9%)
+## Scenario E: Entity Not Found (42 questions, 4.2%)
 
 **Definition:** The seed entity does **not exist** in DBpedia at all — no redirect, no stub,
 or only a redirect stub to an unrelated page. Typically the bridge entity exists and has the
 hop-2 property. No KG entry point for the question.
 
-**Edge cases (3 of 39):** In 3 questions the *bridge* entity is also not found (e.g., "Joan
+**Edge cases:** In some questions the *bridge* entity is also not found (e.g., "Joan
 Ramon II, Count of Cardona" — both seed and bridge absent) or the seed exists but the bridge
 doesn't (e.g., "3096 Days" — seed film exists, bridge director `Sherry Horman` not in
 DBpedia). These are classified E because the primary blocker is a missing entity, not a
@@ -379,14 +375,14 @@ whether Wikipedia search finds the right article and the LLM extracts the correc
 
 ### Breakdown by Question Type
 
-- **compositional (23):** 2-hop chains that can't start.
-- **inference (16):** Family relationships for obscure historical figures.
+- **compositional (25):** 2-hop chains that can't start.
+- **inference (17):** Family relationships for obscure historical figures.
 - **bridge_comparison (0):** Never — bridge_comparison requires entity linking for both entities.
 - **comparison (0):** Never — comparison requires entity linking for both entities.
 
 ---
 
-## Scenario F: Entity Not Found + Property Gap (25 questions, 2.5%)
+## Scenario F: Entity Not Found + Property Gap (22 questions, 2.2%)
 
 **Definition:** The seed entity is **not found or is an empty typed stub** in DBpedia (like E),
 AND the bridge entity is **missing the hop-2 property** (like C/D). Double failure — the
@@ -440,8 +436,8 @@ Each step introduces error potential. At 2.5% of questions, this is mercifully r
 
 ### Breakdown by Question Type
 
-- **compositional (13):** 2-hop chains with double failure.
-- **inference (12):** Family relationship chains for obscure historical figures.
+- **compositional (11):** 2-hop chains with double failure.
+- **inference (11):** Family relationship chains for obscure historical figures.
 
 ---
 
@@ -458,7 +454,7 @@ For each scenario, which information sources can provide the answer:
 | **E** (Not Found) | Neither | Maybe | Redundant | **Primary** | **Primary** |
 | **F** (Not Found + Gap) | Neither | Maybe | Maybe | **Primary** | **Primary** |
 
-**Key insight:** Scenarios B, C, and D (590 questions, 59.0%) have answers that likely exist
+**Key insight:** Scenarios B, C, and D (568 questions, 56.8%) have answers that likely exist
 in Wikipedia infoboxes but are missing from DBpedia's structured extraction. Infobox parsing
 would recover structured answers for the majority of these without LLM calls.
 
@@ -477,7 +473,7 @@ would recover structured answers for the majority of these without LLM calls.
 
 ### Efficiency Opportunity
 
-Scenarios B, C, and D together represent 590 questions (59%) where Wikipedia infobox extraction
+Scenarios B, C, and D together represent 568 questions (56.8%) where Wikipedia infobox extraction
 could replace 7–9 LLM calls with 0 for the missing hops. The missing properties are typically
 present in Wikipedia infoboxes (director, spouse, birthPlace, etc.) — DBpedia just failed to
 extract them. Parsing `| key = [[Entity]]` patterns from wikitext is straightforward and would:
@@ -493,52 +489,38 @@ extract them. Parsing `| key = [[Entity]]` patterns from wikitext is straightfor
 
 | Rank | Property | Count | Entity Types |
 |------|----------|------:|--------------|
-| 1 | publication date | 134 | Books, albums, films |
+| 1 | publication date | 153 | Books, albums, films |
 | 2 | director | 87 | Films |
 | 3 | father | 77 | People |
-| 4 | country of origin | 56 | Various |
-| 5 | country of citizenship | 38 | People |
+| 4 | country of citizenship | 38 | People |
+| 5 | country | 37 | Places, rivers |
 | 6 | date of birth | 31 | People |
-| 7 | country | 29 | Places, rivers |
-| 8 | spouse | 27 | People |
-| 9 | performer | 27 | Songs, albums |
-| 10 | composer | 24 | Musical works |
-| 11 | date of death | 16 | People |
-| 12 | mother | 12 | People |
-| 13 | inception | 10 | Organizations |
-| 14 | publisher | 3 | Books |
-| 15 | child | 1 | People |
-| 15 | editor | 1 | Publications |
-| 15 | producer | 1 | Films |
+| 7 | spouse | 27 | People |
+| 8 | composer | 23 | Musical works |
+| 9 | date of death | 16 | People |
+| 10 | country of origin | 15 | Various |
 
-*Total: 574 hop-1 missing property instances across 432 questions (B=304, D=128).*
+*Total hop-1 missing property instances across 407 questions (B=293, D=114).*
 
 ### Hop-2 (bridge entity missing property) — affects scenarios C, D, F
 
 | Rank | Property | Count | Entity Types |
 |------|----------|------:|--------------|
-| 1 | country of citizenship | 137 | People |
+| 1 | country of citizenship | 132 | People |
 | 2 | place of birth | 34 | People |
 | 3 | date of birth | 26 | People |
 | 4 | father | 21 | People |
 | 5 | place of death | 20 | People |
 | 6 | date of death | 19 | People |
-| 7 | educated at | 13 | People |
-| 8 | place of burial | 12 | People |
-| 9 | mother | 10 | People |
-| 10 | employer | 9 | People |
-| 11 | spouse | 8 | People |
-| 12 | award received | 7 | People |
-| 13 | cause of death | 4 | People |
-| 14 | sibling | 3 | People |
-| 15 | inception | 1 | Organizations |
-| 15 | child | 1 | People |
-| 15 | country | 1 | Places |
+| 7 | mother | 11 | People |
+| 7 | educated at | 11 | People |
+| 9 | employer | 9 | People |
+| 10 | spouse | 8 | People |
 
-*Total: 326 hop-2 missing property instances across 311 questions (C=158, D=128, F=25).*
+*Total hop-2 missing property instances across 297 questions (C=161, D=114, F=22).*
 
 **Observation:** Hop-2 missing properties are almost exclusively person properties.
-`country of citizenship` alone accounts for 137 of 326 hop-2 property instances (42%).
+`country of citizenship` alone accounts for 132 hop-2 property instances (~44%).
 This is because DBpedia often has person entities with basic type information but lacks
 biographical detail. The corresponding Wikipedia infoboxes almost always have
 `| nationality =` or `| citizenship =` fields.

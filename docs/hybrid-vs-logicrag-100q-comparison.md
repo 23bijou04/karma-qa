@@ -140,7 +140,7 @@ These are genuinely hard questions where both systems fail — typically obscure
 
 3. **Sample representativeness:** These 100 questions are the first 100 by insertion order from `dev_full.json`, not a stratified sample. Type distribution: 46 compositional, 20 comparison, 19 bridge_comparison, 15 inference. This over-represents compositional vs the full 1000q distribution.
 
-4. **EM vs Judge gap:** Hybrid shows a 22pp Judge/EM gap (89% vs 67%) while LogicRAG shows 18pp (80% vs 62%). Both gaps are driven by surface-form mismatches (city abbreviations, date formats, nationality adjective vs country name). The Judge score better reflects true accuracy.
+4. **EM vs Judge gap:** Hybrid shows a 25pp Judge/EM gap (88% vs 63%) while LogicRAG shows 19pp (73% vs 54%). Both gaps are driven by surface-form mismatches (city abbreviations, date formats, nationality adjective vs country name). The Judge score better reflects true accuracy.
 
 5. **Latency context:** Hybrid uses Groq API (cloud); LogicRAG uses the same Groq API for LLM calls but runs retrieval locally against a pre-built FAISS index. Hybrid additionally calls DBpedia Spotlight + SPARQL endpoints, adding network overhead.
 
@@ -148,11 +148,11 @@ These are genuinely hard questions where both systems fail — typically obscure
 
 ## Summary
 
-Hybrid outperforms LogicRAG on this 100-question sample by **+9pp judge accuracy** (89% vs 80%). The advantage comes primarily from:
+Hybrid outperforms LogicRAG on this 100-question sample by **+15pp judge accuracy** (88% vs 73%). The advantage comes from all question types:
 
-1. **bridge_comparison (+21pp):** KG-guided SPARQL chains resolve multi-hop property comparisons that LogicRAG's fixed corpus cannot.
-2. **compositional (+17pp):** Sub-question decomposition with SPARQL sub-queries retrieves entity properties more reliably than corpus search.
+1. **compositional (+20.9pp):** Sub-question decomposition with SPARQL sub-queries retrieves entity properties more reliably than corpus search.
+2. **bridge_comparison (+15.0pp):** KG-guided SPARQL chains resolve multi-hop property comparisons that LogicRAG's fixed corpus cannot.
+3. **comparison (+8.3pp):** Direct property lookup via SPARQL outperforms text extraction for factual comparisons.
+4. **inference (+7.7pp):** Hybrid now leads on inference too (100.0% vs 92.3%), correcting old .bak_v1 analysis that showed LogicRAG winning this type.
 
-LogicRAG's sole advantage is on **inference questions (−20pp):** its benchmark corpus contains direct textual evidence for genealogical/implicit relationships where our SPARQL path sometimes follows incorrect KG relations.
-
-**Implication for thesis:** The hybrid approach's value is strongest on structured multi-hop questions (bridge, bridge_comparison) where the KG provides reliable relational paths. For inference questions requiring implicit reasoning, corpus-based retrieval remains competitive — suggesting a future optimization: route inference questions directly to text retrieval rather than attempting SPARQL.
+**Implication for thesis:** The hybrid approach's value is strongest on structured multi-hop questions (bridge_comparison, compositional) where the KG provides reliable relational paths. The advantage extends across all question types in the re-judged 100q sample.

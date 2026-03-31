@@ -74,22 +74,22 @@ Answer
 
 ## Evaluation Results
 
-Evaluated on 346 DBpedia-answerable questions from a 1000-question subset (LinearRAG evaluation set):
+Evaluated on 368 hop-verified DBpedia-answerable questions from a 1000-question subset (LinearRAG evaluation set):
 
-| System | EM | F1 | Judge EM | Best At |
-|--------|-----|------|----------|---------|
-| **LLM-SPARQL** | **69.1%** | **83.2%** | **91.9%** | bridge_comparison (94.3%), comparison (85.9%) |
-| GRASP | 32.9% | 48.7% | 69.7% | bridge_comparison (55.3%) |
-| GraphRAG | -- | -- | -- | text-heavy questions |
+| System | n | EM | F1 | Judge EM | Best At |
+|--------|---|-----|------|----------|---------|
+| **LLM-SPARQL** | 368 | **68.5%** | **81.3%** | **91.6%** | bridge_comparison (94.3%), comparison (87.5%) |
+| GRASP | 338 | 32.5% | 48.2% | 76.3% | bridge_comparison (55.3%) |
+| GraphRAG | -- | -- | -- | -- | text-heavy questions |
 
 ### Per Question Type (LLM-SPARQL)
 
 | Type | n | EM | F1 | Judge EM |
 |------|---|-----|------|----------|
 | Bridge-Comparison | 141 | 94.3% | 96.2% | 97.2% |
-| Comparison | 71 | 85.9% | 92.3% | 95.8% |
-| Inference | 34 | 70.6% | 91.9% | 94.1% |
-| Compositional | 100 | 21.0% | 55.3% | 81.0% |
+| Comparison | 80 | 87.5% | 90.4% | 92.5% |
+| Inference | 34 | 70.6% | 91.9% | 100.0% |
+| Compositional | 113 | 22.1% | 53.1% | 81.4% |
 
 ## DBpedia Answerability
 

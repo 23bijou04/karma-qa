@@ -33,6 +33,15 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 
 ---
 
+## 2026-04-01
+
+- **[eval]**: Reclassified 1000q scenarios using hop-verified ground truth (`hop_verification_results.json`); rewrote `classify_1000q_scenarios.py` — new counts: A=368, B=293, C=161, D=114, E=42, F=22
+- **[decomposition]**: Fixed cross-contamination in LogicRAG — sub-questions now only receive facts from declared dependencies, not all accumulated facts
+- **[decomposition]**: Scoped comparison root sub-Qs to entities actually mentioned in each sub-question, preventing wrong-entity context
+- **[prompts]**: Added country/nationality comparison guidance to FINAL_ANSWER_PROMPT (city→country mapping, historical state→modern successor)
+- **[entity-linking]**: Extended mention blocklist with `birth`, `death`, `father`, `mother`, `law` to reduce spurious entity candidates
+- **[docs]**: Updated 9 docs + README with hop-verified 368q numbers, SPARQL/GRASP results, and LaTeX baseline comparison section
+
 ## 2026-03-27
 
 - **[eval]**: Decided to re-run LogicRAG baseline on full 1000q for fair comparison — previous 100q run used top_k=5, mismatching the paper's top_k=3 config

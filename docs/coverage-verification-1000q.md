@@ -131,14 +131,14 @@ Of the 368 questions where all predicates exist, only 119 have exact-string matc
 
 | Metric | Value | What it measures | Use case |
 |--------|-------|------------------|----------|
-| Original answerable | 34.6% (346) | Predicate exists (narrow map) | Historical: evaluations ran on this set |
+| Original answerable | 34.6% (346) | Predicate exists (narrow map) | Historical (superseded by hop-verified 368) |
 | Predicate-corrected | 37.5% (375) | Predicate exists (expanded map) | Superseded |
 | **Property-complete (hop)** | **36.8% (368)** | All predicates exist per hop | **Primary thesis number** |
 | Strict match | 11.9% (119) | Exact value string match | Artificially low (date format artifact) |
 
 **Recommendation:** Report **36.8% (368/1000, hop-verified predicate existence)** as the primary "KG-answerable" rate. It is the most honest and defensible number: it verifies that every evidence predicate exists at every hop via live SPARQL traversal, without baking in assumptions about value normalization. The gap between 36.8% (predicates exist) and 11.9% (strict match) quantifies date format mismatch, entity disambiguation, and label normalization costs — these are reported as data quality findings, not adjustments to the primary number.
 
-**Note on evaluation subset:** The SPARQL and GRASP evaluations were run on the original 346-question answerable set (based on Pass 1). This does not invalidate those results --- the 346 questions are a subset of the 368 property-complete questions, and the evaluation measured system accuracy, not KG coverage.
+**Note on evaluation subset:** As of 2026-03-30, both SPARQL and GRASP evaluations have been re-run on the full 368-question hop-verified set with the same judge model (gemma3:12b). Earlier evaluations on the 346-question set are superseded.
 
 ## 6. Comparison with Full Dev Set
 
