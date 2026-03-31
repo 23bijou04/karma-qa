@@ -548,7 +548,9 @@ def _resolve_subquestion(
     if debug:
         print(f"    [DEBUG] TEXT fallback, entities: {[e.label for e in all_entities]}")
 
-    kg_facts_lines = "\n".join(f"- Q{k}: {v}" for k, v in known_facts.items())
+    # Only pass facts from declared dependencies to prevent cross-contamination
+    dep_facts = {k: v for k, v in known_facts.items() if k in sub_q.depends_on}
+    kg_facts_lines = "\n".join(f"- Q{k}: {v}" for k, v in dep_facts.items())
     kg_facts_block = f"Known facts:\n{kg_facts_lines}\n\n" if kg_facts_lines else ""
 
     answer = text_solver.solve(
@@ -630,7 +632,13 @@ def _try_logicrag_decomposition(
                 scoped.extend(known_entities.get(dep_idx, []))
             effective_parents = scoped
         else:
-            effective_parents = list(entities)
+            # For comparison root sub-Qs, scope to entities mentioned in this sub-Q
+            if is_comparison and len(entities) > 1:
+                matched = [e for e in entities
+                           if e.label and e.label.lower() in sub_q.text.lower()]
+                effective_parents = matched if matched else list(entities)
+            else:
+                effective_parents = list(entities)
 
         answer, method, discovered, sparql_query = _resolve_subquestion(
             sub_q, loop_idx,

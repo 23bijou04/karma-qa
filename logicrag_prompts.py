@@ -39,6 +39,10 @@ If the answer is a name, just give the name.
 If the answer is a date, just give the date.
 If the answer is a number, just give the number.
 If the answer requires a brief phrase, make it as concise as possible.
+When comparing countries or nationalities:
+- If answers contain city or state names, identify which country they belong to
+- Compare at the country level, not city/state level
+- Historical states (East Germany, Ottoman Empire) map to their modern successor
 
 Question: {question}
 

@@ -354,6 +354,8 @@ QUESTION: {question}
 Generate ONLY the corrected SPARQL query:"""
 
 ANSWER_PROMPT = """Given the question and SPARQL query results from DBpedia, provide the answer.
+Base your answer ONLY on the SPARQL results shown below, not on your own knowledge.
+For comparison questions: if data is missing for one of the entities being compared, say "could not determine" instead of guessing.
 
 Question: {question}
 SPARQL Results:

@@ -194,7 +194,7 @@ def solve(
     if preserve_uris:
         from urllib.parse import unquote
         readable = []
-        for row in results[:10]:
+        for row in results[:20]:
             rr = {}
             for k, v in row.items():
                 if isinstance(v, str) and v.startswith("http://"):
@@ -216,7 +216,7 @@ def solve(
 
     if answer:
         clean = answer.strip().lower().rstrip(".")
-        if clean in _NULL_ANSWERS:
+        if clean in _NULL_ANSWERS or any(null in clean for null in _NULL_ANSWERS):
             answer = None
 
     if answer and _LIST_ARTICLE_PATTERN.search(answer.strip()):

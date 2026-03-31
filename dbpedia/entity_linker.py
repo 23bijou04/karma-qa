@@ -76,7 +76,7 @@ _MENTION_BLOCKLIST = frozenset({
     "album", "band", "country", "city", "person", "actor", "actress",
     "writer", "singer", "politician", "company", "school", "university",
     "year", "date", "time", "place", "name", "age", "number",
-    "first", "last", "born", "died", "older", "younger",
+    "first", "last", "born", "died", "birth", "death", "father", "mother", "law", "older", "younger",
     "earlier", "later", "more", "fewer", "same", "different",
     "performer", "publisher", "composer", "musician",
 })
