@@ -44,18 +44,18 @@ Original 38.5% → expanded 41.6% → hop-verified 36.8%. The hop-verified numbe
 
 | Metric | Hybrid | LogicRAG decomposed |
 |--------|--------|---------------------|
-| LLM judge accuracy | 84.1% (841/1000) | 74.5% (745/1000) |
-| EM | 68.1% | 61.1% |
+| LLM judge accuracy | 85.3% (853/1000) | 74.5% (745/1000) |
+| EM | 69.3% | 61.1% |
 | F1 | 75.4% | 67.5% |
 
-**Delta:** +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
+**Delta:** +10.8 pp judge, +8.2 pp EM, +7.9 pp F1
 
 ### By Question Type — Full 1000q
 
 | Type | n | Hybrid judge | LogicRAG judge | Delta |
 |------|---|-------------|----------------|-------|
 | Comparison | 244 | 91.4% | 92.6% | -1.2 pp |
-| Bridge comparison | 235 | 80.9% | 72.8% | +8.1 pp |
+| Bridge comparison | 235 | 86.0% | 72.8% | +13.2 pp |
 | Inference | 108 | 90.7% | 86.1% | +4.6 pp |
 | Compositional | 413 | 79.9% | 61.7% | +18.2 pp |
 
@@ -70,7 +70,7 @@ Hybrid leads on 3/4 types. Comparison is the only type where LogicRAG is margina
 | Inference | 15 | 80.0% | 73.3% | +6.7 pp |
 | Compositional | 46 | 87.0% | 67.4% | +19.6 pp |
 
-**100→1000q regression note:** Hybrid advantage shrinks at scale on bridge_comparison (+10.5→+8.1 pp) and inference (+6.7→+4.6 pp). Compositional gap persists (+19.6→+18.2 pp). Comparison flips from +5.0 to -1.2 pp — small samples overestimate Hybrid's advantage on simple comparisons where both systems are >90%.
+**100→1000q regression note:** After ASK fix (2026-03-31), Hybrid advantage on bridge_comparison widened (+10.5→+13.2 pp at 1000q scale). Inference shrinks (+6.7→+4.6 pp). Compositional gap persists (+19.6→+18.2 pp). Comparison flips from +5.0 to -1.2 pp — small samples overestimate Hybrid's advantage on simple comparisons where both systems are >90%.
 
 ### KG-Answerable Segment (hop_verified, all_properties_exist=True)
 
@@ -161,10 +161,11 @@ Hybrid leads on 3/4 types. Comparison is the only type where LogicRAG is margina
 - Entity coverage: 93.6% (ground truth, verified)
 - Property/hop coverage: 36.8% (368/1000, ground truth, hop-verified predicate existence)
 - Strict value match: 11.9% (119/1000, lower bound due to date format + disambiguation mismatch)
-- Hybrid LLM judge accuracy: 84.1% (1000q), EM: 68.1%, F1: 75.4%
+- Hybrid LLM judge accuracy: 85.3% (1000q), EM: 69.3%, F1: 75.4%
 - LogicRAG LLM judge accuracy: 74.5% (1000q), EM: 61.1%, F1: 67.5%
-- Delta (Hybrid vs LogicRAG): +9.6 pp judge, +7.0 pp EM, +7.9 pp F1
+- Delta (Hybrid vs LogicRAG): +10.8 pp judge, +8.2 pp EM, +7.9 pp F1
 - Compositional (1000q): Hybrid 79.9% vs LogicRAG 61.7% (+18.2 pp) — largest gap
+- Bridge comparison (1000q): Hybrid 86.0% vs LogicRAG 72.8% (+13.2 pp) — widened by ASK fix
 - Comparison (1000q): Hybrid 91.4% vs LogicRAG 92.6% (-1.2 pp) — only type LogicRAG leads
 - KG-answerable (1000q, n=368): Hybrid 88.0% vs LogicRAG 73.9% (+14.1 pp)
 - KG-answerable (first 100, n=38): Hybrid 97.4% vs LogicRAG 76.3% (+21.1 pp)
@@ -172,6 +173,6 @@ Hybrid leads on 3/4 types. Comparison is the only type where LogicRAG is margina
 ### Baseline Results (hop-verified 368q, updated 2026-03-30)
 
 - Schema-Guided SPARQL (n=368): EM 68.5%, F1 81.3%, Judge EM 91.6%, Containment 86.1%
-- GRASP (n=338/368): EM 32.5%, F1 48.2%, Judge EM 76.3%, Containment 88.2%
-- Head-to-head (n=338): SPARQL EM 69.2% vs GRASP 32.5% (+36.7 pp), Judge 93.5% vs 76.3% (+17.2 pp)
-- Judge models: gemma3:12b (SPARQL), qwen2.5:7b (GRASP) — cross-validation pending
+- GRASP (n=368): EM 32.1%, F1 47.3%, Judge EM 79.1%, Containment 85.6%
+- Head-to-head (n=368): SPARQL EM 68.5% vs GRASP 32.1% (+36.4 pp), Judge 91.6% vs 79.1% (+12.5 pp)
+- Judge model: gemma3:12b for both systems (consistent, no cross-judge bias)
