@@ -46,7 +46,7 @@ Primary evaluation campaign on 1000-question subset (from LinearRAG evaluation s
 Earlier evaluation campaign on 800-question sample (superseded by 1000q).
 
 - `coverage_analysis_800.json` — Per-question KG coverage (earlier version)
-- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL baseline results
+- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL component results (Hybrid's SPARQL path standalone)
 - `grasp_eval_dbpedia.jsonl` / `grasp_eval_dbpedia_judged.jsonl` — GRASP results
 - `graphrag_eval_failures.jsonl` — GraphRAG failure cases
 - `linearrag_eval_subset.json` — LinearRAG results for comparison
