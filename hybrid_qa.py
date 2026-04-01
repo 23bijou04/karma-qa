@@ -348,6 +348,9 @@ def hybrid_answer(question: str, api_key: str = None,
 
 
 def main():
+    from sparql_evaluation import force_ipv4
+    force_ipv4()
+
     parser = argparse.ArgumentParser(
         description="Schema-Routed Hybrid QA: SPARQL-first + text fallback"
     )

@@ -9,6 +9,7 @@ Implements EM and F1 metrics for:
 
 import re
 import string
+import unicodedata
 from collections import Counter
 from typing import Optional
 
@@ -78,6 +79,9 @@ def normalize_answer(answer: str) -> str:
     Returns:
         Normalized answer
     """
+    # Unicode NFC normalization — prevent false mismatches from decomposed accents
+    answer = unicodedata.normalize('NFC', answer)
+
     # Date normalization first (before punctuation removal destroys date hyphens)
     canonical_date = normalize_date(answer)
     if canonical_date is not None:

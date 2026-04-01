@@ -172,8 +172,17 @@ def main():
                         pass  # skip truncated lines from mid-write crash
         print(f"Resume: {len(done)} already judged in {output_path}")
 
+    records = []
     with open(input_path) as f:
-        records = [json.loads(line.strip()) for line in f if line.strip()]
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"Warning: skipping corrupt line {line_num} in {input_path}")
+                continue
 
     remaining = [r for r in records if r["question_id"] not in done]
     print(f"Total: {len(records)}, remaining: {len(remaining)}")

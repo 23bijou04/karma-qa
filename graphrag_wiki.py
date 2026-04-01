@@ -819,6 +819,9 @@ Instructions:
 
 
 def main():
+    from sparql_evaluation import force_ipv4
+    force_ipv4()
+
     parser = argparse.ArgumentParser(
         description="GraphRAG: Answer questions via DBpedia + Wikipedia + LLM"
     )
