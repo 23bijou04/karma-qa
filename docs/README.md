@@ -84,7 +84,7 @@ Evaluation results live in `data/eval_1000q/`:
 
 ```
 data/eval_1000q/
-├── sparql/hop368/          # SPARQL baseline on hop-verified 368q
+├── sparql/hop368/          # SPARQL component (Hybrid's SPARQL path) on hop-verified 368q
 │   ├── sparql_eval_1000_hop368.jsonl
 │   ├── sparql_eval_1000_hop368_judged.jsonl
 │   └── sparql_eval_1000_hop368_summary.json

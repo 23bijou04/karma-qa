@@ -104,10 +104,10 @@ Question Input
 
 The system implements four distinct QA pipelines, each suited to different question characteristics:
 
-1. **Hybrid Pipeline** (`hybrid_qa.py`, 401 lines) — Main orchestrator using three-path architecture:
-   - Path 1: Direct SPARQL for single-hop or complete multi-hop schema
-   - Path 2: LogicRAG decomposition for multi-hop with incomplete schema
-   - Path 3: Text fallback using Wikipedia + RAG + LLM reasoning
+1. **Hybrid Pipeline** (`hybrid_qa.py`, 401 lines) — Main orchestrator with two-route architecture:
+   - SPARQL Direct: when schema projection confirms the KG covers the question
+   - LogicRAG Decomposition: for multi-hop or incomplete schema — decomposes into sub-questions, each independently uses SPARQL or text retrieval
+   - Text retrieval (Wikipedia + RAG) is the fallback mechanism within sub-questions and a last resort, not a separate top-level route
 
 2. **GraphRAG Text-Only** (`graphrag_wiki.py`, 847 lines) — Pure text pipeline:
    - Spotlight entity linking → KG exploration → Wikipedia retrieval → LLM reasoning
@@ -117,9 +117,9 @@ The system implements four distinct QA pipelines, each suited to different quest
    - Third-party KG QA system (`wss://grasp.cs.uni-freiburg.de/api/live`)
    - Uses OpenAI GPT-5-mini model
 
-4. **LLM-SPARQL Baseline** (`sparql_evaluation.py`) — SPARQL-only baseline:
+4. **Schema-Guided SPARQL Component** (`sparql_evaluation.py`) — Hybrid's direct SPARQL path evaluated standalone:
    - Schema discovery + LLM-driven SPARQL generation
-   - No text fallback or decomposition
+   - No text fallback or decomposition (used for component-level evaluation only)
 
 ### Design Philosophy
 
@@ -2027,7 +2027,8 @@ def bootstrap_ci(data, statistic_fn, n_iterations=10000, seed=42, alpha=0.05):
 #### Bonferroni Correction
 
 ```
-# 4-way comparison (SPARQL vs GRASP vs Hybrid vs GraphRAG)
+# 4-way comparison (SPARQL component vs GRASP vs Hybrid vs GraphRAG)
+# Note: SPARQL here is Hybrid's internal component run standalone, not an independent system
 # Bonferroni: alpha_individual = 0.05 / 4 = 0.0125
 # Apply to all 6 pairwise tests
 ```

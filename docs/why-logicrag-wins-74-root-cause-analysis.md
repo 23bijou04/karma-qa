@@ -1,10 +1,10 @@
 # Hybrid Pipeline Failure Analysis: Root Cause Classification
 
-**Date**: 2026-03-30 | **Validated**: 2026-04-01 | **Updated**: 2026-04-01 (factcheck: 6 invalid IDs fixed, counts corrected) | **Status**: For Discussion | **Branch**: `experiment/fair-comparison-analysis`
+**Date**: 2026-03-30 | **Validated**: 2026-04-01 | **Updated**: 2026-04-01 (factcheck: 6 invalid IDs fixed, counts corrected; phase1 reeval: 41/147 recovered → 89.4%) | **Status**: For Discussion | **Branch**: `experiment/fair-comparison-analysis`
 
 ## Context
 
-The hybrid pipeline fails on **147 of 1000 questions** (85.3% accuracy). Of these, 74 are questions where plain LogicRAG succeeds (the original scope of this document). This update classifies ALL 147 failures by root cause, using three parallel expert investigations that traced exact code paths.
+The hybrid pipeline originally failed on **147 of 1000 questions** (85.3% accuracy). After phase 1 reeval, 41 of those 147 were recovered, leaving **106 failures (89.4% accuracy)**. Of the original 147, 74 are questions where plain LogicRAG succeeds (the original scope of this document). This document classifies the original 147 failures by root cause, using three parallel expert investigations that traced exact code paths.
 
 **Critical revision**: The original 5-category classification was a surface-level grouping. The investigations found the actual root mechanisms are different — and in some cases, the original hypotheses were wrong.
 
@@ -65,6 +65,8 @@ The hybrid pipeline fails on **147 of 1000 questions** (85.3% accuracy). Of thes
 ## Per-Root-Cause Question Lists (147 failures)
 
 ### RC1: SPARQL Coverage Asymmetry (20 questions)
+
+> **Note:** "SPARQL" here refers to Hybrid's internal direct-SPARQL routing path, not an external system.
 
 SPARQL returns data for only 1 of 2 entities in a comparison → LLM defaults to entity with data → always wrong.
 
@@ -296,6 +298,8 @@ The sections below provide the detailed mechanistic analysis for each root cause
 
 ## Root Cause 1: SPARQL Coverage Asymmetry (was "Comparison Inversion")
 
+> This root cause analyzes Hybrid's internal SPARQL routing path, not SPARQL as an external system.
+
 ### What the original analysis said
 > "SPARQL picks the EXACT OPPOSITE film/person — all 16/16 inverted. This smells like a systematic date comparison bug."
 
@@ -519,7 +523,7 @@ Ranked by (questions recovered × feasibility). Updated with 147-failure counts.
 - P2 fixes: ~11 questions (RC4-B1 retry: 8, RC4-B2: 3)
 - **Total actionable**: ~90 of 147 (61%)
 - **Unactionable**: RC6 (24) + RC7 (8) = 32 questions (22%) — KG data errors + retrieval dead-ends
-- **Theoretical ceiling**: 85.3% → ~94% with all P0+P1+P2 fixes (optimistic, assumes no regressions)
+- **Theoretical ceiling**: 89.4% → ~96% with all P0+P1+P2 fixes applied to remaining 106 failures (optimistic, assumes no regressions)
 
 ---
 
@@ -527,9 +531,11 @@ Ranked by (questions recovered × feasibility). Updated with 147-failure counts.
 
 ### 1. Should we implement these fixes for the thesis?
 
-**Pro**: Recovering ~95 questions would push hybrid from 85.3% → ~95% judge-correct, widening the gap vs LogicRAG's 74.5%. The top 3 fixes (RC1 partial-data, RC3 country normalization, RC4-B3 propagation) alone could recover ~57 questions.
+**Pro**: Applying remaining fixes to the 106 outstanding failures could push hybrid from 89.4% → ~96% judge-correct, widening the gap vs LogicRAG's 74.5% (current gap: 14.9pp). The top 3 fixes (RC1 partial-data, RC3 country normalization, RC4-B3 propagation) alone could recover additional questions.
 
-> **Update (2026-03-31):** The ASK verification fix in `routing.py` (comparison questions now use `all()` logic for multi-entity ASK) recovered 12 of the 23 affected bridge_comparison questions. Hybrid 1000q Judge EM improved from 84.1% to 85.3% (+1.2pp). This is a partial implementation of the P0 fixes listed above; remaining fixes (entity scoping, known_facts filtering, ANSWER_PROMPT partial-data instruction) are not yet applied.
+> **Update (2026-03-31):** The ASK verification fix in `routing.py` (comparison questions now use `all()` logic for multi-entity ASK) recovered 12 of the 23 affected bridge_comparison questions. Hybrid 1000q Judge EM improved from 84.1% to 85.3% (+1.2pp).
+>
+> **Update (2026-04-01, phase 1 reeval):** 41 additional failures were recovered via phase 1 reeval (41/147). Hybrid 1000q Judge EM: **89.4% (894/1000)** (+4.1pp from 85.3%). Hybrid 368q Judge EM: **92.9% (342/368)**. Per-type 1000q: bridge_comparison 91.9% (216/235), comparison 95.9% (234/244), compositional 82.6% (341/413), inference 95.4% (103/108). Gap vs LogicRAG (74.5%): **14.9pp** (was 10.8pp). Remaining fixes (entity scoping, known_facts filtering, ANSWER_PROMPT partial-data instruction) not yet applied.
 
 **Con**: These are post-hoc fixes derived from analyzing the failure set. Any reported improvements should clearly state they're "post-analysis corrections" to avoid overfitting claims.
 

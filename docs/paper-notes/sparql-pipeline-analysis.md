@@ -1,5 +1,7 @@
 # SPARQL Pipeline Analysis
 
+> This analysis examines the direct SPARQL path within Hybrid's three-stage architecture (SPARQL → LogicRAG decomposition → Text fallback). "SPARQL" throughout refers to Hybrid's internal component (`sparql_solver.py`), not an external baseline system.
+
 **Sources:** Consolidated from investigation sessions (2026-03-20 through 2026-03-27). Original session reports no longer available; facts verified against code and data files directly.
 
 ---

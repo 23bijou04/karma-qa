@@ -115,7 +115,7 @@ Our `logicrag_decomposition.py` is NOT a reproduction of the LogicRAG paper (AAA
 - LogicRAG: text-only (no KG); Our system: hybrid KG + text
 - LogicRAG: evaluated on full Wikipedia corpora; Our system: DBpedia KG subset
 - LogicRAG uses complete Wikipedia passages; we use Wikipedia API fetch per entity
-- Our SPARQL baseline uses 7-rule prompt; hybrid uses 8-rule prompt (see sparql-pipeline-analysis.md)
+- Our SPARQL component uses 7-rule prompt; hybrid uses 8-rule prompt (see sparql-pipeline-analysis.md)
 
 ### Hybrid advantages over LogicRAG's approach
 1. SPARQL for structured facts (exact values, dates, counts)

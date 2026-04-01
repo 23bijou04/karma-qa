@@ -5,7 +5,7 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 ## Project Structure Overview
 
 **Core pipeline** (5,156 lines across 17 Python files at root):
-- `hybrid_qa.py` (343L) — Main orchestrator: SPARQL + LogicRAG + text fallback
+- `hybrid_qa.py` (343L) — Main orchestrator: SPARQL direct or LogicRAG decomposition (text as fallback within sub-Qs)
 - `graphrag_wiki.py` (847L) — Text-only pipeline: Spotlight -> KG -> Wikipedia -> LLM
 - `routing.py` (498L) — Three-stage routing: deterministic rules + SPARQL ASK + LLM fallback
 - `logicrag_decomposition.py` (635L) — Multi-hop sub-question decomposition
@@ -27,7 +27,7 @@ Progress tracking for the DBpedia Hybrid QA project, updated at end of each work
 
 **Data:** 12,576 questions total, 1,000-question eval subset (368 KG-answerable via hop-verified predicate existence; evaluations ran on original 346-question set).
 
-**Baselines:** SPARQL-only, GRASP (external), LinearRAG, Hybrid (ours).
+**Baselines:** External systems: GRASP, LinearRAG | Our system: Hybrid (two routes: SPARQL direct when schema covers the question, LogicRAG decomposition for multi-hop/incomplete schema — text retrieval is the fallback within sub-questions, not a separate route). "SPARQL-only" results in eval tables reflect Hybrid's internal SPARQL component evaluated standalone.
 
 **Timeline:** 14 working days (2026-02-12 to 2026-03-17), 30 commits.
 

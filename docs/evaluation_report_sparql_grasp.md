@@ -11,9 +11,11 @@
 
 ## 1. Systems Under Comparison
 
+> **Framing note:** Schema-Guided SPARQL is **not** an independent competing system — it is Hybrid's direct SPARQL routing path, evaluated here in isolation on the KG-answerable (hop-368) subset. This comparison validates the schema projection design choice: injecting entity schema into LLM context (our approach) vs GRASP's iterative schema discovery via tool calls.
+
 | System | Backend LLM | Approach | Latency |
 |---|---|---|---|
-| **Schema-Guided SPARQL** | Groq llama-3.3-70b-versatile | Pre-discovered schema → single-shot SPARQL + 1 retry | ~5s/question |
+| **Schema-Guided SPARQL** (Hybrid component) | Groq llama-3.3-70b-versatile | Pre-discovered schema → single-shot SPARQL + 1 retry | ~5s/question |
 | **GRASP** | OpenAI gpt-5-mini | Agentic exploration → multi-step tool calls → SPARQL | ~72s/question |
 
 ---
@@ -92,12 +94,12 @@
 |---|:---:|:---:|
 | Both correct | 112 | 30.4% |
 | Both wrong | 110 | 29.9% |
-| SPARQL only correct | 140 | 38.0% |
+| SG only correct | 140 | 38.0% |
 | GRASP only correct | 6 | 1.6% |
 
 ### By Type
 
-| Type | Both OK | Both Fail | SPARQL Only | GRASP Only |
+| Type | Both OK | Both Fail | SG Only | GRASP Only |
 |---|:---:|:---:|:---:|:---:|
 | bridge_comparison | 74 | 4 | 59 | 4 |
 | comparison | 38 | 8 | 32 | 2 |
