@@ -77,7 +77,7 @@ def main():
                         help="JSON file with list of question IDs to re-eval")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"])
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"])
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE)
     parser.add_argument("--output-file", required=True,
                         help="JSONL output file for re-eval results")

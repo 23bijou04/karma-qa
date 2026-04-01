@@ -274,7 +274,7 @@ def main():
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds between questions (default: 2)")
     parser.add_argument("--api-key", default=None, help="API key")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"])
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"])
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
     parser.add_argument("--scenario-file", default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output", default=None,

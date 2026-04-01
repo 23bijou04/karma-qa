@@ -552,7 +552,7 @@ def main():
                         help="Output JSONL path")
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE_FILE,
                         help="Path to coverage analysis JSON")

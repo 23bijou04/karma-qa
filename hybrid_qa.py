@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Schema-Routed Hybrid QA: uses KG schema to route SPARQL vs text.
+"""Schema-Routed Hybrid QA: uses KG schema to route SPARQL vs decomposition.
 
 Orchestrator-only: delegates SPARQL solving to sparql_solver.py,
 text solving to text_solver.py, routing to routing.py,
 and multi-hop decomposition to logicrag_decomposition.py.
 
-Three-path architecture:
+Two-route architecture:
   1. EntityLink(q)            — DBpedia Spotlight (spaCy fallback)
   2. SchemaDiscovery(E)       — entity classes, properties, sample values
   3. RouteDecision(q, S)      — rule-based + SPARQL ASK verification + LLM fallback
-  4. Direct SPARQL            — sparql_solver.solve() (single-hop or multi-hop with full schema)
-  5. LogicRAG decomposition   — logicrag_decomposition (incomplete schema or SPARQL failed)
-  6. Text fallback            — text_solver.solve()
+  4a. SPARQL Direct           — sparql_solver.solve() when schema covers the question
+  4b. LogicRAG Decomposition  — sub-question decomposition, each sub-Q uses SPARQL or text
+
+Text retrieval (text_solver.solve) is a fallback mechanism within each sub-question
+and a last resort if both routes fail — not a separate top-level route.
 
 Usage:
   python3 hybrid_qa.py "Who directed Inception?" --verbose
@@ -63,12 +65,14 @@ def hybrid_answer(question: str, api_key: str = None,
                   kg_client=None, schema_disc=None,
                   provider: str = "groq",
                   benchmark_corpus: list[dict] | None = None) -> HybridResult:
-    """Schema-routed hybrid QA with 3-path architecture.
+    """Schema-routed hybrid QA with two-route architecture.
 
-    Paths:
-      1. Direct SPARQL — single-hop or multi-hop when schema coverage is complete
-      2. LogicRAG decomposition — multi-hop with incomplete schema, or direct SPARQL failed
-      3. Simple text fallback — neighbors + Wikipedia + LLM reasoning
+    Routes:
+      1. SPARQL Direct — single-hop or multi-hop when schema coverage is complete
+      2. LogicRAG Decomposition — multi-hop with incomplete schema, or SPARQL failed;
+         each sub-question independently uses SPARQL or text retrieval
+
+    Text retrieval is the fallback within sub-questions and a last resort, not a peer route.
 
     Returns: HybridResult with answer, method, route_source, and sparql_fallback.
     """
@@ -365,7 +369,7 @@ def main():
         help="LLM model (default: llama-3.3-70b-versatile)",
     )
     parser.add_argument(
-        "--provider", default="groq", choices=["groq", "github"],
+        "--provider", default="groq", choices=["groq", "github", "ollama"],
         help="LLM provider (default: groq)",
     )
     parser.add_argument("--verbose", action="store_true", help="Show pipeline steps")

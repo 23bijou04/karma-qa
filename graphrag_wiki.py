@@ -830,7 +830,7 @@ def main():
                         help="API key (default: provider-specific env var)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile",
                         help="LLM model (default: llama-3.3-70b-versatile)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show step-by-step pipeline output")

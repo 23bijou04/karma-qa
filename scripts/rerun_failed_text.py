@@ -75,7 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rerun failed TEXT-path questions")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"])
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"])
     parser.add_argument("--delay", type=float, default=2.0)
     parser.add_argument("--mode", default="text",
                         choices=["text", "logicrag", "all-wrong"],

@@ -147,7 +147,7 @@ def main():
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE)
     parser.add_argument("--output-file", default=DEFAULT_OUTPUT)

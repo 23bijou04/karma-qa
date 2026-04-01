@@ -42,7 +42,7 @@ def main():
     parser.add_argument("question", type=str, help="The question to answer")
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile",
                         help="LLM model name")
