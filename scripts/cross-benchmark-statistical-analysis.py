@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -18,6 +19,16 @@ from collections import defaultdict
 from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load project metrics for on-the-fly EM/F1/containment computation
+_spec = importlib.util.spec_from_file_location(
+    "metrics", os.path.join(PROJECT_ROOT, "evaluation", "metrics.py")
+)
+_metrics = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_metrics)
+_compute_em = _metrics.compute_em
+_compute_f1 = _metrics.compute_f1
+_compute_containment = _metrics.compute_containment
 CROSS_DIR = os.path.join(PROJECT_ROOT, "data", "cross_benchmark")
 
 SYSTEMS = ["hybrid", "logicrag", "linearrag"]
@@ -51,7 +62,11 @@ EVAL_PATHS = {
 
 
 def load_judged(path: str) -> dict[str, dict]:
-    """Load judged JSONL into {question_id: record} dict."""
+    """Load judged JSONL into {question_id: record} dict.
+
+    Computes em/f1/containment from predicted_answer + gold_answer
+    when those metric fields are absent (e.g. LinearRAG 2Wiki data).
+    """
     results = {}
     if not os.path.exists(path):
         return results
@@ -62,8 +77,18 @@ def load_judged(path: str) -> dict[str, dict]:
                 try:
                     d = json.loads(line)
                     qid = d.get("question_id", "")
-                    if qid:
-                        results[qid] = d
+                    if not qid:
+                        continue
+                    # Compute string metrics when absent
+                    if "em" not in d and d.get("predicted_answer") and d.get("gold_answer"):
+                        pred = d["predicted_answer"]
+                        gold = d["gold_answer"]
+                        aliases = d.get("gold_aliases", [])
+                        candidates = [gold] + [a for a in aliases if a]
+                        d["em"] = max(_compute_em(pred, c) for c in candidates)
+                        d["f1"] = max(_compute_f1(pred, c) for c in candidates)
+                        d["containment"] = max(_compute_containment(pred, c) for c in candidates)
+                    results[qid] = d
                 except json.JSONDecodeError:
                     pass
     return results
