@@ -129,11 +129,73 @@ class TestBuildEntityProfile:
         mock_disc.get_actual_properties.return_value = {
             "dbo": [], "dbp": [], "values": {},
         }
+        mock_disc.discover_property_ranges.return_value = {}
 
         profile = build_entity_profile("http://dbpedia.org/resource/Unknown", "Unknown", mock_disc)
         assert profile.cached_classes == []
         assert profile.all_2hop_chains == {}
         assert profile.actual_property_set == frozenset()
+
+    def test_dynamic_schema_fallback_for_uncached_type(self):
+        """Uncached types get synthetic 2-hop chains via discover_property_ranges."""
+        mock_disc = MagicMock()
+        # SoccerClub is NOT in CACHED_CLASS_SCHEMAS
+        mock_disc.get_all_cached_classes.return_value = (
+            ["SoccerClub", "SportsTeam", "Organisation", "Agent"],
+            [],  # no cached classes
+        )
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["manager", "ground", "league"],
+            "dbp": ["manager", "ground"],
+            "values": {"dbo:manager": "Carlo Ancelotti"},
+        }
+        # Dynamic discovery: manager -> Person, ground -> Place
+        mock_disc.discover_property_ranges.return_value = {
+            "manager": "Person",
+            "ground": "Place",
+            "league": "SportsLeague",  # not a cached class
+        }
+
+        profile = build_entity_profile(
+            "http://dbpedia.org/resource/Real_Madrid_CF", "Real Madrid CF", mock_disc,
+        )
+        assert profile.cached_classes == []
+        # manager -> Person chain should be built (Person is cached)
+        assert "manager" in profile.all_2hop_chains
+        target_cls, target_props = profile.all_2hop_chains["manager"]
+        assert target_cls == "Person"
+        assert "birthDate" in target_props
+        # Full target props (no [:5] truncation)
+        assert "nationality" in target_props
+        assert "spouse" in target_props
+        # ground -> Place chain should also be built (Place is cached)
+        assert "ground" in profile.all_2hop_chains
+        assert profile.all_2hop_chains["ground"][0] == "Place"
+        # league -> SportsLeague should NOT generate a chain (not cached)
+        assert "league" not in profile.all_2hop_chains
+        # Dynamic ranges stored on profile (NOT mutating global PROPERTY_RANGES)
+        assert "dbo:manager" in profile.dynamic_ranges
+        assert profile.dynamic_ranges["dbo:manager"] == "Person"
+        assert "dbo:ground" in profile.dynamic_ranges
+        assert profile.dynamic_ranges["dbo:ground"] == "Place"
+        # Non-cached targets excluded from dynamic_ranges too
+        assert "dbo:league" not in profile.dynamic_ranges
+
+    def test_dynamic_ranges_not_called_for_cached_types(self):
+        """Entities with cached classes should NOT call discover_property_ranges."""
+        mock_disc = MagicMock()
+        mock_disc.get_all_cached_classes.return_value = (
+            ["Person", "Agent"], ["Person"],
+        )
+        mock_disc.get_actual_properties.return_value = {
+            "dbo": ["birthDate"], "dbp": [], "values": {},
+        }
+
+        profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
+        # discover_property_ranges should NOT be called for cached types
+        mock_disc.discover_property_ranges.assert_not_called()
+        # dynamic_ranges should be empty for cached types
+        assert profile.dynamic_ranges == {}
 
     def test_chain_merge_sorts_properties(self):
         """Merged chain properties must be sorted alphabetically."""
@@ -170,6 +232,7 @@ class TestBuildEntityProfile:
         mock_disc = MagicMock()
         mock_disc.get_all_cached_classes.return_value = ([], [])
         mock_disc.get_actual_properties.return_value = {"values": {}}
+        mock_disc.discover_property_ranges.return_value = {}
 
         profile = build_entity_profile("http://dbpedia.org/resource/X", "X", mock_disc)
         assert profile.actual_property_set == frozenset()

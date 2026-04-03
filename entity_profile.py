@@ -20,6 +20,10 @@ class EntityProfile:
     actual_properties: dict = field(default_factory=dict)
     actual_property_set: frozenset[str] = field(default_factory=frozenset)
     all_2hop_chains: dict[str, tuple[str, list[str]]] = field(default_factory=dict)
+    # Dynamic property ranges discovered at runtime for uncached entity types.
+    # Maps "dbo:prop" -> target class name (e.g. "dbo:manager" -> "Person").
+    # Used by question_analysis and routing as secondary lookup after PROPERTY_RANGES.
+    dynamic_ranges: dict[str, str] = field(default_factory=dict)
 
 
 def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
@@ -61,6 +65,25 @@ def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
                 existing_props.update(props)
                 all_chains[prop] = (target, sorted(existing_props))
 
+    # 5. Dynamic range discovery: fallback for uncached entity types.
+    # When no cached class matched, query DBpedia for what types the entity's
+    # object properties point to, then build synthetic 2-hop chains.
+    profile_dynamic_ranges: dict[str, str] = {}
+    if not cached_classes and schema_disc is not None:
+        discovered = schema_disc.discover_property_ranges(uri)
+        for prop, target_cls in discovered.items():
+            # Only process targets that map to a cached class — non-cached targets
+            # can't participate in bridge detection (enrich_analysis requires
+            # CACHED_CLASS_SCHEMAS lookup for scoring).
+            if target_cls not in CACHED_CLASS_SCHEMAS:
+                continue
+            if prop not in all_chains:
+                target_schema = CACHED_CLASS_SCHEMAS[target_cls]
+                target_props = target_schema.get("dbo", [])
+                all_chains[prop] = (target_cls, target_props)
+            # Store on profile (not global) so bridge detection can use it
+            profile_dynamic_ranges[f"dbo:{prop}"] = target_cls
+
     return EntityProfile(
         uri=uri,
         label=label,
@@ -69,4 +92,5 @@ def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
         actual_properties=actual,
         actual_property_set=actual_property_set,
         all_2hop_chains=all_chains,
+        dynamic_ranges=profile_dynamic_ranges,
     )

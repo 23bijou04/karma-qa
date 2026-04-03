@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, format_2hop_lines
+from dbpedia_qa.dbpedia.schema_discovery import (
+    CACHED_CLASS_SCHEMAS,
+    GENERIC_CLASSES,
+    format_2hop_lines,
+)
 
 if TYPE_CHECKING:
     from entity_profile import EntityProfile
@@ -86,6 +90,19 @@ class SchemaProjection:
                     for prop, desc in filtered.items():
                         lines.append(f"    - {prop}: {desc}")
             # Only include relevant chains
+            if self.relevant_chains:
+                chain_lines = format_2hop_lines(
+                    {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
+                )
+                lines.extend(chain_lines)
+        elif self.primary_class:
+            # Dynamic: uncached type — show actual properties directly
+            actual = profile.actual_properties
+            if actual.get("dbo"):
+                lines.append(f"  dbo: {', '.join(actual['dbo'][:12])}")
+            if actual.get("dbp"):
+                lines.append(f"  dbp: {', '.join(actual['dbp'][:8])}")
+            # Show dynamic chains discovered at runtime
             if self.relevant_chains:
                 chain_lines = format_2hop_lines(
                     {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
@@ -175,7 +192,11 @@ def project(
         class_scores.sort(key=lambda x: (x[1], len(x[0])), reverse=True)
         primary_class = class_scores[0][0]
     else:
-        primary_class = None
+        # Fallback for uncached types: use first specific dbo: class
+        specific = [c for c in profile.all_classes if c not in GENERIC_CLASSES]
+        primary_class = specific[0] if specific else (
+            profile.all_classes[0] if profile.all_classes else None
+        )
 
     # 2. Relevant properties: analysis targets intersected with actual
     relevant = sorted(analysis.target_properties & profile.actual_property_set)

@@ -657,6 +657,8 @@ class TestNoClassEntity:
         assert "Property hints:" not in output
         # But actual properties still shown
         assert "dbo:foo -> bar" in output
+        # Dynamic fallback assigns primary_class from all_classes
+        assert proj.primary_class == "SomethingElse"
 
     def test_no_cached_class_no_class_line(self):
         profile = EntityProfile(
@@ -672,6 +674,58 @@ class TestNoClassEntity:
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
         assert "Class:" not in output
+
+    def test_uncached_type_dynamic_rendering(self):
+        """Uncached types show actual properties and dynamic chains in SPARQL view."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/SomeFilmStudio",
+            label="Some Film Studio",
+            all_classes=["FilmStudio", "Organisation", "Agent"],
+            cached_classes=[],
+            actual_properties={
+                "dbo": ["foundedBy", "locationCity", "foundingDate"],
+                "dbp": ["founder"],
+                "values": {
+                    "dbo:foundedBy": "Jane Doe",
+                    "dbo:locationCity": "Los Angeles",
+                },
+            },
+            actual_property_set=frozenset({
+                "dbo:foundedBy", "dbo:locationCity", "dbo:foundingDate",
+                "dbp:founder",
+            }),
+            # Dynamic chain: foundedBy -> Person (matches KEYWORD_TO_PROPERTIES)
+            all_2hop_chains={
+                "foundedBy": ("Person", ["birthDate", "deathDate", "birthPlace"]),
+            },
+        )
+        # "founder" maps to "foundedBy" in KEYWORD_TO_PROPERTIES
+        analysis = analyze_question("When was the founder of this studio born?")
+        proj = project(profile, analysis)
+
+        # primary_class should be FilmStudio (first specific, filtering Agent)
+        assert proj.primary_class == "FilmStudio"
+        # Dynamic rendering should show actual properties
+        output = proj.render_for_sparql(include_prefixes=False)
+        assert "Class: dbo:FilmStudio" in output
+        assert "dbo: foundedBy" in output
+        # Dynamic chains appear (foundedBy matches bridge_property from "founder" keyword)
+        assert "foundedBy -> Person" in output
+
+    def test_generic_classes_filtered_for_primary(self):
+        """Generic classes (Agent, Thing) are skipped when selecting primary_class."""
+        profile = EntityProfile(
+            uri="http://dbpedia.org/resource/X",
+            label="X",
+            all_classes=["Agent", "Thing", "SoccerClub"],
+            cached_classes=[],
+            actual_properties={"dbo": [], "dbp": [], "values": {}},
+            actual_property_set=frozenset(),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question("What is X?")
+        proj = project(profile, analysis)
+        assert proj.primary_class == "SoccerClub"
 
     def test_empty_actual_properties(self):
         profile = _film_profile(

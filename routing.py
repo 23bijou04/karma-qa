@@ -84,8 +84,14 @@ def _rule_based_route(
     analysis: QuestionAnalysis,
     projections: list[SchemaProjection],
     debug: bool = False,
+    extra_ranges: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
     """Return ('SPARQL', reason) if rules match, None if inconclusive."""
+    # Merge static + dynamic property ranges for bridge detection
+    effective_ranges = dict(PROPERTY_RANGES)
+    if extra_ranges:
+        effective_ranges.update(extra_ranges)
+
     # Collect actual properties across all entity projections
     all_actual: set[str] = set()
     for proj in projections:
@@ -133,11 +139,11 @@ def _rule_based_route(
                         print(f"  [DEBUG] Rule matched: bridge_comparison "
                               f"(chain: {analysis.bridge_property} -> {target_cls})")
                     return ("SPARQL", "rule:bridge_comparison")
-            # Fallback: check PROPERTY_RANGES directly
+            # Fallback: check property ranges directly (static + dynamic)
             if analysis.bridge_property:
                 range_key = f"dbo:{analysis.bridge_property}"
-                if range_key in PROPERTY_RANGES:
-                    target_cls = PROPERTY_RANGES[range_key]
+                if range_key in effective_ranges:
+                    target_cls = effective_ranges[range_key]
                     if target_cls in CACHED_CLASS_SCHEMAS:
                         target_schema = CACHED_CLASS_SCHEMAS[target_cls]
                         if any(p in target_schema.get("dbo", []) for p in [
@@ -157,9 +163,9 @@ def _rule_based_route(
                     print(f"  [DEBUG] Rule matched: bridge_hop2 "
                           f"({analysis.bridge_keyword} -> {analysis.hop2_keyword})")
                 return ("SPARQL", "rule:bridge_hop2")
-            # Also check via PROPERTY_RANGES (schema may have the chain)
-            if bridge_full in PROPERTY_RANGES:
-                target_cls = PROPERTY_RANGES[bridge_full]
+            # Also check via property ranges (static + dynamic)
+            if bridge_full in effective_ranges:
+                target_cls = effective_ranges[bridge_full]
                 if target_cls in CACHED_CLASS_SCHEMAS:
                     if debug:
                         print(f"  [DEBUG] Rule matched: bridge_hop2 "
@@ -329,6 +335,12 @@ def verify_sparql_feasibility(
     if "bridge" in reason or "hop2" in reason or "parent" in reason:
         hop1_prop = analysis.bridge_property
 
+        # Safety net: reject property names that aren't valid identifiers
+        # (prevents natural language from LLM leaking into SPARQL URIs)
+        if hop1_prop and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', hop1_prop):
+            logger.debug("Invalid bridge property %r, skipping ASK", hop1_prop)
+            return (route, reason)
+
         if not hop1_prop or not entities:
             return (route, reason)
 
@@ -337,7 +349,10 @@ def verify_sparql_feasibility(
         if analysis.hop2_properties:
             for p in analysis.hop2_properties:
                 if p.startswith("dbo:"):
-                    hop2_dbo_prop = p[4:]  # strip "dbo:" prefix
+                    candidate = p[4:].strip()
+                    # Validate: must be a valid property identifier
+                    if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', candidate):
+                        hop2_dbo_prop = candidate
                     break
 
         from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
@@ -446,9 +461,13 @@ def _extract_properties_llm(
     # Parse comma-separated property names, strip prefixes
     properties = []
     for part in response.split(","):
-        prop = part.strip().split(":")[-1]  # strip dbo:/dbp: if present
+        prop = part.strip().split(":")[-1].strip()  # strip dbo:/dbp: prefix + whitespace
         if prop and prop.upper() != "NONE":
-            properties.append(prop)
+            # Validate: property names are camelCase identifiers (no spaces, no natural language)
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', prop):
+                properties.append(prop)
+            else:
+                logger.debug("Rejected invalid LLM property: %r", prop)
     _last_route_meta["llm_extracted_properties"] = properties
 
     return properties
@@ -504,6 +523,11 @@ def route_question(
     if not projections:
         return ("TEXT", "no_schema_fallback")
 
+    # Collect dynamic ranges from all entity profiles (uncached type discovery)
+    dyn_ranges: dict[str, str] = {}
+    for proj in projections:
+        dyn_ranges.update(getattr(proj.entity_profile, "dynamic_ranges", {}))
+
     # Guard: comparison questions with incomplete entity coverage → DECOMPOSE
     if _has_incomplete_entity_coverage(question, entities):
         if debug:
@@ -511,7 +535,9 @@ def route_question(
         return ("DECOMPOSE", "incomplete_coverage")
 
     # Stage 1: Keyword-based rules + ASK verification
-    rule_result = _rule_based_route(analysis, projections, debug=debug)
+    rule_result = _rule_based_route(
+        analysis, projections, debug=debug, extra_ranges=dyn_ranges,
+    )
     _last_route_meta["rule_result"] = rule_result
     ask_result = verify_sparql_feasibility(
         analysis, projections, entities, kg_client, rule_result,
@@ -532,10 +558,12 @@ def route_question(
         )
 
         if llm_properties:
-            enriched = enrich_analysis(analysis, llm_properties)
+            enriched = enrich_analysis(analysis, llm_properties, extra_ranges=dyn_ranges)
             enriched_profiles = [proj.entity_profile for proj in projections]
             enriched_projections = [project(p, enriched) for p in enriched_profiles]
-            enriched_rule = _rule_based_route(enriched, enriched_projections, debug=debug)
+            enriched_rule = _rule_based_route(
+                enriched, enriched_projections, debug=debug, extra_ranges=dyn_ranges,
+            )
             enriched_ask = verify_sparql_feasibility(
                 enriched, enriched_projections, entities, kg_client, enriched_rule,
             )

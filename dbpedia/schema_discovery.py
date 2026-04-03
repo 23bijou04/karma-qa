@@ -244,6 +244,12 @@ for _cls_name, _schema in CACHED_CLASS_SCHEMAS.items():
         PROPERTY_TO_CLASSES.setdefault(_prop, []).append(_cls_name)
 PROPERTY_TO_CLASSES = {k: sorted(set(v)) for k, v in PROPERTY_TO_CLASSES.items()}
 
+# Classes too generic to be useful as primary type or range target.
+# Shared by discover_property_ranges() and schema_projection.project().
+GENERIC_CLASSES: frozenset[str] = frozenset({
+    "Agent", "Thing", "TopicalConcept", "Species", "Eukaryote",
+})
+
 
 def format_2hop_lines(cached: dict, max_chains: int = 5, max_props: int = 4) -> list[str]:
     """Format 2-hop chain info from a cached class schema entry.
@@ -298,6 +304,7 @@ class SchemaDiscovery:
         # Cache for discovered entity URIs and schemas
         self._uri_cache: dict[str, str] = {}
         self._schema_cache: dict[str, dict] = {}
+        self._range_cache: dict[str, dict[str, str]] = {}
 
     def get_entity_uri(self, entity_name: str) -> Optional[str]:
         """Find DBpedia URI for an entity name.
@@ -556,6 +563,67 @@ class SchemaDiscovery:
             logger.warning(f"Error getting actual properties: {e}")
 
         return result
+
+    def discover_property_ranges(self, entity_uri: str) -> dict[str, str]:
+        """Discover target class types for entity-valued dbo: properties.
+
+        For uncached entity types, this tells us what classes the entity's
+        object properties point to — enabling synthetic 2-hop chain construction.
+        Only fires as fallback when cached_classes is empty.
+
+        Args:
+            entity_uri: Full DBpedia URI
+
+        Returns:
+            Dict mapping property name -> target class name.
+            E.g., {"coach": "Person", "ground": "Place"}
+        """
+        if entity_uri in self._range_cache:
+            return self._range_cache[entity_uri]
+
+        safe_uri = escape_sparql_uri(entity_uri)
+        # Find dbo: properties that link to typed entities, get target types
+        query = f"""
+        SELECT DISTINCT ?prop ?targetType WHERE {{
+            <{safe_uri}> ?prop ?target .
+            ?target a ?targetType .
+            FILTER(STRSTARTS(STR(?prop), "http://dbpedia.org/ontology/"))
+            FILTER(STRSTARTS(STR(?targetType), "http://dbpedia.org/ontology/"))
+            FILTER(!CONTAINS(STR(?prop), "wikiPage"))
+        }}
+        LIMIT 200
+        """
+        # Collect all types per property, then pick the best class
+        prop_types: dict[str, list[str]] = {}
+        try:
+            self.sparql.setQuery(query)
+            results = self.sparql.query().convert()
+            for row in results.get("results", {}).get("bindings", []):
+                prop_name = row["prop"]["value"].split("/")[-1]
+                type_name = row["targetType"]["value"].split("/")[-1]
+                prop_types.setdefault(prop_name, []).append(type_name)
+        except Exception as e:
+            logger.warning("Error discovering property ranges for %s: %s", entity_uri, e)
+            self._range_cache[entity_uri] = {}
+            return {}
+
+        # For each property, pick the most useful target class:
+        # prefer cached classes (Person, Film, etc.) over unknown classes,
+        # and filter out overly generic ones (Agent, Thing, etc.)
+        ranges: dict[str, str] = {}
+        for prop, types in prop_types.items():
+            # Priority 1: cached class (we know its schema)
+            cached_hit = [t for t in types if t in CACHED_CLASS_SCHEMAS]
+            if cached_hit:
+                ranges[prop] = cached_hit[0]
+                continue
+            # Priority 2: non-generic dbo class
+            specific = [t for t in types if t not in GENERIC_CLASSES]
+            if specific:
+                ranges[prop] = specific[0]
+
+        self._range_cache[entity_uri] = ranges
+        return ranges
 
     def get_schema_for_entity(self, entity_name: str) -> dict:
         """Get complete hybrid schema for an entity.
