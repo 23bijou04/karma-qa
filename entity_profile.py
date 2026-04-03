@@ -6,7 +6,7 @@ with a structured profile that downstream layers can query.
 
 from dataclasses import dataclass, field
 
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
+from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
 
 
 @dataclass
@@ -20,24 +20,21 @@ class EntityProfile:
     actual_properties: dict = field(default_factory=dict)
     actual_property_set: frozenset[str] = field(default_factory=frozenset)
     all_2hop_chains: dict[str, tuple[str, list[str]]] = field(default_factory=dict)
-    # Dynamic property ranges discovered at runtime for uncached entity types.
-    # Maps "dbo:prop" -> target class name (e.g. "dbo:manager" -> "Person").
-    # Used by question_analysis and routing as secondary lookup after PROPERTY_RANGES.
+    # Property ranges from ontology cache for properties not already in chains.
+    # Maps "dbo:prop" -> target class name. Used by question_analysis and routing.
     dynamic_ranges: dict[str, str] = field(default_factory=dict)
 
 
 def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
     """Build EntityProfile from DBpedia via SchemaDiscovery.
 
-    SPARQL cost: 1 type query + 1 property query (same as current).
+    SPARQL cost: exactly 2 queries (1 type + 1 property).
+    No discover_property_ranges() call — ranges come from ontology cache.
 
     Args:
         uri: Full DBpedia URI (e.g. "http://dbpedia.org/resource/David_Bowie")
         label: Human-readable label
         schema_disc: SchemaDiscovery instance
-
-    Returns:
-        EntityProfile with all classes, actual properties, merged 2-hop chains.
     """
     # 1. Get all classes (1 SPARQL query)
     all_classes, cached_classes = schema_disc.get_all_cached_classes(uri)
@@ -54,10 +51,16 @@ def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
     actual_property_set = frozenset(prop_set)
 
     # 4. Merge 2-hop chains from ALL matching cached class schemas
+    #    INSTANCE FILTER: only include chains where entity actually has the bridge property.
+    #    This prevents chain explosion (Person has 276 ontology props, but a specific person
+    #    might only have 20 actual properties).
     all_chains: dict[str, tuple[str, list[str]]] = {}
     for cls in cached_classes:
         dbo_2hop = CACHED_CLASS_SCHEMAS[cls].get("dbo_2hop", {})
         for prop, (target, props) in dbo_2hop.items():
+            # Skip chains for properties the entity doesn't actually have
+            if f"dbo:{prop}" not in actual_property_set:
+                continue
             if prop not in all_chains:
                 all_chains[prop] = (target, list(props))
             else:
@@ -65,24 +68,20 @@ def build_entity_profile(uri: str, label: str, schema_disc) -> EntityProfile:
                 existing_props.update(props)
                 all_chains[prop] = (target, sorted(existing_props))
 
-    # 5. Dynamic range discovery: fallback for uncached entity types.
-    # When no cached class matched, query DBpedia for what types the entity's
-    # object properties point to, then build synthetic 2-hop chains.
+    # 5. Dynamic ranges from ontology cache (no SPARQL needed).
+    #    For actual dbo: properties with known ranges but no chains yet,
+    #    build synthetic chains + store range for bridge detection.
     profile_dynamic_ranges: dict[str, str] = {}
-    if not cached_classes and schema_disc is not None:
-        discovered = schema_disc.discover_property_ranges(uri)
-        for prop, target_cls in discovered.items():
-            # Only process targets that map to a cached class — non-cached targets
-            # can't participate in bridge detection (enrich_analysis requires
-            # CACHED_CLASS_SCHEMAS lookup for scoring).
-            if target_cls not in CACHED_CLASS_SCHEMAS:
-                continue
-            if prop not in all_chains:
-                target_schema = CACHED_CLASS_SCHEMAS[target_cls]
-                target_props = target_schema.get("dbo", [])
-                all_chains[prop] = (target_cls, target_props)
-            # Store on profile (not global) so bridge detection can use it
-            profile_dynamic_ranges[f"dbo:{prop}"] = target_cls
+    for prop_name in actual.get("dbo", []):
+        key = f"dbo:{prop_name}"
+        if key in PROPERTY_RANGES and prop_name not in all_chains:
+            target_cls = PROPERTY_RANGES[key]
+            profile_dynamic_ranges[key] = target_cls
+            # Build synthetic chain if target class has known properties
+            if target_cls in CACHED_CLASS_SCHEMAS:
+                target_props = CACHED_CLASS_SCHEMAS[target_cls].get("dbo", [])
+                if target_props:
+                    all_chains[prop_name] = (target_cls, target_props)
 
     return EntityProfile(
         uri=uri,

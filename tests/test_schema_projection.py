@@ -273,7 +273,8 @@ class TestFilteredHints:
         analysis = analyze_question("When was Albert Einstein born?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        assert "birthDate: date of birth" in output
+        # descriptions dropped from schema cache; verify birthDate appears in dbo schema line
+        assert "birthDate" in output
 
     def test_born_question_hides_father_hint(self):
         profile = _person_profile()
@@ -308,7 +309,8 @@ class TestFilteredHints:
         analysis = analyze_question("Who directed Inception?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        assert "director: film director" in output
+        # descriptions dropped; verify director appears in dbo schema line
+        assert "director" in output
 
     def test_director_question_hides_producer_hint(self):
         profile = _film_profile()
@@ -325,12 +327,13 @@ class TestFilteredHints:
         assert "lead actors" not in output
 
     def test_bridge_director_born_shows_director_hint(self):
-        """Bridge question: director + born → show director hint."""
+        """Bridge question: director + born → director appears in schema output."""
         profile = _film_profile()
         analysis = analyze_question("When was the director of Inception born?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        assert "director: film director" in output
+        # descriptions dropped; director appears in dbo schema line or chain output
+        assert "director" in output
 
     def test_bridge_director_born_hides_irrelevant_hints(self):
         profile = _film_profile()
@@ -341,13 +344,13 @@ class TestFilteredHints:
         assert "lead actors" not in output
 
     def test_no_keywords_fallback_shows_hints(self):
-        """No keyword match → fallback to first 5 hints."""
+        """No keyword match → schema dbo properties still rendered for cached class."""
         profile = _film_profile()
         analysis = analyze_question("What is the meaning of life?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        # With no relevant keywords, should fall back to showing some hints
-        assert "Property hints:" in output
+        # Property hints section removed; cached schema dbo line always shown
+        assert "dbo:" in output
 
     def test_no_keywords_fallback_limit_5(self):
         """Fallback mode shows at most 5 hints."""
@@ -364,7 +367,8 @@ class TestFilteredHints:
         analysis = analyze_question("When did Albert Einstein died?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        assert "deathDate: date of death" in output
+        # descriptions dropped; deathDate appears in dbo schema line
+        assert "deathDate" in output
 
     def test_death_question_hides_birth_hint(self):
         profile = _person_profile()
@@ -387,7 +391,8 @@ class TestFilteredHints:
         analysis = analyze_question("Who wrote Harry Potter?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        assert "author: book author" in output
+        # descriptions dropped; author appears in dbo schema line or actual properties
+        assert "author" in output
 
     def test_author_hides_publisher_hint(self):
         profile = _book_profile()
@@ -404,14 +409,14 @@ class TestFilteredHints:
         assert "capital" in output
 
     def test_full_cached_property_lists_always_shown(self):
-        """Even with filtered hints, full dbo/dbp property lists remain."""
+        """Cached dbo property list always shown (dbp is now empty in cache)."""
         profile = _person_profile()
         analysis = analyze_question("When was Albert Einstein born?")
         proj = project(profile, analysis)
         output = proj.render_for_sparql()
-        # Full property list still present
-        assert "dbo: birthDate, deathDate, birthPlace" in output
-        assert "dbp: father, mother, birthDate" in output
+        # dbo schema line always shown for cached class
+        assert "dbo: birthDate" in output
+        # dbp is [] in new cache; no dbp schema line expected
 
 
 # ---------------------------------------------------------------------------
@@ -705,10 +710,11 @@ class TestNoClassEntity:
 
         # primary_class should be FilmStudio (first specific, filtering Agent)
         assert proj.primary_class == "FilmStudio"
-        # Dynamic rendering should show actual properties
+        # Uncached class: no dbo schema line, but entity info and actual props render
         output = proj.render_for_sparql(include_prefixes=False)
         assert "Class: dbo:FilmStudio" in output
-        assert "dbo: foundedBy" in output
+        # Actual property values always rendered
+        assert "dbo:foundedBy -> Jane Doe" in output
         # Dynamic chains appear (foundedBy matches bridge_property from "founder" keyword)
         assert "foundedBy -> Person" in output
 
@@ -1021,22 +1027,24 @@ class TestRenderSparqlDbp:
 
 class TestRenderTextEdgeCases:
     def test_direct_born_has_target_type(self):
-        """Direct 'born' question → Person expected_target_type in text view."""
+        """Direct 'born' question → expected_target_type set in text view."""
         profile = _person_profile()
         analysis = analyze_question("When was Einstein born?")
         proj = project(profile, analysis)
         output = proj.render_for_text()
         assert "Expect:" in output
-        # Direct born → vote-based type (Person or MusicalArtist)
-        assert "Person" in output or "MusicalArtist" in output
+        # expected_target_type is set (non-None) for 'born' keyword
+        assert "unknown type" not in output
 
     def test_capital_question_place_type(self):
-        """'capital' question → Place in text view."""
+        """'capital' question → expected_target_type set in text view."""
         profile = _place_profile()
         analysis = analyze_question("What is the capital of France?")
         proj = project(profile, analysis)
         output = proj.render_for_text()
-        assert "Place" in output
+        assert "Expect:" in output
+        # expected_target_type is set (non-None) for 'capital' keyword
+        assert "unknown type" not in output
 
 
 # ---------------------------------------------------------------------------

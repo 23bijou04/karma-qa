@@ -31,21 +31,6 @@ logger = logging.getLogger(__name__)
 
 _last_route_meta: dict = {}
 
-# Mapping from question keywords to DBpedia ontology property names.
-# Used by verify_sparql_feasibility() (ASK).
-BRIDGE_WORD_TO_PROP = {
-    "director": "director", "directed": "director",
-    "producer": "producer", "produced": "producer",
-    "writer": "writer", "wrote": "writer",
-    "author": "author",
-    "composer": "musicComposer",
-    "starring": "starring", "actor": "starring", "actress": "starring",
-    "founded": "foundedBy", "founder": "foundedBy",
-    "father": "father", "mother": "mother",
-    "performer": "artist",
-    "spouse": "spouse", "married": "spouse",
-}
-
 PROPERTY_EXTRACTION_PROMPT = """Given this question and DBpedia schema, \
 which properties are needed to answer it?
 
@@ -403,7 +388,11 @@ def verify_sparql_feasibility(
 # ---------------------------------------------------------------------------
 
 def _build_property_schema(projections: list) -> str:
-    """Build available-property summary for LLM property extraction (~200 tokens)."""
+    """Build available-property summary for LLM property extraction (~200 tokens).
+
+    Shows actual properties (from SPARQL instance query) + ontology schema (capped)
+    + 2-hop chains (already instance-filtered in entity_profile).
+    """
     lines = []
     for proj in projections:
         profile = proj.entity_profile
@@ -412,7 +401,7 @@ def _build_property_schema(projections: list) -> str:
             lines.append(f"Class: {proj.primary_class}")
             schema = CACHED_CLASS_SCHEMAS.get(proj.primary_class, {})
             if schema.get("dbo"):
-                lines.append(f"  dbo properties: {', '.join(schema['dbo'])}")
+                lines.append(f"  dbo properties: {', '.join(schema['dbo'][:15])}")
         actual_dbo = profile.actual_properties.get("dbo", [])
         actual_dbp = profile.actual_properties.get("dbp", [])
         if actual_dbo:
@@ -422,7 +411,7 @@ def _build_property_schema(projections: list) -> str:
             lines.append(f"  Actual dbp: {', '.join(dbp_only)}")
         if profile.all_2hop_chains:
             for prop, (target, tprops) in profile.all_2hop_chains.items():
-                lines.append(f"  Chain: {prop} -> {target}: {', '.join(tprops)}")
+                lines.append(f"  Chain: {prop} -> {target}: {', '.join(tprops[:6])}")
     return "\n".join(lines)
 
 

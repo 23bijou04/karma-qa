@@ -71,43 +71,17 @@ class SchemaProjection:
         if self.primary_class:
             lines.append(f"Class: dbo:{self.primary_class}")
 
-        # Cached schema properties (filtered to primary class)
+        # Schema properties — unified path (all classes now in ontology cache)
         if self.primary_class and self.primary_class in CACHED_CLASS_SCHEMAS:
             cached = CACHED_CLASS_SCHEMAS[self.primary_class]
             if cached.get("dbo"):
-                lines.append(f"  dbo: {', '.join(cached['dbo'][:10])}")
-            if cached.get("dbp"):
-                lines.append(f"  dbp: {', '.join(cached['dbp'][:10])}")
-            # Filter property hints to question-relevant properties only
-            if cached.get("descriptions"):
-                relevant_names = self._relevant_property_names()
-                filtered = {
-                    k: v for k, v in cached["descriptions"].items()
-                    if k in relevant_names
-                } if relevant_names else dict(list(cached["descriptions"].items())[:5])
-                if filtered:
-                    lines.append("  Property hints:")
-                    for prop, desc in filtered.items():
-                        lines.append(f"    - {prop}: {desc}")
-            # Only include relevant chains
-            if self.relevant_chains:
-                chain_lines = format_2hop_lines(
-                    {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
-                )
-                lines.extend(chain_lines)
-        elif self.primary_class:
-            # Dynamic: uncached type — show actual properties directly
-            actual = profile.actual_properties
-            if actual.get("dbo"):
-                lines.append(f"  dbo: {', '.join(actual['dbo'][:12])}")
-            if actual.get("dbp"):
-                lines.append(f"  dbp: {', '.join(actual['dbp'][:8])}")
-            # Show dynamic chains discovered at runtime
-            if self.relevant_chains:
-                chain_lines = format_2hop_lines(
-                    {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
-                )
-                lines.extend(chain_lines)
+                lines.append(f"  dbo: {', '.join(cached['dbo'][:15])}")
+        # 2-hop chains
+        if self.relevant_chains:
+            chain_lines = format_2hop_lines(
+                {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
+            )
+            lines.extend(chain_lines)
 
         # Actual property values (question-relevant first, then others up to 10)
         actual = profile.actual_properties
