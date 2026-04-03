@@ -84,12 +84,6 @@ def _build_corpus_index(benchmark_corpus: list[dict], verbose: bool = False) -> 
     return _corpus_index
 
 
-def reset_corpus_index():
-    """Reset cached corpus index (needed when switching benchmarks)."""
-    global _corpus_index
-    _corpus_index = None
-
-
 def _assemble_from_chunks(chunks, kg_facts: str = "",
                           max_chars: int = 25_000,
                           max_per_entity: int = 4_000) -> str:

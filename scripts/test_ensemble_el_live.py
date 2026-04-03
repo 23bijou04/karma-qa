@@ -15,7 +15,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 import requests
 import spacy

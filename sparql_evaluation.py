@@ -57,8 +57,10 @@ def force_ipv4():
     if _ipv4_patched:
         return
     _orig = socket.getaddrinfo
+
     def _ipv4_only(*args, **kwargs):
         return [r for r in _orig(*args, **kwargs) if r[0] == socket.AF_INET]
+
     socket.getaddrinfo = _ipv4_only
     _ipv4_patched = True
 

@@ -503,8 +503,15 @@ def _resolve_subquestion(
         if sub_projections else parent_schema_ctx
     )
 
+    # Collect dynamic ranges from entity profiles (mirrors routing.py:527-529)
+    dyn_ranges: dict[str, str] = {}
+    for proj in sub_projections:
+        dyn_ranges.update(getattr(proj.entity_profile, "dynamic_ranges", {}))
+
     # Step 4: Route decision (rule-based only, no LLM route prompt)
-    route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
+    route_result = _rule_based_route(
+        sub_analysis, sub_projections, debug=debug, extra_ranges=dyn_ranges,
+    )
     # Only attempt SPARQL when routing rules explicitly matched;
     # bool(combined_schema) is nearly always True (any entity with a URI),
     # which defeated routing and wasted LLM+SPARQL calls on TEXT sub-Qs.

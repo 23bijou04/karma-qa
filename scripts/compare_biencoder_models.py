@@ -9,7 +9,6 @@ Usage:
     python scripts/compare_biencoder_models.py
 """
 
-import json
 import logging
 import sys
 import time

@@ -74,9 +74,14 @@ class TestEscapeBifTerm:
     def test_semicolons_stripped(self):
         assert escape_bif_term("foo;bar") == "foobar"
 
-    def test_question_mark_preserved(self):
-        # ? is NOT in the strip set — passes through
-        assert escape_bif_term("Did?") == "Did?"
+    def test_question_mark_stripped(self):
+        # ? is a Virtuoso wildcard — strip to prevent FT370 errors
+        assert escape_bif_term("Did?") == "Did"
+
+    def test_asterisk_stripped(self):
+        # * is a Virtuoso wildcard — strip to prevent FT370 errors
+        # e.g., "M*A*S*H" would cause "Wildcard word needs at least 4 leading characters"
+        assert escape_bif_term("M*A*S*H") == "MASH"
 
     def test_exclamation_preserved(self):
         assert escape_bif_term("Yahoo!") == "Yahoo!"
@@ -138,7 +143,7 @@ class TestBuildBifExpression:
         assert "'Kind'" in result
         assert "'Glad'" in result
         assert "'We'" in result
-        assert "'Did?'" in result
+        assert "'Did'" in result  # ? stripped (Virtuoso wildcard)
 
     def test_hyphenated_name(self):
         result = build_bif_expression("Spider-Man")

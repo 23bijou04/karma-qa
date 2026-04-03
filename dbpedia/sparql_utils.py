@@ -18,7 +18,9 @@ def escape_bif_term(term: str) -> str:
       - Strip characters that break bif:contains syntax: \\ " ( )
     """
     term = term.replace("'", "''")
-    term = re.sub(r'[\\\"()\[\]{}<>;]', '', term)
+    # Strip chars that break bif:contains syntax: quotes, brackets, semicolons,
+    # and wildcards *? (Virtuoso requires 4+ leading chars, causes FT370 errors)
+    term = re.sub(r'[\\\"()\[\]{}<>;*?]', '', term)
     return term.strip()
 
 

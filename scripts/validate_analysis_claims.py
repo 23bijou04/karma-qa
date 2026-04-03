@@ -6,7 +6,6 @@ Usage: python3 scripts/validate_analysis_claims.py
 """
 
 import json
-import sys
 from pathlib import Path
 from collections import defaultdict
 

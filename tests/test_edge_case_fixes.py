@@ -11,9 +11,6 @@ After the fix, all should PASS.
 
 import re
 import time
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # C1: SERVICE keyword blocked by SPARQL read-only guard
@@ -175,7 +172,6 @@ class TestPipelineTimeout:
 
         We verify this by checking the source for a timeout pattern.
         """
-        import importlib.util
         import os
 
         script_path = os.path.join(

@@ -31,6 +31,7 @@ if _parent not in sys.path:
 from ddgs import DDGS
 
 from ablation_study_v3.wiki_utils import (
+    _rate_limit_wiki,
     get_wikipedia_text_by_title,
     uri_to_wiki_title,
 )
@@ -436,7 +437,7 @@ def extract_relevant_sections(text: str, keywords: list[str],
 # 3. Web search for Wikipedia pages
 # ---------------------------------------------------------------------------
 
-_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (research; hybrid-qa)"}
+_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
 
 
 def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
@@ -446,6 +447,7 @@ def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
     undocumented rate limits (unlike DDG which silently blocks after ~50 calls).
     """
     # Primary: Wikipedia native search API
+    _rate_limit_wiki()  # 0.5s delay between Wikipedia API calls
     try:
         resp = requests.get(
             "https://en.wikipedia.org/w/api.php",

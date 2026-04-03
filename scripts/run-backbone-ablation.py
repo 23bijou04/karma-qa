@@ -386,8 +386,9 @@ def run_linearrag(questions: list[dict], output_path: str, limit: int):
         lr_python, "run.py",
         "--dataset_name", dataset_name,
         "--llm_model", MODEL,
+        "--embedding_model", "sentence-transformers/all-mpnet-base-v2",
         "--max_workers", "1",  # sequential for local model
-        "--spacy_model", "en_core_web_sm",  # lighter model
+        "--spacy_model", "en_core_web_trf",  # installed in LinearRAG venv
     ]
 
     print(f"  Command: {' '.join(cmd)}")
@@ -426,28 +427,31 @@ def run_linearrag(questions: list[dict], output_path: str, limit: int):
     with open(predictions_path) as f:
         predictions = json.load(f)
 
-    # Build gold answer lookup from our sample
-    gold_by_id = {q["question_id"]: q for q in questions}
+    # Build gold answer lookup by question text (LinearRAG has no ID field)
+    gold_by_question = {q["question"]: q for q in questions}
 
     # Skip already-converted IDs (prevents duplicate append on re-run)
     done_ids = load_completed_ids(output_path)
 
     count = 0
     for pred in predictions:
-        qid = pred.get("id", "")
-        if qid in done_ids:
-            continue
-        gold_q = gold_by_id.get(qid)
+        question_text = pred.get("question", "")
+        gold_q = gold_by_question.get(question_text)
         if not gold_q:
             continue
 
+        qid = gold_q["question_id"]
+        if qid in done_ids:
+            continue
+
         gold = gold_q["gold_answer"]
-        predicted = (pred.get("prediction", "") or "").strip()
+        # LinearRAG uses "pred_answer" field
+        predicted = (pred.get("pred_answer", "") or "").strip()
 
         record = {
             "question_id": qid,
             "question_type": gold_q["question_type"],
-            "question": pred.get("question", gold_q["question"]),
+            "question": question_text,
             "gold_answer": gold,
             "mode": "linearrag_gemma3",
             "predicted_answer": predicted,

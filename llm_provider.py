@@ -62,7 +62,7 @@ def create_llm_client(provider: str = "groq", api_key: str | None = None) -> Ope
         key = api_key or os.environ.get(cfg["env_key"])
         if not key:
             raise ValueError(f"API key required: pass --api-key or set {cfg['env_key']}")
-    return OpenAI(base_url=cfg["base_url"], api_key=key)
+    return OpenAI(base_url=cfg["base_url"], api_key=key, timeout=120)
 
 
 def call_llm(

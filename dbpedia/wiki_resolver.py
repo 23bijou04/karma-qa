@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 _WIKI_API = "https://en.wikipedia.org/w/api.php"
 _RATE_LIMIT_S = 0.5  # seconds between Wikipedia API calls
+# Wikipedia requires a descriptive User-Agent; requests without one get 403
+_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
 
 # Map dbo: type hints to Wikipedia disambiguation suffixes
 _TYPE_SUFFIX_MAP: dict[str, str] = {
@@ -71,6 +73,7 @@ class WikipediaResolver:
                     "srlimit": 3,
                     "format": "json",
                 },
+                headers=_HEADERS,
                 timeout=10.0,
             )
             resp.raise_for_status()
@@ -102,6 +105,7 @@ class WikipediaResolver:
                     "redirects": "true",
                     "format": "json",
                 },
+                headers=_HEADERS,
                 timeout=10.0,
             )
             resp.raise_for_status()

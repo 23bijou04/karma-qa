@@ -15,7 +15,6 @@ Usage:
 
 import argparse
 import json
-import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path

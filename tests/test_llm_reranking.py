@@ -1,9 +1,7 @@
 """Tests for _llm_rerank_candidates() and _build_reranker() in entity_linker.py."""
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 _root = str(Path(__file__).resolve().parent.parent)
 if _root not in sys.path:
