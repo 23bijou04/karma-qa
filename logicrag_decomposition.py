@@ -27,11 +27,15 @@ import text_solver  # noqa: E402
 from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from llm_provider import call_llm  # noqa: E402
-from logicrag_prompts import DEPENDENCY_RAG_PROMPT, FINAL_ANSWER_PROMPT  # noqa: E402
+from logicrag_prompts import DEPENDENCY_RAG_PROMPT, get_final_answer_prompt  # noqa: E402
 from question_analysis import analyze_question as qa_analyze  # noqa: E402
+from question_analysis import enrich_analysis  # noqa: E402
 from routing import (  # noqa: E402
+    _build_property_schema,
+    _extract_properties_llm,
     _is_comparison_question,
     _rule_based_route,
+    verify_sparql_feasibility,
 )
 from schema_projection import project as sp_project  # noqa: E402
 
@@ -247,12 +251,15 @@ def _check_can_answer(
 def _generate_final_answer(
     question: str, info_summary: str,
     llm_client, model: str,
+    is_comparison: bool = False,
 ) -> str:
-    """Generate a concise final answer from accumulated facts via FINAL_ANSWER_PROMPT.
+    """Generate a concise final answer from accumulated facts.
 
+    is_comparison gates country-comparison instructions in the prompt —
+    prevents over-generalization on bridge/compositional questions.
     Returns extracted answer string (via extract_final_answer).
     """
-    prompt = FINAL_ANSWER_PROMPT.format(
+    prompt = get_final_answer_prompt(is_comparison=is_comparison).format(
         question=question, info_summary=info_summary,
     )
     _last_decomp_meta["final_answer_prompt"] = prompt
@@ -508,14 +515,40 @@ def _resolve_subquestion(
     for proj in sub_projections:
         dyn_ranges.update(getattr(proj.entity_profile, "dynamic_ranges", {}))
 
-    # Step 4: Route decision (rule-based only, no LLM route prompt)
+    # Step 4: Route decision — rule-based first, then LLM property extraction
     route_result = _rule_based_route(
         sub_analysis, sub_projections, debug=debug, extra_ranges=dyn_ranges,
     )
-    # Only attempt SPARQL when routing rules explicitly matched;
-    # bool(combined_schema) is nearly always True (any entity with a URI),
-    # which defeated routing and wasted LLM+SPARQL calls on TEXT sub-Qs.
     attempt_sparql = route_result is not None
+
+    # Stage 2: If keyword rules missed, try LLM property extraction + ASK
+    # (mirrors routing.py:542-566 — the main route_question Stage 2)
+    if not attempt_sparql and sub_projections:
+        try:
+            prop_schema = _build_property_schema(sub_projections)
+            llm_props = _extract_properties_llm(
+                resolved_text, prop_schema, llm_client, model, debug=debug,
+            )
+            if llm_props:
+                enriched = enrich_analysis(sub_analysis, llm_props, extra_ranges=dyn_ranges)
+                enriched_projs = [sp_project(p.entity_profile, enriched) for p in sub_projections]
+                enriched_rule = _rule_based_route(
+                    enriched, enriched_projs, debug=debug, extra_ranges=dyn_ranges,
+                )
+                if enriched_rule is not None:
+                    ask_result = verify_sparql_feasibility(
+                        enriched, enriched_projs, all_entities, kg_client, enriched_rule,
+                    )
+                    if ask_result and ask_result[0] == "SPARQL":
+                        attempt_sparql = True
+                        route_result = enriched_rule
+                        # Update projections so SPARQL gen uses enriched schema
+                        sub_projections = enriched_projs
+                        if debug:
+                            print(f"    [DEBUG] Stage 2 LLM props={llm_props} -> SPARQL")
+        except Exception as exc:
+            logger.debug("Sub-Q Stage 2 LLM extraction failed: %s", exc)
+
     if debug:
         tag = route_result[1] if route_result else "no rule match"
         print(f"    [DEBUG] Route: {tag}, attempt_sparql={attempt_sparql}")
@@ -703,7 +736,10 @@ def _try_logicrag_decomposition(
                 _last_decomp_meta["early_stop_understanding"] = check.get("current_understanding", "")
                 if verbose:
                     print("  -> Early exit: accumulated facts sufficient")
-                final = _generate_final_answer(question, info_summary, llm_client, model)
+                final = _generate_final_answer(
+                    question, info_summary, llm_client, model,
+                    is_comparison=is_comparison,
+                )
                 if final:
                     return final, sub_q_log
                 # Fall back to best sub-Q answer
@@ -756,7 +792,10 @@ def _try_logicrag_decomposition(
                         print(f"    Retry sub-Q {oidx}: TEXT -> {answer}")
 
         info_summary = _build_info_summary(sub_questions, known_facts)
-        final = _generate_final_answer(question, info_summary, llm_client, model)
+        final = _generate_final_answer(
+            question, info_summary, llm_client, model,
+            is_comparison=is_comparison,
+        )
         return (final if final else sole_answer), sub_q_log
 
     # Build info_summary with provenance labels
@@ -768,7 +807,10 @@ def _try_logicrag_decomposition(
         for line in info_summary.split("\n"):
             print(f"    {line}")
 
-    final = _generate_final_answer(question, info_summary, llm_client, model)
+    final = _generate_final_answer(
+        question, info_summary, llm_client, model,
+        is_comparison=is_comparison,
+    )
     if final:
         return final, sub_q_log
     # Fallback: return most relevant known fact (last resolved)
