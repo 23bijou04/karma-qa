@@ -1,0 +1,151 @@
+\section{Expert Audit: Findings and Limitations}
+\label{sec:expert-audit}
+
+An independent audit of the 2WikiMultiHopQA experimental comparison examined 37 potential edge cases across four categories: evaluation protocol (8), information access and baseline fidelity (10), statistical methodology and document consistency (9), and selection bias and structural fairness (10). This section summarizes findings, organized by severity.
+
+\subsection{Audit Summary}
+\label{sec:audit-summary}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Category} & \textbf{Total} & \textbf{Handled} & \textbf{Partial} & \textbf{Unhandled} \\
+\midrule
+Evaluation protocol \& metrics & 8 & 7 & 1 & 0 \\
+Information access \& baseline fidelity & 10 & 4 & 6 & 0 \\
+Statistical methods \& consistency & 9 & 5 & 3 & 1 \\
+Selection bias \& structural fairness & 10 & 7 & 2 & 1 \\
+\midrule
+\textbf{Total} & \textbf{37} & \textbf{23} & \textbf{12} & \textbf{2} \\
+\bottomrule
+\end{tabular}
+\caption{Edge case verification summary. ``Handled'' = properly addressed in code and documentation. ``Partial'' = addressed for some systems or with minor gaps. ``Unhandled'' = not acknowledged in any document.}
+\label{tab:audit-summary}
+\end{table}
+
+No issues were found that affect reported conclusions. The two unhandled items (temporal instability of hop verification, missing per-type significance disclaimers in cross-system tables) are documentation gaps, not methodological errors.
+
+\subsection{What Passed Verification}
+\label{sec:what-passed}
+
+The following aspects of the experimental design were verified correct:
+
+\begin{enumerate}
+\item \textbf{Question set identity:} All three systems evaluated on the identical 1{,}000 questions with zero gold answer mismatches.
+
+\item \textbf{Judge consistency:} Same model (\texttt{gemma3:12b}), same prompt template, same containment fast path for all systems.
+
+\item \textbf{Metrics integrity:} Single source of truth (\texttt{evaluation/metrics.py}), recomputed fresh in all comparison scripts. Containment direction verified correct (gold $\in$ prediction).
+
+\item \textbf{Empty prediction handling:} Consistently scored as incorrect across all systems and metrics.
+
+\item \textbf{Statistical correctness:} McNemar chi-squared with continuity correction verified algebraically identical across three independent implementations. Wilson CIs verified correct. Bootstrap CIs correctly applied to continuous F1 metric.
+
+\item \textbf{Cross-document consistency:} All key performance numbers (Judge EM, EM, F1) match exactly across \texttt{.md} reports, \texttt{.tex} paper sections, and internal records.
+
+\item \textbf{No retracted claims:} Scanned all active documentation for previously retracted numbers (``318 date-tolerant,'' ``45--55\% MuSiQue prediction''); none remain.
+
+\item \textbf{Baseline LLM control:} Both baselines faithfully re-run with the same \texttt{llama-3.3-70b-versatile} model, isolating architectural differences from model quality variation.
+
+\item \textbf{Selection bias:} Question type distribution deviates at most 1.6pp from the full 12{,}576-question dataset. No evidence of cherry-picking.
+
+\item \textbf{Dual-tier evaluation:} Hop-368 (KG-answerable) and full-1000q (overall capability) tiers are clearly separated, with structural fairness notes embedded in both code output and documentation.
+\end{enumerate}
+
+\subsection{Medium-Severity Findings}
+\label{sec:medium-findings}
+
+\subsubsection{F1: Fairness Caveats Absent from Cross-System Comparison}
+
+The Hybrid vs.\ LogicRAG analysis includes a thorough fairness section disclosing information access asymmetry, computation budget differences, temporal advantages, and entity linking advantages in both directions. The main cross-system comparison document (which includes LinearRAG) contains no equivalent fairness discussion.
+
+\textit{Impact:} Readers comparing Hybrid (89.4\% Judge EM) to LinearRAG (84.0\%) without fairness context may attribute the 5.4pp gap entirely to architectural merit, ignoring Hybrid's unbounded information access, 3--10$\times$ higher LLM call budget, and hand-crafted routing rules.
+
+\textit{Recommendation:} Add a fairness section to the cross-system comparison document modeled on the existing LogicRAG fairness analysis. \S\ref{sec:info-access-asymmetry} provides this content.
+
+\subsubsection{F2: Per-Type Claims Without Significance Disclaimers}
+
+Per-question-type breakdowns are presented without noting sample size limitations. On the hop-368 subset, the \texttt{inference} type has $n=34$, yielding a Wilson CI width of 20.8pp. At this sample size, a 3pp difference between systems (e.g., Hybrid 97.1\% vs.\ LogicRAG 94.1\%) is statistically meaningless --- the 95\% CIs overlap by 13.3pp.
+
+\textit{Impact:} Per-type comparisons on small subgroups ($n < 50$) may overstate real differences.
+
+\textit{Recommendation:} Add a footnote to per-type tables: ``Differences on subgroups with $n < 50$ should be interpreted as exploratory patterns; Wilson CIs exceed $\pm$10pp.''
+
+\subsubsection{F3: Temporal Instability of Hop Verification}
+
+The 368-question hop-verified subset was determined by live SPARQL ASK queries against DBpedia at a specific point in time. DBpedia is periodically updated; properties that existed during verification may be removed, and new properties may appear. No document acknowledges this temporal validity constraint.
+
+\textit{Impact:} Re-running verification months later might yield a different count (e.g., 360 or 375 instead of 368), slightly changing all hop-368 metrics. Core ontology properties (\texttt{dbo:birthDate}, \texttt{dbo:director}) are stable, so the impact is likely small.
+
+\textit{Recommendation:} Add to the paper's limitations: ``Hop verification was performed on [date] against live DBpedia. Ontology properties are generally stable, but re-verification may yield slightly different counts.''
+
+\subsubsection{F4: LinearRAG Corpus Architecture Undocumented}
+
+LinearRAG indexes 658 full-article chunks (median 4{,}449 characters) from the benchmark corpus. LogicRAG indexes 6{,}119 short snippets (median 254 characters). This fundamental difference --- LinearRAG gets $\sim$17$\times$ more context per passage --- is never documented or analyzed. Readers may incorrectly assume both baselines use the same benchmark context.
+
+\textit{Impact:} LinearRAG's higher accuracy on compositional questions may partially stem from richer per-entity context rather than superior retrieval architecture.
+
+\textit{Recommendation:} Add a corpus comparison table to the baseline description section.
+
+\subsubsection{F5: Reproduction Documentation Gaps}
+
+LogicRAG's \texttt{REPRODUCE.md} contained two factual errors: it claimed ``24{,}000 passages'' (actual: 6{,}119) and claimed \texttt{max-rounds=5} as paper-faithful (actual run used 3, matching the code default). LinearRAG had no reproduction documentation at all.
+
+\textit{Impact:} Low for reported results (parameters are correct in code), but reduces reproducibility for external readers.
+
+\textit{Status:} \textbf{Resolved.} LogicRAG's \texttt{REPRODUCE.md} corrected (6{,}119 passages, max-rounds=3). LinearRAG \texttt{REPRODUCE.md} created documenting the LLM swap and evaluation setup.
+
+\subsection{Low-Severity Findings}
+\label{sec:low-findings}
+
+\begin{enumerate}
+
+\item \textbf{Bonferroni threshold hardcoded.} \texttt{judge-comparison.py} originally used a fixed $\chi^2 > 6.63$ threshold for all McNemar tests regardless of comparison count. The correct thresholds are 6.96 (6 pairs) and 5.73 (3 pairs). No practical impact: all significant results have $\chi^2 \gg 25$; all non-significant results have $\chi^2 < 6.1$. \textit{Resolved:} code now uses dynamic \texttt{bonferroni\_chi2\_threshold()} with \texttt{scipy.stats.chi2.ppf}.
+
+\item \textbf{Wilson CI slight mismatch.} Hybrid's reported Wilson CIs for hop-368 were [90.3\%, 95.6\%], differing from recomputed values ([89.8\%, 95.1\%]) by $\sim$0.5pp on bounds. Cause: stale computation from a prior data version. \textit{Resolved:} documentation now shows corrected [89.8\%, 95.1\%].
+
+\item \textbf{McNemar net sign convention.} Code computes \texttt{net = c - b} (positive = System B wins). Documentation uses \texttt{net = A\_only - B\_only} (positive = System A wins). Both are internally consistent, but regenerating documentation from code would flip all signs.
+
+\item \textbf{1000q selection mechanism undocumented.} How the LinearRAG HuggingFace dataset authors selected these 1{,}000 questions from 12{,}576 is unknown. Near-proportional type distribution makes cherry-picking unlikely.
+
+\item \textbf{No judge metadata in output.} Judged JSONL files do not store judge model name or timestamp. Provenance relies on documentation and structural evidence. Adding \texttt{judge\_model} and \texttt{judge\_timestamp} fields would eliminate ambiguity.
+
+\end{enumerate}
+
+\subsection{Limitations of This Audit}
+\label{sec:audit-limitations}
+
+\begin{enumerate}
+\item \textbf{Code-level only.} This audit examined code, data files, and documentation. It did not re-run evaluations or independently verify numeric results from raw JSONL files.
+
+\item \textbf{No external replication.} All three systems were evaluated by the same team. An independent replication (different judge model, different evaluation harness) would strengthen claims.
+
+\item \textbf{LLM-as-judge reliability.} The audit verified judge consistency (same model and prompt for all systems) but not judge accuracy. The \texttt{gemma3:12b} judge's agreement rate with human judgments is not formally measured. The containment fast path auto-approves $\sim$50\% of judgments without LLM evaluation.
+
+\item \textbf{LLM swap validity.} Replacing LogicRAG's GPT-4o-mini and LinearRAG's original model with \texttt{llama-3.3-70b-versatile} controls for model quality but may not reflect the systems' intended operating conditions. Published results using original models may differ.
+\end{enumerate}
+
+\subsection{Conclusions}
+\label{sec:audit-conclusions}
+
+The experimental comparison between Hybrid, LogicRAG, and LinearRAG on 2WikiMultiHopQA is methodologically sound. All critical fairness requirements are met: identical question sets, gold answers, judge model, judge prompt, and metrics code. The primary metric (Judge EM) is unaffected by the minor date normalization asymmetry in raw EM. Statistical tests are correctly implemented with appropriate multiple-testing corrections.
+
+The main gap is documentation completeness: the information access asymmetry and structural fairness caveats that are thoroughly documented for the Hybrid vs.\ LogicRAG comparison are absent from the cross-system comparison that includes LinearRAG. Addressing the five medium-severity findings (F1--F5) would strengthen the paper against reviewer scrutiny without requiring any re-evaluation or result changes.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llp{7cm}}
+\toprule
+\textbf{ID} & \textbf{Severity} & \textbf{Finding} \\
+\midrule
+F1 & Medium & Fairness caveats absent from cross-system comparison \\
+F2 & Medium & Per-type claims lack significance disclaimers for small $n$ \\
+F3 & Medium & Temporal instability of hop verification unacknowledged \\
+F4 & Medium & LinearRAG corpus architecture undocumented \\
+F5 & Medium & Reproduction documentation gaps (both baselines) \\
+\bottomrule
+\end{tabular}
+\caption{Summary of medium-severity audit findings. All are documentation gaps; none affect reported results.}
+\label{tab:audit-findings}
+\end{table}
