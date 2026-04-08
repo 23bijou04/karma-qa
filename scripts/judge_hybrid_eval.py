@@ -113,10 +113,16 @@ def _parse_verdict(response: str) -> bool:
     return word == "yes"
 
 
-def judge(client, question, gold, pred, model="gemma3:12b"):
+def judge(client, question, gold, pred, model="gemma3:12b", aliases=None):
     """Return True if LLM judge deems prediction semantically correct."""
     if not pred or pred.strip() == "":
         return False
+    # Alias pre-check: if benchmark declares aliases, exact match is authoritative
+    # (e.g. MuSiQue provides answer_aliases; 2WikiMultiHop/HotPotQA have none)
+    pred_norm = _normalize(pred)
+    for candidate in [gold] + (aliases or []):
+        if candidate and _normalize(candidate) == pred_norm:
+            return True
     # Fast path: word-level containment (gold-in-pred only, min 2 words)
     precheck = _containment_precheck(gold, pred)
     if precheck is True:
@@ -199,6 +205,7 @@ def main():
                 rec["judge_correct"] = judge(
                     client, rec["question"], rec["gold_answer"],
                     rec["predicted_answer"], model=args.model,
+                    aliases=rec.get("gold_aliases", []),
                 )
             except Exception as e:
                 print(f"  Error judging {rec['question_id']}: {e}")
