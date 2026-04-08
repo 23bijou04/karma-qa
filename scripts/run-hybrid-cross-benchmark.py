@@ -20,6 +20,7 @@ import sys
 import time
 import traceback
 from collections import defaultdict
+from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -51,6 +52,30 @@ compute_containment = _metrics.compute_containment
 
 LOGICRAG_DIR = os.path.join(PROJECT_ROOT, "baselines", "LogicRAG")
 QUESTION_TIMEOUT = 300
+
+# ---------------------------------------------------------------------------
+# Tee logger — writes every print to both stdout and a log file
+# ---------------------------------------------------------------------------
+_log_file = None
+
+
+def log(msg=""):
+    """Print to stdout and append to log file if open."""
+    print(msg)
+    if _log_file:
+        _log_file.write(msg + "\n")
+        _log_file.flush()
+
+
+def _open_log(benchmark: str, output_path: str):
+    """Open log file next to the JSONL output. Returns file handle."""
+    log_dir = os.path.dirname(output_path) or "."
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(log_dir, f"hybrid_{benchmark}_run_{timestamp}.log")
+    fh = open(log_path, "a", encoding="utf-8")
+    fh.write(f"=== Log started {datetime.now().isoformat()} ===\n")
+    fh.flush()
+    return fh, log_path
 
 
 class _QuestionTimeout(Exception):
@@ -97,7 +122,7 @@ def load_benchmark_corpus(benchmark: str) -> list[dict]:
     path = os.path.join(LOGICRAG_DIR, "dataset", f"{benchmark}_corpus.json")
     with open(path) as f:
         corpus = json.load(f)
-    print(f"Loaded corpus: {len(corpus)} entries from {path}")
+    log(f"Loaded corpus: {len(corpus)} entries from {path}")
     return corpus
 
 
@@ -152,9 +177,9 @@ def _signal_handler(sig, frame):
     em = _stats["em_sum"] / d * 100 if d else 0
     f1 = _stats["f1_sum"] / d * 100 if d else 0
     elapsed = time.time() - _stats["start"] if _stats["start"] else 0
-    print(f"\n--- Interrupted after {d}/{_stats['total']} questions ---")
-    print(f"Running EM={em:.1f}%, F1={f1:.1f}%, Elapsed={elapsed / 60:.1f}min")
-    print("Results saved. Resume by running the same command.")
+    log(f"\n--- Interrupted after {d}/{_stats['total']} questions ---")
+    log(f"Running EM={em:.1f}%, F1={f1:.1f}%, Elapsed={elapsed / 60:.1f}min")
+    log("Results saved. Resume by running the same command.")
     sys.exit(0)
 
 
@@ -182,11 +207,17 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    print(f"=== Hybrid Cross-Benchmark: {args.benchmark} ===")
-    print(f"Date:     {time.strftime('%Y-%m-%d')}")
-    print(f"LLM:      {args.model} ({args.provider})")
-    print(f"Output:   {args.output}")
-    print("=" * 50)
+    # Open log file next to JSONL output
+    global _log_file
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    _log_file, log_path = _open_log(args.benchmark, args.output)
+
+    log(f"=== Hybrid Cross-Benchmark: {args.benchmark} ===")
+    log(f"Date:     {time.strftime('%Y-%m-%d')}")
+    log(f"LLM:      {args.model} ({args.provider})")
+    log(f"Output:   {args.output}")
+    log(f"Log:      {log_path}")
+    log("=" * 50)
 
     # Load questions and corpus
     questions = load_benchmark_questions(args.benchmark)
@@ -196,21 +227,21 @@ def main():
     done_ids = load_completed_ids(args.output)
     remaining = [q for q in questions if q["question_id"] not in done_ids]
     if done_ids:
-        print(f"RESUME: {len(done_ids)} done, {len(remaining)} remaining")
+        log(f"RESUME: {len(done_ids)} done, {len(remaining)} remaining")
     if args.limit > 0:
         remaining = remaining[:args.limit]
     if not remaining:
-        print("All questions already processed.")
+        log("All questions already processed.")
         return
 
-    print(f"Processing: {len(remaining)} questions")
+    log(f"Processing: {len(remaining)} questions")
 
     # Create shared clients
-    print("Creating shared clients...")
+    log("Creating shared clients...")
     try:
         llm_client = create_llm_client(args.provider, api_key=args.api_key)
     except ValueError as e:
-        print(f"Error: {e}")
+        log(f"Error: {e}")
         sys.exit(1)
     linker = DBpediaEntityLinker(
         min_confidence=0.5, llm_client=llm_client, llm_model=args.model,
@@ -218,8 +249,6 @@ def main():
     )
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
-
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
     _stats["total"] = len(remaining)
     _stats["start"] = time.time()
@@ -231,7 +260,7 @@ def main():
         r"(?:not sure|unclear|cannot determine|could not find|no information)", re.I,
     )
 
-    print(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
+    log(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
 
     for i, q in enumerate(remaining):
         qid = q["question_id"]
@@ -333,18 +362,18 @@ def main():
         by_method[method]["f1"] += record["f1"]
 
         em_tag = "EM=1" if record["em"] > 0 else f"F1={record['f1']:.2f}"
-        print(f"[{done}/{len(remaining)}] {question[:60]}...")
-        print(f"  -> gold='{gold}' pred='{pred[:60]}' [{em_tag}] "
-              f"method={record['method']} {record['latency_seconds']}s "
-              f"{'KG' if record['dbpedia_linked'] else 'noKG'}")
+        log(f"[{done}/{len(remaining)}] {question[:60]}...")
+        log(f"  -> gold='{gold}' pred='{pred[:60]}' [{em_tag}] "
+            f"method={record['method']} {record['latency_seconds']}s "
+            f"{'KG' if record['dbpedia_linked'] else 'noKG'}")
 
         if done % 25 == 0:
             elapsed = time.time() - _stats["start"]
             eta = (elapsed / done) * (len(remaining) - done) if done > 0 else 0
-            print(f"  --- Running: EM={em_sum / done * 100:.1f}% "
-                  f"F1={f1_sum / done * 100:.1f}% "
-                  f"KG={kg_linked_count}/{done} ({kg_linked_count / done * 100:.0f}%) "
-                  f"| Elapsed={elapsed / 60:.1f}min ETA={eta / 60:.1f}min ---")
+            log(f"  --- Running: EM={em_sum / done * 100:.1f}% "
+                f"F1={f1_sum / done * 100:.1f}% "
+                f"KG={kg_linked_count}/{done} ({kg_linked_count / done * 100:.0f}%) "
+                f"| Elapsed={elapsed / 60:.1f}min ETA={eta / 60:.1f}min ---")
 
         if i < len(remaining) - 1:
             time.sleep(args.delay)
@@ -352,20 +381,24 @@ def main():
     # Final summary
     total = len(remaining)
     elapsed = time.time() - _stats["start"]
-    print(f"\n{'=' * 60}")
-    print(f"COMPLETE: {total} questions in {elapsed / 60:.1f}min")
+    log(f"\n{'=' * 60}")
+    log(f"COMPLETE: {total} questions in {elapsed / 60:.1f}min")
     if total > 0:
-        print(f"  EM:  {em_sum / total * 100:.1f}%")
-        print(f"  F1:  {f1_sum / total * 100:.1f}%")
-        print(f"  KG augmentation rate: {kg_linked_count}/{total} "
-              f"({kg_linked_count / total * 100:.1f}%)")
-    print("\nBy method:")
+        log(f"  EM:  {em_sum / total * 100:.1f}%")
+        log(f"  F1:  {f1_sum / total * 100:.1f}%")
+        log(f"  KG augmentation rate: {kg_linked_count}/{total} "
+            f"({kg_linked_count / total * 100:.1f}%)")
+    log("\nBy method:")
     for method, stats in sorted(by_method.items()):
         c = stats["count"]
         me = stats["em"] / c * 100 if c else 0
         mf = stats["f1"] / c * 100 if c else 0
-        print(f"  {method}: {c} questions, EM={me:.1f}%, F1={mf:.1f}%")
-    print(f"\nResults: {args.output}")
+        log(f"  {method}: {c} questions, EM={me:.1f}%, F1={mf:.1f}%")
+    log(f"\nResults: {args.output}")
+    log(f"Log:     {log_path}")
+
+    if _log_file:
+        _log_file.close()
 
 
 if __name__ == "__main__":
