@@ -7,7 +7,7 @@ Metrics from `evaluation/metrics.py`: EM (exact match after normalization), F1 (
 
 | System         | N   | EM%   | F1%   | Cont% | Judge EM% | 95% CI         |
 | :------------- | ---:| ----: | ----: | ----: | --------: | :------------- |
-| Hybrid         | 368 | 79.9  | 86.8  | 88.0  | 92.9      | [90.3%, 95.6%] |
+| Hybrid         | 368 | 79.9  | 86.8  | 88.0  | 92.9      | [89.8%, 95.1%] |
 | SPARQL (comp†) | 368 | 68.5  | 81.3  | 86.1  | 91.6      | [88.3%, 94.0%] |
 | LinearRAG      | 368 | 73.9  | 81.9  | 83.4  | 88.0      | [84.3%, 91.0%] |
 | GRASP          | 368 | 32.1  | 47.3  | 85.6  | 79.1      | [74.6%, 82.9%] |
@@ -21,29 +21,31 @@ Only systems evaluated on all 1000 questions shown.
 
 | System    | N    | EM%   | F1%   | Cont% | Judge EM% | 95% CI         |
 | :-------- | ---: | ----: | ----: | ----: | --------: | :------------- |
-| Hybrid    | 1000 | 72.6  | 80.1  | 82.8  | 89.4      | [87.5%, 91.3%] |
+| Hybrid    | 1000 | 72.6  | 80.1  | 82.8  | 89.4      | [87.3%, 91.2%] |
 | LinearRAG | 1000 | 64.9  | 73.4  | 76.3  | 84.0      | [81.6%, 86.1%] |
 | LogicRAG  | 1000 | 61.1  | 67.5  | 69.2  | 74.5      | [71.7%, 77.1%] |
 
 ## Table 3: EM / F1 / Judge EM by Question Type (Hop-368)
 
-| System         | Metric   | bridge_comp (141) | comparison (80) | compositional (113) | inference (34) |
-| :------------- | :------- | ----------------: | --------------: | ------------------: | -------------: |
-| Hybrid         | EM       | 97.2              | 95.0            | 48.7                | 76.5           |
-|                | F1       | 97.2              | 95.0            | 67.0                | 90.9           |
-|                | Judge EM | 97.2              | 95.0            | 85.0                | 97.1           |
-| SPARQL (comp†) | EM       | 94.3              | 87.5            | 22.1                | 70.6           |
-|                | F1       | 96.2              | 90.4            | 53.1                | 91.9           |
-|                | Judge EM | 97.2              | 92.5            | 81.4                | 100.0          |
-| LinearRAG      | EM       | 96.5              | 95.0            | 36.3                | 55.9           |
-|                | F1       | 97.1              | 95.5            | 54.4                | 77.8           |
-|                | Judge EM | 97.2              | 96.2            | 70.8                | 88.2           |
-| GRASP          | EM       | 55.3              | 50.0            | 0.0                 | 0.0            |
-|                | F1       | 73.0              | 62.9            | 6.8                 | 38.4           |
-|                | Judge EM | 91.5              | 85.0            | 55.8                | 91.2           |
-| LogicRAG       | EM       | 73.0              | 90.0            | 34.5                | 61.8           |
-|                | F1       | 73.6              | 91.5            | 46.3                | 84.7           |
-|                | Judge EM | 73.0              | 91.2            | 56.6                | 94.1           |
+| System         | Metric   | bridge_comp (141) | comparison (80) | compositional (113) | inference (34)‡ |
+| :------------- | :------- | ----------------: | --------------: | ------------------: | --------------: |
+| Hybrid         | EM       | 97.2              | 95.0            | 48.7                | 76.5            |
+|                | F1       | 97.2              | 95.0            | 67.0                | 90.9            |
+|                | Judge EM | 97.2              | 95.0            | 85.0                | 97.1            |
+| SPARQL (comp†) | EM       | 94.3              | 87.5            | 22.1                | 70.6            |
+|                | F1       | 96.2              | 90.4            | 53.1                | 91.9            |
+|                | Judge EM | 97.2              | 92.5            | 81.4                | 100.0           |
+| LinearRAG      | EM       | 96.5              | 95.0            | 36.3                | 55.9            |
+|                | F1       | 97.1              | 95.5            | 54.4                | 77.8            |
+|                | Judge EM | 97.2              | 96.2            | 70.8                | 88.2            |
+| GRASP          | EM       | 55.3              | 50.0            | 0.0                 | 0.0             |
+|                | F1       | 73.0              | 62.9            | 6.8                 | 38.4            |
+|                | Judge EM | 91.5              | 85.0            | 55.8                | 91.2            |
+| LogicRAG       | EM       | 73.0              | 90.0            | 34.5                | 61.8            |
+|                | F1       | 73.6              | 91.5            | 46.3                | 84.7            |
+|                | Judge EM | 73.0              | 91.2            | 56.6                | 94.1            |
+
+‡ Inference (n=34): Wilson CI width ~20pp at typical performance levels. Per-type differences in this column are directional trends only — not statistically distinguishable at this sample size.
 
 ## Table 4: EM / F1 / Judge EM by Question Type (Full 1000q)
 
@@ -58,6 +60,8 @@ Only systems evaluated on all 1000 questions shown.
 | LogicRAG  | EM       | 72.3              | 91.4             | 36.6                | 62.0            |
 |           | F1       | 72.7              | 92.5             | 46.4                | 80.0            |
 |           | Judge EM | 72.8              | 92.6             | 61.7                | 86.1            |
+
+Per-type breakdowns are descriptive only — no per-type significance tests were performed. Wilson CI widths range from 5.8pp (compositional, n=413) to 11.5pp (inference, n=108). Treat per-type differences as exploratory patterns, not confirmed effects.
 
 ## Table 5: McNemar Pairwise Tests — Judge EM (Hop-368)
 
@@ -89,7 +93,44 @@ Bonferroni-corrected alpha=0.0167 (3 comparisons).
 - **GRASP**: uses openai/gpt-5-mini (external system, LLM not controllable)
 - **Metrics**: EM, F1, containment from `evaluation/metrics.py`; Judge EM via LLM semantic equivalence
 - **EM gap**: Judge EM − EM difference reflects format mismatches the judge resolves (dates, entity labels, abbreviations). GRASP has the largest gap (47pp on hop-368) due to verbose natural-language answers; Hybrid has a smaller gap (13pp) mostly from compositional questions.
-- **Hop-368**: questions where all properties exist in DBpedia (KG-answerable subset)
+- **Hop-368**: questions where all properties exist in DBpedia (KG-answerable subset). Verification was performed via live SPARQL queries against `https://dbpedia.org/sparql` on 2026-03-25. Re-verification on a different date may yield slightly different subset membership due to DBpedia updates.
 - **McNemar**: chi-squared with continuity correction, Bonferroni alpha=0.0083 for 6 tests
 - **Wilson CI**: 95% confidence intervals for proportions
 - **†Schema-Guided SPARQL**: Hybrid's direct SPARQL routing path evaluated in isolation on the hop-368 set. Included to demonstrate that schema projection (injecting entity schema into LLM context) significantly improves text2SPARQL quality vs GRASP's approach. Not an independent competing system — SPARQL is a component of Hybrid. The Hybrid vs SPARQL component McNemar result (chi2=0.59, not significant) confirms that on KG-answerable questions, Hybrid's additional text paths provide minimal incremental gain beyond the SPARQL path alone.
+
+---
+
+## Fairness Caveats
+
+This comparison is **structurally unfair in both directions**. We document the asymmetries explicitly so the reported performance gap can be interpreted correctly.
+
+**Controlled variables (what IS fair):**
+- Same 1,000-question subset and identical gold answers (zero mismatches verified)
+- Same LLM: `llama-3.3-70b-versatile` via Groq, temperature 0 (LinearRAG re-run with this model to match Hybrid; deviates from original paper configuration)
+- Same judge: gemma3:12b via Ollama, identical judge script and prompt for all systems
+- Same metrics: `compute_em()`, `compute_f1()`, `compute_containment()` from a single source (`evaluation/metrics.py`), recomputed fresh for every comparison
+
+**Structural asymmetries — favors Hybrid:**
+- Unbounded live access to DBpedia SPARQL + Wikipedia API at inference time vs. LinearRAG's closed benchmark corpus
+- Higher computation budget: 3–10 LLM calls per question (routing, decomposition, sub-question solving, final synthesis) vs. LinearRAG's single call
+- Hand-crafted routing rules encode domain knowledge (bridge patterns, comparison detection, keyword-to-property mappings) that LinearRAG must learn implicitly from retrieval
+- Temporal advantage: 2026 Wikipedia/DBpedia may contain information updated since the 2017 benchmark snapshot
+
+**Structural asymmetries — favors LinearRAG:**
+- Pre-indexed corpus derived from the benchmark's evidence documents: gold answers are guaranteed to exist in the text LinearRAG retrieves
+- Surface-form alignment: benchmark answers match the phrasing in benchmark passages, which LinearRAG indexes directly
+- No entity linking errors: LinearRAG uses pre-resolved benchmark titles; Hybrid depends on DBpedia Spotlight (confidence ≥ 0.5), which can fail or misclassify
+- Simpler single-call architecture means fewer failure modes — no multi-stage routing errors, no decomposition failures
+
+**Corpus architecture difference (LinearRAG vs. LogicRAG):**
+The two baselines access information in fundamentally different ways, even though both draw from benchmark-provided text:
+
+| System | Corpus | Unit size (median) | LLM calls/Q |
+| :--- | :--- | ---: | ---: |
+| Hybrid | Live Wikipedia + DBpedia SPARQL | — (open) | 3–10 |
+| LinearRAG | 658 full-article chunks | ~4,449 chars | 1 |
+| LogicRAG | 6,119 benchmark snippets | ~254 chars | 3–7 |
+
+LinearRAG's long full-article chunks provide substantially richer per-entity context than LogicRAG's short intro-paragraph snippets. This retrieval granularity difference may partially explain LinearRAG's higher accuracy on compositional questions (+10.2pp Judge EM over LogicRAG on 1000q; Table 4) and means direct per-chunk or per-call comparisons between the two baselines are not meaningful.
+
+**Conclusion:** This comparison is structurally unfair in both directions. The controlled variables — identical questions, LLM, judge, and metrics — ensure the measured performance gap is real and reproducible, but the information access differences mean neither system operates under identical constraints. Hybrid's +4.9pp Judge EM advantage over LinearRAG on hop-368 (chi2=6.02, not significant after Bonferroni correction) should be read as a directional signal within these caveats, not as a claim of architectural superiority under matched conditions.

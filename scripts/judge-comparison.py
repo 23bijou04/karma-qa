@@ -114,8 +114,29 @@ def compute_stats(records, subset_ids=None):
     }
 
 
-def pairwise_mcnemar(records_a, records_b, subset_ids=None):
-    """McNemar test between two systems on shared questions."""
+def bonferroni_chi2_threshold(n_comparisons, base_alpha=0.05):
+    """Compute chi-squared threshold for Bonferroni-corrected McNemar test (df=1).
+
+    Bonferroni: adjusted_alpha = base_alpha / n_comparisons.
+    Uses scipy.stats.chi2.ppf for exact quantile; falls back to lookup table.
+    """
+    adjusted_alpha = base_alpha / n_comparisons
+    try:
+        from scipy.stats import chi2 as scipy_chi2
+        return scipy_chi2.ppf(1 - adjusted_alpha, df=1)
+    except ImportError:
+        # Precomputed chi2.ppf(1 - 0.05/n, df=1) for common comparison counts
+        _lookup = {1: 3.841, 2: 5.024, 3: 5.731, 4: 6.239, 5: 6.635, 6: 6.960, 10: 7.879}
+        return _lookup.get(n_comparisons, 10.828)  # 10.828 = p<0.001 conservative fallback
+
+
+def pairwise_mcnemar(records_a, records_b, subset_ids=None, n_comparisons=1):
+    """McNemar test between two systems on shared questions.
+
+    Args:
+        n_comparisons: Total pairwise comparisons in the test family.
+            Bonferroni-corrected alpha = 0.05 / n_comparisons.
+    """
     if subset_ids is not None:
         records_a = {qid: r for qid, r in records_a.items() if qid in subset_ids}
         records_b = {qid: r for qid, r in records_b.items() if qid in subset_ids}
@@ -131,8 +152,9 @@ def pairwise_mcnemar(records_a, records_b, subset_ids=None):
             c += 1
 
     chi2 = mcnemar_chi2(b, c)
-    # Bonferroni-corrected significance (6 pairwise comparisons → alpha=0.0083)
-    sig = chi2 > 6.63  # chi2 > 6.63 ≈ p<0.01 (conservative for Bonferroni)
+    # Dynamic Bonferroni threshold: chi2.ppf(1 - 0.05/n_comparisons, df=1)
+    threshold = bonferroni_chi2_threshold(n_comparisons)
+    sig = chi2 > threshold
 
     return {
         "shared": len(shared),
@@ -288,8 +310,6 @@ def main():
     # --- Table 5: McNemar Pairwise Tests (hop-368) ---
     report.append("## Table 5: McNemar Pairwise Tests — Judge EM (Hop-368)")
     report.append("")
-    report.append("Bonferroni-corrected alpha=0.0083 (6 comparisons).")
-    report.append("")
 
     mc_headers = ["Comparison", "N", "A only", "B only", "Net", "Chi2", "Significant"]
     mc_rows = []
@@ -301,10 +321,13 @@ def main():
         ("SPARQL", "GRASP"),
         ("SPARQL", "LinearRAG"),
     ]
+    report.append(f"Bonferroni-corrected alpha={0.05/len(pairs):.4f} ({len(pairs)} comparisons).")
+    report.append("")
     for a_name, b_name in pairs:
         if a_name not in all_systems or b_name not in all_systems:
             continue
-        mc = pairwise_mcnemar(all_systems[a_name], all_systems[b_name], hop368_ids)
+        mc = pairwise_mcnemar(all_systems[a_name], all_systems[b_name], hop368_ids,
+                              n_comparisons=len(pairs))
         mc_rows.append([
             f"{a_name} vs {b_name}",
             mc["shared"],
@@ -330,7 +353,8 @@ def main():
         for a_name, b_name in full_pairs:
             if a_name not in full_systems or b_name not in full_systems:
                 continue
-            mc = pairwise_mcnemar(all_systems[a_name], all_systems[b_name])
+            mc = pairwise_mcnemar(all_systems[a_name], all_systems[b_name],
+                                  n_comparisons=len(full_pairs))
             mc_rows_full.append([
                 f"{a_name} vs {b_name}",
                 mc["shared"],
@@ -353,7 +377,7 @@ def main():
     report.append("- **Hop-368**: questions where all properties exist in DBpedia "
                    "(KG-answerable subset)")
     report.append("- **McNemar**: chi-squared with continuity correction, "
-                   "Bonferroni alpha=0.0083 for 6 tests")
+                   "Bonferroni alpha=0.05/n_comparisons (6 hop-368 tests, 3 full-1000q tests)")
     report.append("- **Wilson CI**: 95% confidence intervals for proportions")
     report.append("")
 

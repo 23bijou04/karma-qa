@@ -22,7 +22,7 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
-| **Hybrid (ours)** | **92.9%** (342/368) | [90.3%, 95.6%] |
+| **Hybrid (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
 | SPARQL component | 91.6% (337/368) | [88.3%, 94.0%] |
 | LinearRAG | 88.0% (324/368) | [84.3%, 91.0%] |
 | GRASP | 79.1% (291/368) | [74.6%, 82.9%] |
