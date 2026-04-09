@@ -101,6 +101,29 @@ Example - Simple: "Who directed Inception?"
   "dependencies": []
 }}
 
+Example - Nested relative clause (3-hop): "When was the region north of where X is located created?"
+{{
+  "sub_questions": ["Where is X located?", "What region is immediately north of [Q0]?", "When was [Q1] created?"],
+  "dependencies": [[1, 0], [2, 1]]
+}}
+
+Example - Passive voice: "Who is played by the director of Film X in Film Y?"
+{{
+  "sub_questions": ["Who directed Film X?", "What role did [Q0] play in Film Y?"],
+  "dependencies": [[1, 0]]
+}}
+
+Example - Possessive chain: "What is the capital of the country where X's creator was born?"
+{{
+  "sub_questions": ["Who created X?", "In which country was [Q0] born?", "What is the capital of [Q1]?"],
+  "dependencies": [[1, 0], [2, 1]]
+}}
+
+Additional rules for complex questions:
+- Preserve active/passive voice direction: "played BY X" → ask "What did [Q0] play?" NOT "Who played [Q0]?"
+- For possessive chains (X's Y's Z), decompose from innermost entity outward
+- Each sub-question MUST retain qualifying context (where/who/that clauses) from the original
+
 JSON only, no explanation:"""
 
 # ---------------------------------------------------------------------------

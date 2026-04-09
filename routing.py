@@ -463,6 +463,26 @@ def _extract_properties_llm(
 
 
 # ---------------------------------------------------------------------------
+# Multi-hop guard for direct_property routes
+# ---------------------------------------------------------------------------
+
+def _is_likely_multihop(question: str, entities: list[Entity], reason: str) -> bool:
+    """Detect direct_property SPARQL routes that should be DECOMPOSE instead.
+
+    All MuSiQue questions are multi-hop (3-4 hops), but some get routed to
+    single-hop SPARQL via direct_property match. 3+ linked entities strongly
+    indicates a multi-hop chain that direct SPARQL cannot handle.
+
+    Only fires on direct_property routes — bridge/comparison routes are
+    already handled correctly by the routing pipeline.
+    """
+    if "direct_property" not in reason:
+        return False
+    # 3+ entities means the question references multiple things in a chain
+    return len(entities) >= 3
+
+
+# ---------------------------------------------------------------------------
 # Main route_question entry point
 # ---------------------------------------------------------------------------
 
@@ -536,6 +556,10 @@ def route_question(
         _last_route_meta["ask_result"] = reason
         if debug:
             print(f"  [DEBUG] Stage 1 (keywords): {route} ({reason})")
+        if route == "SPARQL" and _is_likely_multihop(question, entities, reason):
+            if debug:
+                print(f"  [DEBUG] Multi-hop guard: SPARQL→DECOMPOSE ({reason})")
+            return ("DECOMPOSE", f"multihop_guard:{reason}")
         if route in ("SPARQL", "DECOMPOSE"):
             return (route, reason)
 
@@ -562,6 +586,13 @@ def route_question(
                 if debug:
                     print(f"  [DEBUG] Stage 2 (LLM props={llm_properties}): "
                           f"{route} ({reason})")
+                if route == "SPARQL" and _is_likely_multihop(
+                    question, entities, reason
+                ):
+                    if debug:
+                        print(f"  [DEBUG] Multi-hop guard: SPARQL→DECOMPOSE "
+                              f"(llm_prop:{reason})")
+                    return ("DECOMPOSE", f"multihop_guard:llm_prop:{reason}")
                 if route in ("SPARQL", "DECOMPOSE"):
                     return (route, f"llm_prop:{reason}")
     except Exception as e:
