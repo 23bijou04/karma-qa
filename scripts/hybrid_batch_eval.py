@@ -14,9 +14,11 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import signal
 import sys
 import time
+import traceback
 from collections import defaultdict
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,10 +27,29 @@ _parent = os.path.dirname(PROJECT_ROOT)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia import (
+    DBpediaEntityLinker,
+    DBpediaSPARQLClient,
+    SchemaDiscovery,
+    WikipediaResolver,
+)
 from dbpedia_qa.models import extract_final_answer
 
 from llm_provider import create_llm_client
+
+# Per-question timeout (seconds). Prevents a single degraded-service question
+# from blocking the entire batch run. 5 minutes is generous — typical questions
+# complete in 10-60s; anything beyond 5 min indicates a stuck service.
+QUESTION_TIMEOUT = 300
+
+
+class _QuestionTimeout(Exception):
+    """Raised when a question exceeds QUESTION_TIMEOUT seconds."""
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise _QuestionTimeout(f"Question exceeded {QUESTION_TIMEOUT}s timeout")
 
 # Load metrics directly to avoid evaluation/__init__.py heavy imports
 _spec = importlib.util.spec_from_file_location(
@@ -43,8 +64,19 @@ compute_containment = _metrics.compute_containment
 # Import hybrid_answer (must come after sys.path setup)
 from hybrid_qa import hybrid_answer  # noqa: E402
 
-DEFAULT_COVERAGE = "data/eval_1000q/coverage_analysis_1000.json"
-DEFAULT_OUTPUT = "data/eval_1000q/hybrid_eval_1000.jsonl"
+DEFAULT_COVERAGE = "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
+DEFAULT_OUTPUT = "data/eval_1000q/hybrid/hybrid_eval_1000.jsonl"
+LOGICRAG_CORPUS = os.path.join(
+    PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
+)
+
+
+def load_benchmark_corpus(corpus_file: str) -> list[dict]:
+    """Load shared benchmark corpus (same as LogicRAG baseline)."""
+    with open(corpus_file) as f:
+        corpus = json.load(f)
+    print(f"Loaded benchmark corpus: {len(corpus)} entries from {corpus_file}")
+    return corpus
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +152,7 @@ def main():
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE)
     parser.add_argument("--output-file", default=DEFAULT_OUTPUT)
@@ -154,9 +186,15 @@ def main():
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
-    linker = DBpediaEntityLinker(min_confidence=0.5)
+    linker = DBpediaEntityLinker(
+        min_confidence=0.5, llm_client=llm_client, llm_model=args.model,
+        wiki_resolver=WikipediaResolver(),
+    )
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
+
+    # Load shared benchmark corpus (same as LogicRAG baseline)
+    benchmark_corpus = load_benchmark_corpus(LOGICRAG_CORPUS)
 
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
 
@@ -165,6 +203,10 @@ def main():
     _stats["start"] = time.time()
     em_sum, f1_sum = 0.0, 0.0
     by_method = defaultdict(lambda: {"count": 0, "em": 0.0, "f1": 0.0})
+
+    _HEDGE_RE = re.compile(
+        r"(?:not sure|unclear|cannot determine|could not find|no information)", re.I,
+    )
 
     print(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
 
@@ -184,11 +226,15 @@ def main():
             "is_answerable": is_answerable,
         }
 
+        # Set per-question timeout to prevent indefinite blocking
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(QUESTION_TIMEOUT)
         try:
             result = hybrid_answer(
                 question, args.api_key, model=args.model,
                 llm_client=llm_client, linker=linker,
                 kg_client=kg_client, schema_disc=schema_disc,
+                benchmark_corpus=benchmark_corpus,
             )
             record["raw_answer"] = result.answer
             record["predicted_answer"] = clean_answer(result.answer)
@@ -196,11 +242,25 @@ def main():
             record["route_source"] = result.route_source
             record["sparql_fallback"] = result.sparql_fallback
             record["sparql_query"] = getattr(result, "sparql_query", None) or ""
-            record["kg_context"] = (getattr(result, "kg_context", None) or "")[:200]
+            record["kg_context"] = getattr(result, "kg_context", None) or ""
             if result.sub_question_log:
                 record["sub_question_log"] = result.sub_question_log
+            record["debug_info"] = getattr(result, "debug_info", {})
+            record["has_hedging"] = bool(_HEDGE_RE.search(record["raw_answer"]))
             record["error"] = ""
-        except Exception as e:
+        except _QuestionTimeout:
+            record["raw_answer"] = ""
+            record["predicted_answer"] = ""
+            record["method"] = "timeout"
+            record["route_source"] = ""
+            record["sparql_fallback"] = False
+            record["sparql_query"] = ""
+            record["kg_context"] = ""
+            record["debug_info"] = {}
+            record["has_hedging"] = False
+            record["error"] = f"Timeout after {QUESTION_TIMEOUT}s"
+            print(f"  !! TIMEOUT after {QUESTION_TIMEOUT}s, skipping")
+        except Exception:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
             record["method"] = "error"
@@ -208,7 +268,12 @@ def main():
             record["sparql_fallback"] = False
             record["sparql_query"] = ""
             record["kg_context"] = ""
-            record["error"] = str(e)
+            record["debug_info"] = {}
+            record["has_hedging"] = False
+            record["error"] = traceback.format_exc()
+        finally:
+            signal.alarm(0)  # Cancel any pending alarm
+            signal.signal(signal.SIGALRM, old_handler)
 
         # Compute metrics
         pred = record["predicted_answer"]

@@ -174,7 +174,7 @@ def main():
         description="Ablation Study V3: Controlled KG Detail Levels"
     )
     parser.add_argument("--api-key", "-k", help="API key (default: provider-specific env var)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument(
         "--levels", nargs="+", type=int, default=[0, 1, 2, 3, 4],

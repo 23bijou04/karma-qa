@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Classify 1000 questions into KG coverage scenarios (A-F).
 
-Reads coverage_analysis_1000.json and produces scenario_classification_1000.json
-with per-question scenario labels and aggregate statistics.
+Reads hop_verification_results.json (per-hop entity_resolved + property_exists)
+and produces scenario_classification_1000.json with per-question scenario labels.
 
 Scenarios:
-  A  KG_COMPLETE         — All entities exist, all properties available
+  A  KG_COMPLETE         — All hops have properties available
   B  HOP1_MISSING        — Seed entity missing hop-1 predicate
   C  HOP2_MISSING        — Bridge entity missing hop-2 predicate
   D  BOTH_HOPS_MISSING   — Both seed and bridge have missing predicates
-  E  ENTITY_NOT_FOUND    — Entity not in DBpedia, no property gap on existing
-  F  ENTITY_NOT_FOUND_PLUS_PROP — Entity not found + property gap on existing
+  E  ENTITY_NOT_FOUND    — Entity not in DBpedia, no property gap on resolved entities
+  F  ENTITY_NOT_FOUND_PLUS_PROP — Entity not found + property gap on resolved entities
+
+Data source: hop_verification_results.json (ground truth, per-hop verification).
+Supersedes the old coverage_analysis_1000.json-based classification.
 """
 
 import json
@@ -18,8 +21,8 @@ import math
 from collections import Counter, defaultdict
 from pathlib import Path
 
-INPUT = Path("data/eval_1000q/coverage_analysis_1000.json")
-OUTPUT = Path("data/eval_1000q/scenario_classification_1000.json")
+INPUT = Path("data/eval_1000q/ground-truth/hop_verification_results.json")
+OUTPUT = Path("data/eval_1000q/ground-truth/scenario_classification_1000.json")
 
 SCENARIO_LABELS = {
     "A": "KG_COMPLETE",
@@ -42,165 +45,117 @@ def wilson_ci(count: int, total: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, center - spread), min(1.0, center + spread))
 
 
-def entity_summary(e: dict) -> dict:
-    """Build per-entity summary for output."""
-    return {
-        "name": e["name"],
-        "exists": e["exists"],
-        "properties_found": e["properties_found"],
-        "properties_missing": e["properties_missing"],
-    }
+def split_hops_by_role(hops: list[dict], qtype: str) -> tuple[list[dict], list[dict]]:
+    """Split hops into hop-1 (seed→bridge) and hop-2 (bridge→answer) roles.
 
+    Returns (hop1_list, hop2_list).
 
-def has_prop_gap(entity: dict) -> bool:
-    return entity["exists"] and len(entity["properties_missing"]) > 0
+    Comparison questions have NO hop-2 — all hops are independent seed-property
+    checks (e.g., entity1.birthDate, entity2.birthDate). Even 3-4 hop comparisons
+    (dual-nationality, "who lived longer") are all hop-1 level.
 
-
-def classify_chain(seed: dict, bridge: dict | None) -> str:
-    """Classify a single seed→bridge chain. Returns 'complete', 'hop1', 'hop2', 'both'."""
-    s_ok = len(seed["properties_missing"]) == 0
-    if bridge is None:
-        return "complete" if s_ok else "hop1"
-    b_ok = len(bridge["properties_missing"]) == 0
-    if s_ok and b_ok:
-        return "complete"
-    if not s_ok and b_ok:
-        return "hop1"
-    if s_ok and not b_ok:
-        return "hop2"
-    return "both"
-
-
-def chain_to_scenario(status: str) -> str:
-    """Map chain status to scenario code."""
-    return {"complete": "A", "hop1": "B", "hop2": "C", "both": "D"}[status]
-
-
-def worst_chain(s1: str, s2: str) -> str:
-    """Return the worst chain status between two chains.
-    Ordering: complete < hop1 < hop2 < both."""
-    order = {"complete": 0, "hop1": 1, "hop2": 2, "both": 3}
-    return s1 if order[s1] >= order[s2] else s2
-
-
-def missing_props_str(entities: list[dict], role: str) -> str:
-    """Build 'Entity.prop' summary string for missing properties."""
-    parts = []
-    for e in entities:
-        for p in e["properties_missing"]:
-            parts.append(f"{e['name']}.{p}")
-    return "; ".join(parts) if parts else ""
+    Bridge_comparison has hops[:2] as hop-1 (seed→bridge for each chain)
+    and hops[2:] as hop-2 (bridge→answer for each chain). Verified for 5-6 hop
+    edge cases (extra hops are additional expected values for bridge properties).
+    """
+    if qtype == "comparison":
+        # All hops are hop-1 level — no bridge entity, no hop-2
+        return hops, []
+    elif qtype == "bridge_comparison":
+        # First 2 hops = seed→bridge (hop-1), remaining = bridge→answer (hop-2)
+        return hops[:2], hops[2:]
+    else:
+        # compositional / inference: hop[0] = hop-1, hop[1] = hop-2
+        return [hops[0]], [hops[1]] if len(hops) > 1 else []
 
 
 def classify_question(q: dict) -> dict:
-    """Classify one question and return enriched record."""
-    entities = q["entities"]
+    """Classify one question into scenario A-F using hop verification data."""
+    hops = q["hops"]
     qtype = q["question_type"]
-
-    # Split into seeds / bridges
-    if qtype == "comparison":
-        seeds, bridges = entities[0:2], []
-    elif qtype == "bridge_comparison":
-        seeds, bridges = entities[0:2], entities[2:4]
-    else:  # compositional, inference
-        seeds = [entities[0]]
-        bridges = [entities[1]] if len(entities) > 1 else []
 
     result = {
         "question_id": q["question_id"],
         "question": q["question"],
         "question_type": qtype,
         "gold_answer": q["gold_answer"],
-        "seed_entities": [entity_summary(e) for e in seeds],
-        "bridge_entities": [entity_summary(e) for e in bridges],
+        "num_hops": len(hops),
     }
 
-    # A: answerable
-    if q["is_answerable"]:
+    # Check entity resolution first (E/F scenarios)
+    unresolved_hops = [h for h in hops if not h["entity_resolved"]]
+    if unresolved_hops:
+        # Some entity not in DBpedia — check if resolved entities have property gaps
+        resolved_hops = [h for h in hops if h["entity_resolved"]]
+        has_prop_gap = any(not h["property_exists"] for h in resolved_hops)
+        sc = "F" if has_prop_gap else "E"
+        result["scenario"] = sc
+        result["scenario_label"] = SCENARIO_LABELS[sc]
+        result["unresolved_entities"] = [h["subject"] for h in unresolved_hops]
+        result["missing_properties"] = [
+            f"{h['subject']}.{h['property']}"
+            for h in resolved_hops if not h["property_exists"]
+        ]
+        return result
+
+    # All entities resolved — check property completeness
+    if q["all_properties_exist"]:
         result["scenario"] = "A"
         result["scenario_label"] = SCENARIO_LABELS["A"]
-        result["missing_properties_summary"] = ""
+        result["missing_properties"] = []
         return result
 
-    # E/F: entity not found
-    any_missing = not q["all_entities_exist"]
-    if any_missing:
-        existing_have_gap = any(has_prop_gap(e) for e in entities)
-        sc = "F" if existing_have_gap else "E"
-        result["scenario"] = sc
-        result["scenario_label"] = SCENARIO_LABELS[sc]
-        missing_entities = [e["name"] for e in entities if not e["exists"]]
-        prop_parts = missing_props_str(
-            [e for e in entities if e["exists"]], "existing"
+    # Property gap — classify by which hop role is missing
+    hop1_list, hop2_list = split_hops_by_role(hops, qtype)
+
+    hop1_ok = all(h["property_exists"] for h in hop1_list)
+    hop2_ok = all(h["property_exists"] for h in hop2_list) if hop2_list else True
+
+    if not hop1_ok and hop2_ok:
+        sc = "B"
+    elif hop1_ok and not hop2_ok:
+        sc = "C"
+    elif not hop1_ok and not hop2_ok:
+        sc = "D"
+    else:
+        # Both ok but all_properties_exist=False — should not happen
+        raise ValueError(
+            f"Inconsistency: all hops ok but all_properties_exist=False "
+            f"for {q['question_id']}"
         )
-        parts = [f"not_found: {', '.join(missing_entities)}"]
-        if prop_parts:
-            parts.append(prop_parts)
-        result["missing_properties_summary"] = "; ".join(parts)
-        return result
 
-    # Property-gap classification (all entities exist)
-    if qtype == "comparison":
-        # 1-hop only: seeds are the only entities, no bridges
-        result["scenario"] = "B"
-        result["scenario_label"] = SCENARIO_LABELS["B"]
-        result["missing_properties_summary"] = missing_props_str(seeds, "seed")
-        return result
-
-    if qtype == "bridge_comparison":
-        chain1 = classify_chain(seeds[0], bridges[0])
-        chain2 = classify_chain(seeds[1], bridges[1])
-        # Use aggregate seed/bridge completeness (not worst-chain) so that
-        # cross-chain failures (e.g. seed₁ missing + bridge₂ missing) classify as D.
-        s_ok = all(len(e["properties_missing"]) == 0 for e in seeds)
-        b_ok = all(len(e["properties_missing"]) == 0 for e in bridges)
-        if not s_ok and b_ok:
-            sc = "B"
-        elif s_ok and not b_ok:
-            sc = "C"
-        elif not s_ok and not b_ok:
-            sc = "D"
-        else:
-            # Both complete but not answerable — should not happen
-            sc = "A"
-        result["scenario"] = sc
-        result["scenario_label"] = SCENARIO_LABELS[sc]
-        result["chain_detail"] = {
-            "chain1": {"seed": seeds[0]["name"], "bridge": bridges[0]["name"],
-                       "status": chain1},
-            "chain2": {"seed": seeds[1]["name"], "bridge": bridges[1]["name"],
-                       "status": chain2},
-        }
-        result["missing_properties_summary"] = missing_props_str(
-            seeds + bridges, "all"
-        )
-        return result
-
-    # compositional / inference
-    seed = seeds[0]
-    bridge = bridges[0] if bridges else None
-    chain = classify_chain(seed, bridge)
-    sc = chain_to_scenario(chain)
     result["scenario"] = sc
     result["scenario_label"] = SCENARIO_LABELS[sc]
-    all_ents = seeds + bridges
-    result["missing_properties_summary"] = missing_props_str(all_ents, "all")
+    result["missing_properties"] = [
+        f"{h['subject']}.{h['property']}"
+        for h in hops if not h["property_exists"]
+    ]
     return result
 
 
-def build_missing_property_ranking(questions: list[dict]) -> dict:
-    """Rank missing properties by hop (seed=hop1, bridge=hop2)."""
+def build_missing_property_ranking(questions: list[dict], all_qs: list[dict]) -> dict:
+    """Rank missing properties by hop role (hop-1 vs hop-2).
+
+    Uses the original hop data (all_qs) to get hop details,
+    paired with classification results (questions) for scenario filtering.
+    """
     hop1: Counter = Counter()
     hop2: Counter = Counter()
-    for q in questions:
-        if q["scenario"] in ("E", "F"):
+
+    for classified, original in zip(questions, all_qs):
+        if classified["scenario"] in ("E", "F"):
             continue
-        for e in q["seed_entities"]:
-            for p in e["properties_missing"]:
-                hop1[p] += 1
-        for e in q["bridge_entities"]:
-            for p in e["properties_missing"]:
-                hop2[p] += 1
+        hops = original["hops"]
+        qtype = original["question_type"]
+        hop1_list, hop2_list = split_hops_by_role(hops, qtype)
+
+        for h in hop1_list:
+            if not h["property_exists"]:
+                hop1[h["property"]] += 1
+        for h in hop2_list:
+            if not h["property_exists"]:
+                hop2[h["property"]] += 1
+
     return {
         "hop1": dict(hop1.most_common(20)),
         "hop2": dict(hop2.most_common(20)),
@@ -211,14 +166,11 @@ def print_report(questions: list[dict], summary: dict) -> None:
     """Print human-readable summary to stdout."""
     total = summary["total"]
     by_sc = summary["by_scenario"]
-    by_sc_type = summary["by_scenario_and_type"]
-    ranking = summary["missing_properties_ranking"]
 
     print("=" * 72)
-    print("SCENARIO CLASSIFICATION — 1000 QUESTIONS")
+    print("SCENARIO CLASSIFICATION — 1000 QUESTIONS (hop-verified)")
     print("=" * 72)
 
-    # Overall table
     print(f"\n{'Scenario':<6} {'Label':<28} {'Count':>5} {'%':>7}  {'95% CI'}")
     print("-" * 72)
     for sc in "ABCDEF":
@@ -230,6 +182,7 @@ def print_report(questions: list[dict], summary: dict) -> None:
     print(f"{'':>36} {total:>5}")
 
     # Cross-tab: scenario × type
+    by_sc_type = summary["by_scenario_and_type"]
     types = sorted({q["question_type"] for q in questions})
     print(f"\n{'Scenario':<6}", end="")
     for t in types:
@@ -244,7 +197,6 @@ def print_report(questions: list[dict], summary: dict) -> None:
             row_total += n
             print(f" {n:>18}", end="")
         print(f" {row_total:>8}")
-    # Totals row
     print(f"{'TOTAL':>6}", end="")
     for t in types:
         n = sum(by_sc_type.get(t, {}).get(sc, 0) for sc in "ABCDEF")
@@ -252,37 +204,20 @@ def print_report(questions: list[dict], summary: dict) -> None:
     print(f" {total:>8}")
 
     # Missing properties ranking
+    ranking = summary["missing_properties_ranking"]
     print("\nTop missing properties (hop-1 = seed entity):")
     for prop, cnt in list(ranking["hop1"].items())[:10]:
         print(f"  {prop:<35} {cnt:>4}")
-
     print("\nTop missing properties (hop-2 = bridge entity):")
     for prop, cnt in list(ranking["hop2"].items())[:10]:
         print(f"  {prop:<35} {cnt:>4}")
-
-    # Interpretation
-    print("\n" + "=" * 72)
-    print("INTERPRETATION")
-    print("=" * 72)
-    a_pct = 100 * by_sc["A"] / total
-    b_pct = 100 * by_sc.get("B", 0) / total
-    c_pct = 100 * by_sc.get("C", 0) / total
-    ef_pct = 100 * (by_sc.get("E", 0) + by_sc.get("F", 0)) / total
-    print(f"  A ({a_pct:.1f}%): Pure SPARQL can answer these — no Wikipedia needed.")
-    print(f"  B ({b_pct:.1f}%): Hop-1 predicate missing — need Wikipedia infobox/text"
-          " for seed entity.")
-    print(f"  C ({c_pct:.1f}%): Hop-2 predicate missing — SPARQL finds bridge entity,"
-          " but need Wikipedia for bridge properties.")
-    print(f"  D ({100*by_sc.get('D',0)/total:.1f}%): Both hops broken — need Wikipedia"
-          " for both seed and bridge entities.")
-    print(f"  E+F ({ef_pct:.1f}%): Entity not in DBpedia — need text-only pipeline.")
 
 
 def main() -> None:
     with open(INPUT) as f:
         data = json.load(f)
 
-    raw_questions = data["questions"]
+    raw_questions = data["results"]
     classified = [classify_question(q) for q in raw_questions]
 
     # Build summary
@@ -295,7 +230,7 @@ def main() -> None:
         by_scenario[sc] += 1
         by_scenario_type[q["question_type"]][sc] += 1
 
-    ranking = build_missing_property_ranking(classified)
+    ranking = build_missing_property_ranking(classified, raw_questions)
 
     summary = {
         "total": total,
@@ -305,13 +240,17 @@ def main() -> None:
             for t, counts in sorted(by_scenario_type.items())
         },
         "missing_properties_ranking": ranking,
+        "data_source": "hop_verification_results.json",
+        "note": "Recomputed 2026-03-31 from hop-verified ground truth",
     }
 
-    # Validate
-    assert sum(by_scenario.values()) == total, "Scenarios not exhaustive"
-    assert by_scenario["A"] == data["statistics"]["overall"]["answerable_count"], (
-        f"A={by_scenario['A']} != answerable={data['statistics']['overall']['answerable_count']}"
+    # Validate: A must equal all_properties_exist count
+    a_count = by_scenario["A"]
+    hop_verified_count = sum(1 for q in raw_questions if q["all_properties_exist"])
+    assert a_count == hop_verified_count, (
+        f"A={a_count} != all_properties_exist={hop_verified_count}"
     )
+    assert sum(by_scenario.values()) == total, "Scenarios not exhaustive"
 
     output = {"summary": summary, "questions": classified}
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

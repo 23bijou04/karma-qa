@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Schema-Routed Hybrid QA: uses KG schema to route SPARQL vs text.
+"""Schema-Routed Hybrid QA: uses KG schema to route SPARQL vs decomposition.
 
 Orchestrator-only: delegates SPARQL solving to sparql_solver.py,
 text solving to text_solver.py, routing to routing.py,
 and multi-hop decomposition to logicrag_decomposition.py.
 
-Three-path architecture:
+Two-route architecture:
   1. EntityLink(q)            — DBpedia Spotlight (spaCy fallback)
   2. SchemaDiscovery(E)       — entity classes, properties, sample values
   3. RouteDecision(q, S)      — rule-based + SPARQL ASK verification + LLM fallback
-  4. Direct SPARQL            — sparql_solver.solve() (single-hop or multi-hop with full schema)
-  5. LogicRAG decomposition   — logicrag_decomposition (incomplete schema or SPARQL failed)
-  6. Text fallback            — text_solver.solve()
+  4a. SPARQL Direct           — sparql_solver.solve() when schema covers the question
+  4b. LogicRAG Decomposition  — sub-question decomposition, each sub-Q uses SPARQL or text
+
+Text retrieval (text_solver.solve) is a fallback mechanism within each sub-question
+and a last resort if both routes fail — not a separate top-level route.
 
 Usage:
   python3 hybrid_qa.py "Who directed Inception?" --verbose
@@ -22,12 +24,15 @@ Usage:
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 _parent = str(Path(__file__).resolve().parent.parent)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
+import logicrag_decomposition  # noqa: E402
+import routing as routing_mod  # noqa: E402
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
 from ablation_study_v3.wiki_utils import uri_to_wiki_title  # noqa: E402
@@ -35,6 +40,7 @@ from dbpedia_qa.dbpedia import (  # noqa: E402
     DBpediaEntityLinker,
     DBpediaSPARQLClient,
     SchemaDiscovery,
+    WikipediaResolver,
 )
 from dbpedia_qa.models import HybridResult  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
@@ -57,13 +63,16 @@ def hybrid_answer(question: str, api_key: str = None,
                   verbose: bool = False, debug: bool = False,
                   llm_client=None, linker=None,
                   kg_client=None, schema_disc=None,
-                  provider: str = "groq") -> HybridResult:
-    """Schema-routed hybrid QA with 3-path architecture.
+                  provider: str = "groq",
+                  benchmark_corpus: list[dict] | None = None) -> HybridResult:
+    """Schema-routed hybrid QA with two-route architecture.
 
-    Paths:
-      1. Direct SPARQL — single-hop or multi-hop when schema coverage is complete
-      2. LogicRAG decomposition — multi-hop with incomplete schema, or direct SPARQL failed
-      3. Simple text fallback — neighbors + Wikipedia + LLM reasoning
+    Routes:
+      1. SPARQL Direct — single-hop or multi-hop when schema coverage is complete
+      2. LogicRAG Decomposition — multi-hop with incomplete schema, or SPARQL failed;
+         each sub-question independently uses SPARQL or text retrieval
+
+    Text retrieval is the fallback within sub-questions and a last resort, not a peer route.
 
     Returns: HybridResult with answer, method, route_source, and sparql_fallback.
     """
@@ -71,9 +80,13 @@ def hybrid_answer(question: str, api_key: str = None,
         verbose = True
     sep = "=" * 70
     llm_client = llm_client or create_llm_client(provider, api_key=api_key)
-    linker = linker or DBpediaEntityLinker(min_confidence=0.5)
+    linker = linker or DBpediaEntityLinker(
+        min_confidence=0.5, llm_client=llm_client, llm_model=model,
+        wiki_resolver=WikipediaResolver(),
+    )
     kg_client = kg_client or DBpediaSPARQLClient()
     schema_disc = schema_disc or SchemaDiscovery()
+    t_start = time.time()
 
     # === Step 1: Entity Linking ===
     entities = link_entities_to_dbpedia(question, linker)
@@ -87,6 +100,7 @@ def hybrid_answer(question: str, api_key: str = None,
                 print(f"    URI: {e.uri}")
         if not entities:
             print("  (none found)")
+    t_entity_link = time.time()
 
     # === Step 2: Build EntityProfiles ===
     profiles = [build_entity_profile(e.uri, e.label, schema_disc) for e in entities if e.uri]
@@ -109,16 +123,56 @@ def hybrid_answer(question: str, api_key: str = None,
                   f"completeness={p.completeness}")
         if not projections:
             print("  (no URIs to query schema for)")
+    t_schema = time.time()
 
     # === Step 3: Route Decision — rules + ASK verification + LLM fallback ===
     route, route_source = route_question(
         question, entities, kg_client, llm_client, model,
         projections=projections, schema_ctx=schema_ctx, debug=debug,
     )
+    t_route = time.time()
     if verbose:
         print(f"\n{sep}")
         print(f"STEP 3: Route Decision → {route} ({route_source})")
         print(sep)
+
+    # Build debug_info — wrapped in try/except so metadata failure doesn't crash the question
+    try:
+        debug_info = {
+            "entities_linked": [
+                {"label": e.label, "uri": e.uri, "confidence": e.confidence, "source": e.source}
+                for e in entities
+            ],
+            "route": route,
+            "route_meta": routing_mod._last_route_meta.copy(),
+            "analysis": {
+                "hop_structure": analysis.hop_structure,
+                "is_comparison": analysis.is_comparison,
+                "target_properties": sorted(analysis.target_properties),
+                "bridge_keyword": analysis.bridge_keyword,
+                "bridge_property": analysis.bridge_property,
+                "hop2_keyword": analysis.hop2_keyword,
+                "hop2_properties": sorted(analysis.hop2_properties)
+                if analysis.hop2_properties else [],
+            },
+            "projections": [
+                {
+                    "entity_label": p.entity_profile.label,
+                    "primary_class": p.primary_class,
+                    "completeness": p.completeness,
+                    "missing_hops": p.missing_hops,
+                    "relevant_properties": p.relevant_properties,
+                }
+                for p in projections
+            ],
+            "stage_timings": {
+                "entity_linking_s": round(t_entity_link - t_start, 3),
+                "schema_projection_s": round(t_schema - t_entity_link, 3),
+                "routing_s": round(t_route - t_schema, 3),
+            },
+        }
+    except Exception as e:
+        debug_info = {"assembly_error": str(e)}
 
     # === Step 4: Direct SPARQL (single-hop or multi-hop with full schema) ===
     sparql_answer = None
@@ -135,6 +189,8 @@ def hybrid_answer(question: str, api_key: str = None,
         )
 
     if sparql_answer:
+        debug_info["sparql_solver_meta"] = sparql_solver._last_solve_meta.copy()
+        debug_info["stage_timings"]["sparql_solve_s"] = round(time.time() - t_route, 3)
         if verbose:
             print(f"\n{sep}")
             print(f"RESULT (method=sparql, route={route_source})")
@@ -144,6 +200,7 @@ def hybrid_answer(question: str, api_key: str = None,
         return HybridResult(
             sparql_answer, "sparql", route_source,
             sparql_query=executed_sparql_query,
+            debug_info=debug_info,
         )
 
     # === Step 5: LogicRAG Decomposition (incomplete schema, or SPARQL failed) ===
@@ -151,13 +208,17 @@ def hybrid_answer(question: str, api_key: str = None,
     logicrag_answer, sub_q_log = _try_logicrag_decomposition(
         question, entities, schema_ctx, llm_client, model,
         linker, kg_client, schema_disc, verbose, debug=debug,
+        benchmark_corpus=benchmark_corpus,
     )
     if logicrag_answer:
+        debug_info["decomp_meta"] = logicrag_decomposition._last_decomp_meta.copy()
+        debug_info["stage_timings"]["logicrag_s"] = round(time.time() - t_route, 3)
         return HybridResult(
             logicrag_answer, "logicrag_decomposed", route_source,
             sparql_fallback=sparql_fallback,
             sparql_query="[logicrag_decomposed]",
             sub_question_log=sub_q_log,
+            debug_info=debug_info,
         )
 
     # === Step 5b: SPARQL pre-check for direct properties before TEXT ===
@@ -186,11 +247,15 @@ def hybrid_answer(question: str, api_key: str = None,
                             verbose=verbose, debug=debug,
                         )
                         if precheck_answer:
+                            debug_info["sparql_solver_meta"] = sparql_solver._last_solve_meta.copy()
+                            debug_info["stage_timings"]["precheck_s"] = round(
+                                time.time() - t_route, 3)
                             return HybridResult(
                                 precheck_answer, "sparql",
                                 "precheck_" + route_source,
                                 sparql_fallback=True,
                                 sparql_query=precheck_query,
+                                debug_info=debug_info,
                             )
                         break  # Only need one hit to attempt SPARQL
                 except Exception:
@@ -257,6 +322,7 @@ def hybrid_answer(question: str, api_key: str = None,
         llm_client=llm_client, model=model,
         verbose=verbose,
         seed_titles=seed_titles,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if not answer:
@@ -270,13 +336,25 @@ def hybrid_answer(question: str, api_key: str = None,
         print(f"  Question: {question}")
         print(f"  Answer:   {answer}")
 
+    debug_info["text_path"] = {
+        "seed_entity_count": len(entities),
+        "all_entity_count": len(all_entities),
+        "kg_facts_chars": len(kg_facts),
+    }
+    debug_info["text_solver_meta"] = text_solver._last_solve_meta.copy()
+    debug_info["stage_timings"]["text_solve_s"] = round(time.time() - t_route, 3)
+
     return HybridResult(
         answer, "text", route_source, sparql_fallback,
         kg_context=kg_facts,
+        debug_info=debug_info,
     )
 
 
 def main():
+    from sparql_evaluation import force_ipv4
+    force_ipv4()
+
     parser = argparse.ArgumentParser(
         description="Schema-Routed Hybrid QA: SPARQL-first + text fallback"
     )
@@ -291,7 +369,7 @@ def main():
         help="LLM model (default: llama-3.3-70b-versatile)",
     )
     parser.add_argument(
-        "--provider", default="groq", choices=["groq", "github"],
+        "--provider", default="groq", choices=["groq", "github", "ollama"],
         help="LLM provider (default: groq)",
     )
     parser.add_argument("--verbose", action="store_true", help="Show pipeline steps")
@@ -299,12 +377,24 @@ def main():
         "--debug", action="store_true",
         help="Show SPARQL gap analysis and decomposition traces (implies --verbose)",
     )
+    parser.add_argument(
+        "--corpus", default=None,
+        help="Path to benchmark corpus JSON for TEXT route RAG (same as LogicRAG)",
+    )
     args = parser.parse_args()
+
+    benchmark_corpus = None
+    if args.corpus:
+        import json
+        with open(args.corpus) as f:
+            benchmark_corpus = json.load(f)
+        print(f"Loaded benchmark corpus: {len(benchmark_corpus)} entries")
 
     try:
         result = hybrid_answer(
             args.question, api_key=args.api_key, model=args.model,
             verbose=args.verbose, debug=args.debug, provider=args.provider,
+            benchmark_corpus=benchmark_corpus,
         )
     except ValueError as e:
         print(f"Error: {e}")

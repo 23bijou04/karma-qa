@@ -108,7 +108,8 @@ def _chi2_sf(x: float, df: int = 1) -> float:
     # For df=1, use the normal approximation
     z = math.sqrt(x)
     # Standard normal survival function approximation
-    return 0.5 * math.erfc(z / math.sqrt(2))
+    # Chi-squared(df=1) survival: P(X>x) = erfc(sqrt(x) / sqrt(2))
+    return math.erfc(z / math.sqrt(2))
 
 
 def bootstrap_ci(

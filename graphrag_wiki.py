@@ -31,6 +31,7 @@ if _parent not in sys.path:
 from ddgs import DDGS
 
 from ablation_study_v3.wiki_utils import (
+    _rate_limit_wiki,
     get_wikipedia_text_by_title,
     uri_to_wiki_title,
 )
@@ -128,7 +129,7 @@ def link_entities_to_dbpedia(question: str,
     Spotlight -> spaCy mention extraction -> bif:contains fallback.
     Every returned entity has a resolved URI (no more Entity(uri="")).
     """
-    return linker.link_entities(question)
+    return linker.link_entities(question, question=question)
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +437,7 @@ def extract_relevant_sections(text: str, keywords: list[str],
 # 3. Web search for Wikipedia pages
 # ---------------------------------------------------------------------------
 
-_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (research; hybrid-qa)"}
+_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
 
 
 def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
@@ -446,6 +447,7 @@ def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:
     undocumented rate limits (unlike DDG which silently blocks after ~50 calls).
     """
     # Primary: Wikipedia native search API
+    _rate_limit_wiki()  # 0.5s delay between Wikipedia API calls
     try:
         resp = requests.get(
             "https://en.wikipedia.org/w/api.php",
@@ -819,6 +821,9 @@ Instructions:
 
 
 def main():
+    from sparql_evaluation import force_ipv4
+    force_ipv4()
+
     parser = argparse.ArgumentParser(
         description="GraphRAG: Answer questions via DBpedia + Wikipedia + LLM"
     )
@@ -827,7 +832,7 @@ def main():
                         help="API key (default: provider-specific env var)")
     parser.add_argument("--model", default="llama-3.3-70b-versatile",
                         help="LLM model (default: llama-3.3-70b-versatile)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show step-by-step pipeline output")

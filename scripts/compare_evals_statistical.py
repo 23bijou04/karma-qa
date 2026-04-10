@@ -14,6 +14,7 @@ Usage:
 """
 
 import json
+import math
 import sys
 from collections import defaultdict
 
@@ -46,13 +47,16 @@ def mcnemar(baseline, revised):
             improvements.append(qid)
     # McNemar with continuity correction (standard for 2x2 chi-squared)
     chi2 = (abs(b - c) - 1) ** 2 / (b + c) if (b + c) > 0 else 0
-    sig = "p<0.05 (significant)" if chi2 > 3.84 else "p>=0.05 (not significant)"
+    # Chi-squared(df=1) survival function for proper p-value
+    p_val = math.erfc(math.sqrt(chi2) / math.sqrt(2)) if chi2 > 0 else 1.0
+    sig = f"p={p_val:.4f} ({'significant' if p_val < 0.05 else 'not significant'})"
     return {
         "shared": len(shared),
         "improved": c,
         "regressed": b,
         "net": c - b,
         "chi2": round(chi2, 2),
+        "p_value": round(p_val, 4),
         "significance": sig,
         "regression_rate": f"{b / (b + c) * 100:.1f}%" if (b + c) else "N/A",
         "improvements": improvements,

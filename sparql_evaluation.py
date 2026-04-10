@@ -57,8 +57,10 @@ def force_ipv4():
     if _ipv4_patched:
         return
     _orig = socket.getaddrinfo
+
     def _ipv4_only(*args, **kwargs):
         return [r for r in _orig(*args, **kwargs) if r[0] == socket.AF_INET]
+
     socket.getaddrinfo = _ipv4_only
     _ipv4_patched = True
 
@@ -71,7 +73,10 @@ DEFAULT_COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
 def load_answerable_questions(coverage_file: str) -> list[dict]:
     with open(coverage_file) as f:
         data = json.load(f)
-    answerable = [q for q in data["questions"] if q["is_answerable"]]
+    answerable = [
+        q for q in data["questions"]
+        if q.get("hop_verified_answerable", q.get("is_answerable", False))
+    ]
     print(f"Loaded {len(answerable)} answerable questions from {coverage_file}")
     return answerable
 
@@ -351,6 +356,8 @@ QUESTION: {question}
 Generate ONLY the corrected SPARQL query:"""
 
 ANSWER_PROMPT = """Given the question and SPARQL query results from DBpedia, provide the answer.
+Base your answer ONLY on the SPARQL results shown below, not on your own knowledge.
+For comparison questions: if data is missing for one of the entities being compared, say "could not determine" instead of guessing.
 
 Question: {question}
 SPARQL Results:
@@ -547,7 +554,7 @@ def main():
                         help="Output JSONL path")
     parser.add_argument("--api-key", default=None,
                         help="API key (default: provider-specific env var)")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"],
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"],
                         help="LLM provider (default: groq)")
     parser.add_argument("--coverage-file", default=DEFAULT_COVERAGE_FILE,
                         help="Path to coverage analysis JSON")
@@ -563,7 +570,7 @@ def main():
     schema_disc = SchemaDiscovery()
 
     # Trace directory
-    trace_dir = "data/sparql_eval_traces"
+    trace_dir = "data/eval_1000q/sparql/traces"
     os.makedirs(trace_dir, exist_ok=True)
 
     # Load questions & resume

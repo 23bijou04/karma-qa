@@ -695,6 +695,129 @@ class TestVerifySparqlFeasibility:
         assert result is not None
         assert result[0] == "DECOMPOSE"
 
+    # --- Comparison-aware ASK verification (all vs any) ---
+
+    def test_comparison_both_verified_routes_sparql(self):
+        """Comparison + bridge: both entities pass ASK → SPARQL+ask_verified."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile(
+            actual_property_set=frozenset({"dbo:director", "dbo:producer"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question(
+            "Which director was born earlier, the director of Inception or Titanic?"
+        )
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        # Both entities return True
+        mock_kg.query.return_value = {"boolean": True}
+        entities = _make_entities("Inception", "Titanic")
+        rule = ("SPARQL", "rule:bridge_comparison")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        assert result is not None
+        assert result[0] == "SPARQL"
+        assert "ask_verified" in result[1]
+        # Both entities must be checked
+        assert mock_kg.query.call_count == 2
+
+    def test_comparison_one_fails_routes_decompose(self):
+        """Comparison + bridge: first entity True, second False → DECOMPOSE+ask_partial."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile(
+            actual_property_set=frozenset({"dbo:director", "dbo:producer"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question(
+            "Which director was born earlier, the director of Inception or Titanic?"
+        )
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        # First entity True, second False → partial coverage
+        mock_kg.query.side_effect = [{"boolean": True}, {"boolean": False}]
+        entities = _make_entities("Inception", "Titanic")
+        rule = ("SPARQL", "rule:bridge_comparison")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        assert result is not None
+        assert result[0] == "DECOMPOSE"
+        assert "ask_partial" in result[1]
+
+    def test_comparison_exception_counts_as_failure(self):
+        """Comparison + bridge: ASK exception for one entity → DECOMPOSE."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile(
+            actual_property_set=frozenset({"dbo:director", "dbo:producer"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question(
+            "Which director was born earlier, the director of Inception or Titanic?"
+        )
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        # First entity ok, second throws → partial
+        mock_kg.query.side_effect = [{"boolean": True}, Exception("timeout")]
+        entities = _make_entities("Inception", "Titanic")
+        rule = ("SPARQL", "rule:bridge_comparison")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        assert result is not None
+        assert result[0] == "DECOMPOSE"
+
+    def test_comparison_no_uri_entities_passthrough(self):
+        """Comparison + bridge: all entities have uri=None → passthrough (no ASK possible)."""
+        from routing import verify_sparql_feasibility
+        profile = _film_profile(
+            actual_property_set=frozenset({"dbo:director"}),
+            all_2hop_chains={},
+        )
+        analysis = analyze_question(
+            "Which director was born earlier, the director of Inception or Titanic?"
+        )
+        proj = project(profile, analysis)
+        entities = [
+            Entity(uri=None, label="Inception", source="test"),
+            Entity(uri=None, label="Titanic", source="test"),
+        ]
+        rule = ("SPARQL", "rule:bridge_comparison")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, None, rule_result=rule,
+        )
+        assert result is not None
+        # No URI entities → passthrough (original rule, no ASK attempted)
+        assert result[0] == "SPARQL"
+
+    def test_non_comparison_any_logic_preserved(self):
+        """Non-comparison bridge: first entity True → SPARQL (any suffices, no need to check all)."""
+        from unittest.mock import MagicMock
+
+        from routing import verify_sparql_feasibility
+        profile = _film_profile()
+        analysis = analyze_question("When was the director of Inception born?")
+        proj = project(profile, analysis)
+        mock_kg = MagicMock()
+        mock_kg.query.return_value = {"boolean": True}
+        # Two entities but NOT a comparison question
+        entities = _make_entities("Inception", "Titanic")
+        rule = ("SPARQL", "rule:bridge_hop2")
+        result = verify_sparql_feasibility(
+            analysis, [proj], entities, mock_kg, rule_result=rule,
+        )
+        assert result is not None
+        assert result[0] == "SPARQL"
+        assert "ask_verified" in result[1]
+        # any() short-circuits: only first entity checked
+        assert mock_kg.query.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # entities_to_schema_dicts

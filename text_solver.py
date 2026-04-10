@@ -28,6 +28,8 @@ except ImportError:
 # Module-level singletons (lazy-initialized on first RAG call)
 _rag_cache: "WikiRAGCache | None" = None
 _reranker: "Reranker | None" = None
+_corpus_index: "RAGIndex | None" = None
+_last_solve_meta: dict = {}
 
 
 def _get_rag_cache():
@@ -42,6 +44,44 @@ def _get_reranker():
     if _reranker is None:
         _reranker = Reranker()
     return _reranker
+
+
+def _build_corpus_index(benchmark_corpus: list[dict], verbose: bool = False) -> "RAGIndex":
+    """Build or return cached FAISS index from benchmark corpus.
+
+    Built once on first call, reused for all subsequent questions.
+    Embeds whole entries with title prefix (matches LogicRAG format).
+    Uses WikiRAGCache for embedding persistence across runs.
+
+    NOTE: If switching from the old chunked format, delete data/wiki_cache.db
+    first — short entries (<=512 chars) have matching chunk counts (1==1) so
+    the cache won't auto-invalidate their stale embeddings.
+    """
+    global _corpus_index
+    if _corpus_index is not None:
+        return _corpus_index
+
+    from rag.chunker import WikiChunk
+
+    chunks = []
+    for entry in benchmark_corpus:
+        title, text = entry["title"], entry["text"]
+        # Embed whole entry with title prefix (matches LogicRAG format)
+        full_text = f"Title: {title}. Content: {text}"
+        chunks.append(WikiChunk(
+            text=full_text, page_title=title,
+            section_header="(Lead)", chunk_index=0, char_offset=0,
+        ))
+
+    cache = _get_rag_cache()
+    index = RAGIndex()
+    index.index_chunks(chunks, cache=cache)
+    _corpus_index = index
+
+    if verbose:
+        print(f"  Built corpus FAISS index: {len(chunks)} entries (no chunking)")
+
+    return _corpus_index
 
 
 def _assemble_from_chunks(chunks, kg_facts: str = "",
@@ -118,6 +158,7 @@ def solve(
     verbose: bool = False,
     is_subquestion: bool = False,
     seed_titles: set[str] | None = None,
+    benchmark_corpus: list[dict] | None = None,
 ) -> str | None:
     """Retrieve Wikipedia text, assemble context, LLM reasoning.
 
@@ -138,6 +179,8 @@ def solve(
     Returns:
         Answer string if successful, None if resolution fails.
     """
+    global _last_solve_meta
+    _last_solve_meta = {}
     # Build seed titles if not provided
     if seed_titles is None:
         seed_titles = {
@@ -149,20 +192,26 @@ def solve(
         try:
             context = _solve_rag(
                 question, entities, known_facts, relation_hints or {},
-                seed_titles, verbose,
+                seed_titles, verbose, benchmark_corpus=benchmark_corpus,
             )
+            _last_solve_meta["retrieval_path"] = "rag"
+            _last_solve_meta["context_chars"] = len(context) if context else 0
         except Exception as e:
             logger.warning("RAG retrieval failed, falling back to keyword: %s", e,
                           exc_info=True)
+            _last_solve_meta["retrieval_path"] = "keyword_fallback_from_rag"
+            _last_solve_meta["rag_error"] = str(e)
             context = _solve_keyword(
                 question, entities, known_facts, relation_hints or {},
-                seed_titles, verbose,
+                seed_titles, verbose, benchmark_corpus=benchmark_corpus,
             )
     else:
         context = _solve_keyword(
             question, entities, known_facts, relation_hints or {},
-            seed_titles, verbose,
+            seed_titles, verbose, benchmark_corpus=benchmark_corpus,
         )
+        _last_solve_meta["retrieval_path"] = "keyword"
+        _last_solve_meta["context_chars"] = len(context) if context else 0
 
     if context is None:
         return None
@@ -177,7 +226,9 @@ def solve(
             question=question, context=context, kg_facts=known_facts,
         )
 
+    _last_solve_meta["llm_prompt"] = prompt
     response = call_llm(llm_client, prompt, model)
+    _last_solve_meta["llm_raw_response"] = response
     answer = extract_final_answer(response) if response else None
 
     if verbose and answer:
@@ -187,20 +238,28 @@ def solve(
 
 
 def _solve_rag(question, entities, known_facts, relation_hints,
-               seed_titles, verbose) -> str | None:
+               seed_titles, verbose, benchmark_corpus=None) -> str | None:
     """RAG path: bi-encoder retrieval → cross-encoder reranking → context assembly."""
-    from graphrag_wiki import retrieve_and_chunk_wikipedia
-
-    cache = _get_rag_cache()
-    chunks = retrieve_and_chunk_wikipedia(entities, question, cache=cache, verbose=verbose)
-    if not chunks:
+    if benchmark_corpus:
+        rag_index = _build_corpus_index(benchmark_corpus, verbose=verbose)
         if verbose:
-            print("  No Wikipedia chunks retrieved (RAG path).")
-        return None
+            print("  Retrieving from shared corpus index (no live Wikipedia)")
+    else:
+        from graphrag_wiki import retrieve_and_chunk_wikipedia
 
-    rag_index = RAGIndex()
-    rag_index.index_chunks(chunks, cache=cache)
+        cache = _get_rag_cache()
+        chunks = retrieve_and_chunk_wikipedia(entities, question, cache=cache, verbose=verbose)
+        if not chunks:
+            if verbose:
+                print("  No Wikipedia chunks retrieved (RAG path).")
+            return None
+        rag_index = RAGIndex()
+        rag_index.index_chunks(chunks, cache=cache)
+
     top_chunks = rag_index.retrieve(question, top_k=20, seed_titles=seed_titles)
+    _last_solve_meta["rag_chunks_retrieved"] = len(top_chunks)
+    # top_chunks is list[(WikiChunk, float)] from RAGIndex.retrieve()
+    _last_solve_meta["rag_pages_in_top"] = list({c.page_title for c, _ in top_chunks})
 
     if not top_chunks:
         if verbose:
@@ -208,9 +267,13 @@ def _solve_rag(question, entities, known_facts, relation_hints,
         return None
 
     reranker = _get_reranker()
+    corpus_hints = {} if benchmark_corpus else relation_hints
     reranked = reranker.rerank(
-        question, top_chunks, top_k=8, relation_hints=relation_hints,
+        question, top_chunks, top_k=8, relation_hints=corpus_hints,
     )
+    _last_solve_meta["rag_chunks_reranked"] = len(reranked)
+    _last_solve_meta["rag_unique_pages"] = len({c.page_title for c in reranked})
+    _last_solve_meta["rag_reranked_pages"] = list({c.page_title for c in reranked})
 
     context = _assemble_from_chunks(reranked, "", max_chars=12_000)
     if verbose:
@@ -219,9 +282,15 @@ def _solve_rag(question, entities, known_facts, relation_hints,
 
 
 def _solve_keyword(question, entities, known_facts, relation_hints,
-                   seed_titles, verbose) -> str | None:
+                   seed_titles, verbose, benchmark_corpus=None) -> str | None:
     """Legacy keyword path: keyword-scored paragraph extraction."""
+    if benchmark_corpus:
+        if verbose:
+            print("  Keyword path skipped (corpus mode, RAG already attempted)")
+        return None
+
     raw_texts = retrieve_wikipedia(entities, question, verbose=verbose)
+    _last_solve_meta["pages_fetched"] = list(raw_texts.keys())
     if not raw_texts:
         if verbose:
             print("  No Wikipedia text retrieved.")

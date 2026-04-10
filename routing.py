@@ -29,20 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Mapping from question keywords to DBpedia ontology property names.
-# Used by verify_sparql_feasibility() (ASK).
-BRIDGE_WORD_TO_PROP = {
-    "director": "director", "directed": "director",
-    "producer": "producer", "produced": "producer",
-    "writer": "writer", "wrote": "writer",
-    "author": "author",
-    "composer": "musicComposer",
-    "starring": "starring", "actor": "starring", "actress": "starring",
-    "founded": "foundedBy", "founder": "foundedBy",
-    "father": "father", "mother": "mother",
-    "performer": "artist",
-    "spouse": "spouse", "married": "spouse",
-}
+_last_route_meta: dict = {}
 
 PROPERTY_EXTRACTION_PROMPT = """Given this question and DBpedia schema, \
 which properties are needed to answer it?
@@ -82,8 +69,14 @@ def _rule_based_route(
     analysis: QuestionAnalysis,
     projections: list[SchemaProjection],
     debug: bool = False,
+    extra_ranges: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
     """Return ('SPARQL', reason) if rules match, None if inconclusive."""
+    # Merge static + dynamic property ranges for bridge detection
+    effective_ranges = dict(PROPERTY_RANGES)
+    if extra_ranges:
+        effective_ranges.update(extra_ranges)
+
     # Collect actual properties across all entity projections
     all_actual: set[str] = set()
     for proj in projections:
@@ -131,11 +124,11 @@ def _rule_based_route(
                         print(f"  [DEBUG] Rule matched: bridge_comparison "
                               f"(chain: {analysis.bridge_property} -> {target_cls})")
                     return ("SPARQL", "rule:bridge_comparison")
-            # Fallback: check PROPERTY_RANGES directly
+            # Fallback: check property ranges directly (static + dynamic)
             if analysis.bridge_property:
                 range_key = f"dbo:{analysis.bridge_property}"
-                if range_key in PROPERTY_RANGES:
-                    target_cls = PROPERTY_RANGES[range_key]
+                if range_key in effective_ranges:
+                    target_cls = effective_ranges[range_key]
                     if target_cls in CACHED_CLASS_SCHEMAS:
                         target_schema = CACHED_CLASS_SCHEMAS[target_cls]
                         if any(p in target_schema.get("dbo", []) for p in [
@@ -155,9 +148,9 @@ def _rule_based_route(
                     print(f"  [DEBUG] Rule matched: bridge_hop2 "
                           f"({analysis.bridge_keyword} -> {analysis.hop2_keyword})")
                 return ("SPARQL", "rule:bridge_hop2")
-            # Also check via PROPERTY_RANGES (schema may have the chain)
-            if bridge_full in PROPERTY_RANGES:
-                target_cls = PROPERTY_RANGES[bridge_full]
+            # Also check via property ranges (static + dynamic)
+            if bridge_full in effective_ranges:
+                target_cls = effective_ranges[bridge_full]
                 if target_cls in CACHED_CLASS_SCHEMAS:
                     if debug:
                         print(f"  [DEBUG] Rule matched: bridge_hop2 "
@@ -327,6 +320,12 @@ def verify_sparql_feasibility(
     if "bridge" in reason or "hop2" in reason or "parent" in reason:
         hop1_prop = analysis.bridge_property
 
+        # Safety net: reject property names that aren't valid identifiers
+        # (prevents natural language from LLM leaking into SPARQL URIs)
+        if hop1_prop and not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', hop1_prop):
+            logger.debug("Invalid bridge property %r, skipping ASK", hop1_prop)
+            return (route, reason)
+
         if not hop1_prop or not entities:
             return (route, reason)
 
@@ -335,16 +334,17 @@ def verify_sparql_feasibility(
         if analysis.hop2_properties:
             for p in analysis.hop2_properties:
                 if p.startswith("dbo:"):
-                    hop2_dbo_prop = p[4:]  # strip "dbo:" prefix
+                    candidate = p[4:].strip()
+                    # Validate: must be a valid property identifier
+                    if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', candidate):
+                        hop2_dbo_prop = candidate
                     break
 
-        verified = False
-        for entity in entities:
-            if not entity.uri:
-                continue
-            from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+
+        def _ask_entity(entity: Entity) -> bool:
+            """Run ASK query for a single entity. Returns True if chain exists."""
             safe_uri = escape_sparql_uri(entity.uri)
-            # Build ASK: hop-1 only, or hop-1 + hop-2 when hop2 is known
             hop1_pattern = (
                 f"<{safe_uri}> <http://dbpedia.org/ontology/{hop1_prop}> ?x"
             )
@@ -357,16 +357,28 @@ def verify_sparql_feasibility(
                 ask_query = f"ASK {{ {hop1_pattern} }}"
             try:
                 raw = kg_client.query(ask_query)
-                if raw.get("boolean", False):
-                    verified = True
-                    break
+                return raw.get("boolean", False)
             except Exception as e:
                 logger.debug("ASK query failed for %s: %s", entity.label, e)
-                continue
+                # Exception counts as verification failure
+                return False
 
-        if verified:
-            return ("SPARQL", f"{reason}+ask_verified")
-        return ("DECOMPOSE", f"{reason}+ask_missing")
+        uri_entities = [e for e in entities if e.uri]
+        if not uri_entities:
+            return (route, reason)
+
+        # Comparison questions need ALL entities verified (partial data = wrong comparison).
+        # Non-comparison questions need ANY entity verified (one source suffices).
+        if analysis.is_comparison:
+            all_verified = all(_ask_entity(e) for e in uri_entities)
+            if all_verified:
+                return ("SPARQL", f"{reason}+ask_verified")
+            return ("DECOMPOSE", f"{reason}+ask_partial")
+        else:
+            any_verified = any(_ask_entity(e) for e in uri_entities)
+            if any_verified:
+                return ("SPARQL", f"{reason}+ask_verified")
+            return ("DECOMPOSE", f"{reason}+ask_missing")
 
     return (route, reason)
 
@@ -376,7 +388,11 @@ def verify_sparql_feasibility(
 # ---------------------------------------------------------------------------
 
 def _build_property_schema(projections: list) -> str:
-    """Build available-property summary for LLM property extraction (~200 tokens)."""
+    """Build available-property summary for LLM property extraction (~200 tokens).
+
+    Shows actual properties (from SPARQL instance query) + ontology schema (capped)
+    + 2-hop chains (already instance-filtered in entity_profile).
+    """
     lines = []
     for proj in projections:
         profile = proj.entity_profile
@@ -385,7 +401,7 @@ def _build_property_schema(projections: list) -> str:
             lines.append(f"Class: {proj.primary_class}")
             schema = CACHED_CLASS_SCHEMAS.get(proj.primary_class, {})
             if schema.get("dbo"):
-                lines.append(f"  dbo properties: {', '.join(schema['dbo'])}")
+                lines.append(f"  dbo properties: {', '.join(schema['dbo'][:15])}")
         actual_dbo = profile.actual_properties.get("dbo", [])
         actual_dbp = profile.actual_properties.get("dbp", [])
         if actual_dbo:
@@ -395,7 +411,7 @@ def _build_property_schema(projections: list) -> str:
             lines.append(f"  Actual dbp: {', '.join(dbp_only)}")
         if profile.all_2hop_chains:
             for prop, (target, tprops) in profile.all_2hop_chains.items():
-                lines.append(f"  Chain: {prop} -> {target}: {', '.join(tprops)}")
+                lines.append(f"  Chain: {prop} -> {target}: {', '.join(tprops[:6])}")
     return "\n".join(lines)
 
 
@@ -422,6 +438,8 @@ def _extract_properties_llm(
     )
 
     response = call_llm(llm_client, prompt, model).strip()
+    _last_route_meta["llm_property_prompt"] = prompt
+    _last_route_meta["llm_property_response"] = response
 
     if debug:
         print(f"  [DEBUG] LLM property extraction: {response}")
@@ -432,11 +450,36 @@ def _extract_properties_llm(
     # Parse comma-separated property names, strip prefixes
     properties = []
     for part in response.split(","):
-        prop = part.strip().split(":")[-1]  # strip dbo:/dbp: if present
+        prop = part.strip().split(":")[-1].strip()  # strip dbo:/dbp: prefix + whitespace
         if prop and prop.upper() != "NONE":
-            properties.append(prop)
+            # Validate: property names are camelCase identifiers (no spaces, no natural language)
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', prop):
+                properties.append(prop)
+            else:
+                logger.debug("Rejected invalid LLM property: %r", prop)
+    _last_route_meta["llm_extracted_properties"] = properties
 
     return properties
+
+
+# ---------------------------------------------------------------------------
+# Multi-hop guard for direct_property routes
+# ---------------------------------------------------------------------------
+
+def _is_likely_multihop(question: str, entities: list[Entity], reason: str) -> bool:
+    """Detect direct_property SPARQL routes that should be DECOMPOSE instead.
+
+    All MuSiQue questions are multi-hop (3-4 hops), but some get routed to
+    single-hop SPARQL via direct_property match. 3+ linked entities strongly
+    indicates a multi-hop chain that direct SPARQL cannot handle.
+
+    Only fires on direct_property routes — bridge/comparison routes are
+    already handled correctly by the routing pipeline.
+    """
+    if "direct_property" not in reason:
+        return False
+    # 3+ entities means the question references multiple things in a chain
+    return len(entities) >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +509,8 @@ def route_question(
     NOT for binary SPARQL/TEXT classification. All routing decisions
     are deterministic once properties are identified.
     """
+    global _last_route_meta
+    _last_route_meta = {}
     from entity_profile import build_entity_profile
     from question_analysis import analyze_question, enrich_analysis
     from schema_projection import project
@@ -487,6 +532,11 @@ def route_question(
     if not projections:
         return ("TEXT", "no_schema_fallback")
 
+    # Collect dynamic ranges from all entity profiles (uncached type discovery)
+    dyn_ranges: dict[str, str] = {}
+    for proj in projections:
+        dyn_ranges.update(getattr(proj.entity_profile, "dynamic_ranges", {}))
+
     # Guard: comparison questions with incomplete entity coverage → DECOMPOSE
     if _has_incomplete_entity_coverage(question, entities):
         if debug:
@@ -494,14 +544,22 @@ def route_question(
         return ("DECOMPOSE", "incomplete_coverage")
 
     # Stage 1: Keyword-based rules + ASK verification
-    rule_result = _rule_based_route(analysis, projections, debug=debug)
+    rule_result = _rule_based_route(
+        analysis, projections, debug=debug, extra_ranges=dyn_ranges,
+    )
+    _last_route_meta["rule_result"] = rule_result
     ask_result = verify_sparql_feasibility(
         analysis, projections, entities, kg_client, rule_result,
     )
     if ask_result:
         route, reason = ask_result
+        _last_route_meta["ask_result"] = reason
         if debug:
             print(f"  [DEBUG] Stage 1 (keywords): {route} ({reason})")
+        if route == "SPARQL" and _is_likely_multihop(question, entities, reason):
+            if debug:
+                print(f"  [DEBUG] Multi-hop guard: SPARQL→DECOMPOSE ({reason})")
+            return ("DECOMPOSE", f"multihop_guard:{reason}")
         if route in ("SPARQL", "DECOMPOSE"):
             return (route, reason)
 
@@ -513,22 +571,32 @@ def route_question(
         )
 
         if llm_properties:
-            enriched = enrich_analysis(analysis, llm_properties)
+            enriched = enrich_analysis(analysis, llm_properties, extra_ranges=dyn_ranges)
             enriched_profiles = [proj.entity_profile for proj in projections]
             enriched_projections = [project(p, enriched) for p in enriched_profiles]
-            enriched_rule = _rule_based_route(enriched, enriched_projections, debug=debug)
+            enriched_rule = _rule_based_route(
+                enriched, enriched_projections, debug=debug, extra_ranges=dyn_ranges,
+            )
             enriched_ask = verify_sparql_feasibility(
                 enriched, enriched_projections, entities, kg_client, enriched_rule,
             )
+            _last_route_meta["enriched_rule_result"] = enriched_ask
             if enriched_ask:
                 route, reason = enriched_ask
                 if debug:
                     print(f"  [DEBUG] Stage 2 (LLM props={llm_properties}): "
                           f"{route} ({reason})")
+                if route == "SPARQL" and _is_likely_multihop(
+                    question, entities, reason
+                ):
+                    if debug:
+                        print(f"  [DEBUG] Multi-hop guard: SPARQL→DECOMPOSE "
+                              f"(llm_prop:{reason})")
+                    return ("DECOMPOSE", f"multihop_guard:llm_prop:{reason}")
                 if route in ("SPARQL", "DECOMPOSE"):
                     return (route, f"llm_prop:{reason}")
     except Exception as e:
-        logger.debug("Stage 2 LLM property extraction failed: %s", e)
+        logger.warning("Stage 2 LLM property extraction failed: %s", e)
 
     # Stage 3: TEXT fallback
     if debug:

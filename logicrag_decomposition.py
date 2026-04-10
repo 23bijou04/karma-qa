@@ -27,16 +27,21 @@ import text_solver  # noqa: E402
 from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from llm_provider import call_llm  # noqa: E402
-from logicrag_prompts import DEPENDENCY_RAG_PROMPT, FINAL_ANSWER_PROMPT  # noqa: E402
+from logicrag_prompts import DEPENDENCY_RAG_PROMPT, get_final_answer_prompt  # noqa: E402
 from question_analysis import analyze_question as qa_analyze  # noqa: E402
+from question_analysis import enrich_analysis  # noqa: E402
 from routing import (  # noqa: E402
+    _build_property_schema,
+    _extract_properties_llm,
     _is_comparison_question,
     _rule_based_route,
+    verify_sparql_feasibility,
 )
 from schema_projection import project as sp_project  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_last_decomp_meta: dict = {}
 
 # ---------------------------------------------------------------------------
 # Data structure
@@ -95,6 +100,29 @@ Example - Simple: "Who directed Inception?"
   "sub_questions": ["Who directed Inception?"],
   "dependencies": []
 }}
+
+Example - Nested relative clause (3-hop): "When was the region north of where X is located created?"
+{{
+  "sub_questions": ["Where is X located?", "What region is immediately north of [Q0]?", "When was [Q1] created?"],
+  "dependencies": [[1, 0], [2, 1]]
+}}
+
+Example - Passive voice: "Who is played by the director of Film X in Film Y?"
+{{
+  "sub_questions": ["Who directed Film X?", "What role did [Q0] play in Film Y?"],
+  "dependencies": [[1, 0]]
+}}
+
+Example - Possessive chain: "What is the capital of the country where X's creator was born?"
+{{
+  "sub_questions": ["Who created X?", "In which country was [Q0] born?", "What is the capital of [Q1]?"],
+  "dependencies": [[1, 0], [2, 1]]
+}}
+
+Additional rules for complex questions:
+- Preserve active/passive voice direction: "played BY X" → ask "What did [Q0] play?" NOT "Who played [Q0]?"
+- For possessive chains (X's Y's Z), decompose from innermost entity outward
+- Each sub-question MUST retain qualifying context (where/who/that clauses) from the original
 
 JSON only, no explanation:"""
 
@@ -246,19 +274,24 @@ def _check_can_answer(
 def _generate_final_answer(
     question: str, info_summary: str,
     llm_client, model: str,
+    is_comparison: bool = False,
 ) -> str:
-    """Generate a concise final answer from accumulated facts via FINAL_ANSWER_PROMPT.
+    """Generate a concise final answer from accumulated facts.
 
+    is_comparison gates country-comparison instructions in the prompt —
+    prevents over-generalization on bridge/compositional questions.
     Returns extracted answer string (via extract_final_answer).
     """
-    prompt = FINAL_ANSWER_PROMPT.format(
+    prompt = get_final_answer_prompt(is_comparison=is_comparison).format(
         question=question, info_summary=info_summary,
     )
+    _last_decomp_meta["final_answer_prompt"] = prompt
     try:
         response = call_llm(llm_client, prompt, model)
     except Exception:
         logger.warning("Final answer generation failed")
         return None
+    _last_decomp_meta["final_answer_raw_response"] = response
     return extract_final_answer(response) if response else None
 
 
@@ -293,7 +326,7 @@ def _make_fallback_entity(name: str, kg_client=None,
 
     Returns None if kg_client is provided and URI doesn't exist.
     """
-    local_name = url_quote(name.replace(' ', '_'), safe="_'()")
+    local_name = url_quote(name.replace(' ', '_'), safe="_'(),")
     uri = f"http://dbpedia.org/resource/{local_name}"
 
     if kg_client:
@@ -387,6 +420,8 @@ def _decompose_subquestions(
         schema_summary=schema_summary, type_hint=type_hint,
     )
     resp = call_llm(llm_client, prompt, model)
+    _last_decomp_meta["decompose_prompt"] = prompt
+    _last_decomp_meta["decompose_raw_response"] = resp
 
     # Parse JSON response
     data = _fix_json_response(resp)
@@ -397,12 +432,15 @@ def _decompose_subquestions(
 
     sub_qs = data.get("sub_questions", [])
     deps = data.get("dependencies", [])
+    _last_decomp_meta["sub_question_count"] = len(sub_qs)
+    _last_decomp_meta["dependency_graph"] = deps
 
     if not sub_qs or len(sub_qs) < 2:
         return None  # Single-hop, skip decomposition
 
     if len(sub_qs) > 6:
-        sub_qs = sub_qs[:6]  # Safety cap
+        logger.warning("Truncated %d sub-questions to 6", len(sub_qs))
+        sub_qs = sub_qs[:6]
 
     # Build ordered SubQuestion list
     order = _topological_sort_indices(len(sub_qs), deps)
@@ -441,6 +479,7 @@ def _resolve_subquestion(
     llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str | None, str, list[Entity], str | None]:
     """Resolve a single sub-question via SPARQL or TEXT.
 
@@ -451,6 +490,10 @@ def _resolve_subquestion(
     # Only use answers from actual dependencies, not all known facts
     dep_facts = {idx: known_facts[idx] for idx in sub_q.depends_on if idx in known_facts}
     resolved_text = _substitute_answers(sub_q.text, dep_facts)
+    if dep_facts and resolved_text == sub_q.text:
+        # Substitution failed (LLM didn't use [Q0] placeholders) — append context
+        facts_ctx = "; ".join(f"Q{k}={v}" for k, v in dep_facts.items())
+        resolved_text = f"{resolved_text} (given: {facts_ctx})"
     if verbose:
         print(f"\n    Sub-Q {idx}: {resolved_text}")
     if debug and sub_q.depends_on:
@@ -491,9 +534,45 @@ def _resolve_subquestion(
         if sub_projections else parent_schema_ctx
     )
 
-    # Step 4: Route decision (rule-based only, no LLM route prompt)
-    route_result = _rule_based_route(sub_analysis, sub_projections, debug=debug)
-    attempt_sparql = route_result is not None or bool(combined_schema)
+    # Collect dynamic ranges from entity profiles (mirrors routing.py:527-529)
+    dyn_ranges: dict[str, str] = {}
+    for proj in sub_projections:
+        dyn_ranges.update(getattr(proj.entity_profile, "dynamic_ranges", {}))
+
+    # Step 4: Route decision — rule-based first, then LLM property extraction
+    route_result = _rule_based_route(
+        sub_analysis, sub_projections, debug=debug, extra_ranges=dyn_ranges,
+    )
+    attempt_sparql = route_result is not None
+
+    # Stage 2: If keyword rules missed, try LLM property extraction + ASK
+    # (mirrors routing.py:542-566 — the main route_question Stage 2)
+    if not attempt_sparql and sub_projections:
+        try:
+            prop_schema = _build_property_schema(sub_projections)
+            llm_props = _extract_properties_llm(
+                resolved_text, prop_schema, llm_client, model, debug=debug,
+            )
+            if llm_props:
+                enriched = enrich_analysis(sub_analysis, llm_props, extra_ranges=dyn_ranges)
+                enriched_projs = [sp_project(p.entity_profile, enriched) for p in sub_projections]
+                enriched_rule = _rule_based_route(
+                    enriched, enriched_projs, debug=debug, extra_ranges=dyn_ranges,
+                )
+                if enriched_rule is not None:
+                    ask_result = verify_sparql_feasibility(
+                        enriched, enriched_projs, all_entities, kg_client, enriched_rule,
+                    )
+                    if ask_result and ask_result[0] == "SPARQL":
+                        attempt_sparql = True
+                        route_result = enriched_rule
+                        # Update projections so SPARQL gen uses enriched schema
+                        sub_projections = enriched_projs
+                        if debug:
+                            print(f"    [DEBUG] Stage 2 LLM props={llm_props} -> SPARQL")
+        except Exception as exc:
+            logger.debug("Sub-Q Stage 2 LLM extraction failed: %s", exc)
+
     if debug:
         tag = route_result[1] if route_result else "no rule match"
         print(f"    [DEBUG] Route: {tag}, attempt_sparql={attempt_sparql}")
@@ -533,7 +612,9 @@ def _resolve_subquestion(
     if debug:
         print(f"    [DEBUG] TEXT fallback, entities: {[e.label for e in all_entities]}")
 
-    kg_facts_lines = "\n".join(f"- Q{k}: {v}" for k, v in known_facts.items())
+    # Only pass facts from declared dependencies to prevent cross-contamination
+    dep_facts = {k: v for k, v in known_facts.items() if k in sub_q.depends_on}
+    kg_facts_lines = "\n".join(f"- Q{k}: {v}" for k, v in dep_facts.items())
     kg_facts_block = f"Known facts:\n{kg_facts_lines}\n\n" if kg_facts_lines else ""
 
     answer = text_solver.solve(
@@ -541,6 +622,7 @@ def _resolve_subquestion(
         known_facts=kg_facts_block,
         llm_client=llm_client, model=model,
         verbose=debug, is_subquestion=True,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if verbose:
@@ -558,6 +640,7 @@ def _try_logicrag_decomposition(
     schema_ctx: str, llm_client, model: str,
     linker, kg_client, schema_disc,
     verbose: bool = False, debug: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str | None, list[dict]]:
     """LogicRAG-style sub-question decomposition with per-sub-Q SPARQL/TEXT routing.
 
@@ -571,6 +654,8 @@ def _try_logicrag_decomposition(
     """
     if debug:
         verbose = True
+    global _last_decomp_meta
+    _last_decomp_meta = {}
     sep = "=" * 70
 
     # --- Step 1: Decompose ---
@@ -611,7 +696,13 @@ def _try_logicrag_decomposition(
                 scoped.extend(known_entities.get(dep_idx, []))
             effective_parents = scoped
         else:
-            effective_parents = list(entities)
+            # For comparison root sub-Qs, scope to entities mentioned in this sub-Q
+            if is_comparison and len(entities) > 1:
+                matched = [e for e in entities
+                           if e.label and e.label.lower() in sub_q.text.lower()]
+                effective_parents = matched if matched else list(entities)
+            else:
+                effective_parents = list(entities)
 
         answer, method, discovered, sparql_query = _resolve_subquestion(
             sub_q, loop_idx,
@@ -620,13 +711,21 @@ def _try_logicrag_decomposition(
             llm_client, model,
             linker, kg_client, schema_disc,
             verbose, debug=debug,
+            benchmark_corpus=benchmark_corpus,
         )
+
+        _sub_solver_meta = {}
+        if method == "sparql":
+            _sub_solver_meta = sparql_solver._last_solve_meta.copy()
+        elif method == "text":
+            _sub_solver_meta = text_solver._last_solve_meta.copy()
 
         sub_q_log.append({
             "sub_question": sub_q.text,
             "method": method,
             "sparql_query": sparql_query,
             "answer": answer,
+            "solver_meta": _sub_solver_meta,
         })
 
         oidx = sub_q.original_idx
@@ -656,9 +755,15 @@ def _try_logicrag_decomposition(
             if verbose:
                 print(f"    Early stop check: can_answer={check['can_answer']}")
             if check["can_answer"]:
+                _last_decomp_meta["early_stop_triggered"] = True
+                _last_decomp_meta["early_stop_at_subq"] = loop_idx
+                _last_decomp_meta["early_stop_understanding"] = check.get("current_understanding", "")
                 if verbose:
                     print("  -> Early exit: accumulated facts sufficient")
-                final = _generate_final_answer(question, info_summary, llm_client, model)
+                final = _generate_final_answer(
+                    question, info_summary, llm_client, model,
+                    is_comparison=is_comparison,
+                )
                 if final:
                     return final, sub_q_log
                 # Fall back to best sub-Q answer
@@ -693,7 +798,9 @@ def _try_logicrag_decomposition(
                     known_facts="",
                     llm_client=llm_client, model=model,
                     verbose=debug, is_subquestion=True,
+                    benchmark_corpus=benchmark_corpus,
                 )
+                _retry_meta = text_solver._last_solve_meta.copy()
                 if answer:
                     known_facts[oidx] = answer
                     sq.answer = answer
@@ -703,12 +810,16 @@ def _try_logicrag_decomposition(
                         "method": "text",
                         "sparql_query": None,
                         "answer": answer,
+                        "solver_meta": _retry_meta,
                     })
                     if verbose:
                         print(f"    Retry sub-Q {oidx}: TEXT -> {answer}")
 
         info_summary = _build_info_summary(sub_questions, known_facts)
-        final = _generate_final_answer(question, info_summary, llm_client, model)
+        final = _generate_final_answer(
+            question, info_summary, llm_client, model,
+            is_comparison=is_comparison,
+        )
         return (final if final else sole_answer), sub_q_log
 
     # Build info_summary with provenance labels
@@ -720,7 +831,10 @@ def _try_logicrag_decomposition(
         for line in info_summary.split("\n"):
             print(f"    {line}")
 
-    final = _generate_final_answer(question, info_summary, llm_client, model)
+    final = _generate_final_answer(
+        question, info_summary, llm_client, model,
+        is_comparison=is_comparison,
+    )
     if final:
         return final, sub_q_log
     # Fallback: return most relevant known fact (last resolved)

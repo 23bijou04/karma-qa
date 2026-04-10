@@ -13,13 +13,20 @@ from llm_provider import call_llm as _call_llm
 
 logger = logging.getLogger(__name__)
 
-WIKI_HEADERS = {"User-Agent": "AblationStudyV3/1.0"}
-WIKI_DELAY = 0.5  # seconds between Wikipedia API calls
+WIKI_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
+WIKI_DELAY = 1.0  # seconds between Wikipedia API calls (avoid 403s)
 _last_wiki_call = 0.0
+_wiki_backoff_until = 0.0  # timestamp — skip calls until this time after 403
 
 
 def _rate_limit_wiki():
-    global _last_wiki_call
+    global _last_wiki_call, _wiki_backoff_until
+    # If we're in a 403 backoff period, wait it out
+    now = time.time()
+    if now < _wiki_backoff_until:
+        wait = _wiki_backoff_until - now
+        logger.debug(f"Wikipedia 403 backoff: sleeping {wait:.1f}s")
+        time.sleep(wait)
     elapsed = time.time() - _last_wiki_call
     if elapsed < WIKI_DELAY:
         time.sleep(WIKI_DELAY - elapsed)
@@ -31,6 +38,18 @@ def _retry(func, max_attempts=3, backoff=2.0):
     for attempt in range(max_attempts):
         try:
             return func()
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403:
+                # Wikipedia is rate-limiting us — back off for 30s
+                global _wiki_backoff_until
+                _wiki_backoff_until = time.time() + 30
+                logger.warning(f"Wikipedia 403 — backing off 30s (attempt {attempt + 1})")
+                time.sleep(30)
+            elif attempt == max_attempts - 1:
+                logger.warning(f"Failed after {max_attempts} attempts: {e}")
+                return None
+            else:
+                time.sleep(backoff ** attempt)
         except Exception as e:
             if attempt == max_attempts - 1:
                 logger.warning(f"Failed after {max_attempts} attempts: {e}")
@@ -61,6 +80,7 @@ def search_wikipedia(query: str, limit: int = 3) -> list[str]:
                     "srsearch": query, "srlimit": limit, "format": "json"},
             headers=WIKI_HEADERS, timeout=15,
         )
+        resp.raise_for_status()  # raises HTTPError on 403 — caught by _retry
         return [r["title"] for r in resp.json().get("query", {}).get("search", [])]
 
     return _retry(_do) or []
@@ -77,6 +97,7 @@ def get_wikipedia_text_by_title(title: str, max_chars: int = 3000) -> Optional[s
                     "prop": "extracts", "explaintext": True, "format": "json"},
             headers=WIKI_HEADERS, timeout=15,
         )
+        resp.raise_for_status()  # raises HTTPError on 403 — caught by _retry
         for page in resp.json().get("query", {}).get("pages", {}).values():
             if page.get("pageid"):
                 text = page.get("extract", "")

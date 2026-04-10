@@ -11,7 +11,7 @@ on a 100-question sample, or use a stronger model (--provider groq --model
 llama-3.3-70b-versatile).
 
 Usage:
-    python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid_eval_1000.jsonl
+    python3 scripts/judge_hybrid_eval.py data/eval_1000q/hybrid/hybrid_eval_1000.jsonl
     python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider groq --model llama-3.3-70b-versatile
     python3 scripts/judge_hybrid_eval.py data/eval.jsonl --provider github --model gpt-4o
 """
@@ -46,6 +46,9 @@ Matching rules (answer YES):
 - Gold contained in a more specific predicted answer (e.g. "Munich" vs "Nymphenburg Palace, Munich")
 - Added title/honorific/disambiguator (e.g. "Henry III" vs "Henry III, Holy Roman Emperor")
 - Full formal name of same person (e.g. "Giovanni Mario" vs "Giovanni Mario de Candia")
+- Administrative region containing the exact gold location (e.g. gold "Theni" vs pred "Theni district")
+- Unambiguous well-known city with or without country (e.g. gold "Florence, Italy" vs pred "Florence")
+- Nationality adjective matching country name (e.g. gold "Italy" vs pred "Italian")
 
 Rejection rules (answer NO):
 - Wrong, empty, or completely different entity
@@ -54,6 +57,7 @@ Rejection rules (answer NO):
 - Related but distinct entities (e.g. gold "Hollywood" vs pred "Los Angeles")
 - Same first name but different person (e.g. gold "Paris" vs pred "Paris Hilton")
 - Predicted lists multiple answers and gold is NOT clearly among them
+- Completely different location even if in same region (e.g. gold "Theni" vs pred "Mallingapuram")
 
 First, explain in ONE sentence why the answers match or don't.
 Then write your verdict on a new line: VERDICT: yes or VERDICT: no"""
@@ -109,10 +113,16 @@ def _parse_verdict(response: str) -> bool:
     return word == "yes"
 
 
-def judge(client, question, gold, pred, model="gemma3:12b"):
+def judge(client, question, gold, pred, model="gemma3:12b", aliases=None):
     """Return True if LLM judge deems prediction semantically correct."""
     if not pred or pred.strip() == "":
         return False
+    # Alias pre-check: if benchmark declares aliases, exact match is authoritative
+    # (e.g. MuSiQue provides answer_aliases; 2WikiMultiHop/HotPotQA have none)
+    pred_norm = _normalize(pred)
+    for candidate in [gold] + (aliases or []):
+        if candidate and _normalize(candidate) == pred_norm:
+            return True
     # Fast path: word-level containment (gold-in-pred only, min 2 words)
     precheck = _containment_precheck(gold, pred)
     if precheck is True:
@@ -168,8 +178,17 @@ def main():
                         pass  # skip truncated lines from mid-write crash
         print(f"Resume: {len(done)} already judged in {output_path}")
 
+    records = []
     with open(input_path) as f:
-        records = [json.loads(line.strip()) for line in f if line.strip()]
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"Warning: skipping corrupt line {line_num} in {input_path}")
+                continue
 
     remaining = [r for r in records if r["question_id"] not in done]
     print(f"Total: {len(records)}, remaining: {len(remaining)}")
@@ -186,6 +205,7 @@ def main():
                 rec["judge_correct"] = judge(
                     client, rec["question"], rec["gold_answer"],
                     rec["predicted_answer"], model=args.model,
+                    aliases=rec.get("gold_aliases", []),
                 )
             except Exception as e:
                 print(f"  Error judging {rec['question_id']}: {e}")

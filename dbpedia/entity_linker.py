@@ -2,6 +2,8 @@
 
 import logging
 import re
+import unicodedata
+from collections.abc import Callable
 from typing import Optional
 
 import httpx
@@ -11,10 +13,52 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from ..models import Entity
 from .cache import CacheManager
 from .client import DBpediaSPARQLClient
+from .wiki_resolver import WikipediaResolver
 
 logger = logging.getLogger(__name__)
 
 _nlp = spacy.load("en_core_web_sm")
+
+
+# Circuit breaker for Spotlight API — skip quickly after repeated failures
+# instead of wasting ~93s (3 retries × 30s timeout) per question.
+# Reuses the same pattern as graphrag_wiki._CircuitBreaker for DuckDuckGo.
+class _SpotlightCircuitBreaker:
+    """Lightweight circuit breaker for Spotlight API."""
+
+    def __init__(self, threshold: int = 3, cooldown: float = 120.0):
+        self._failures = 0
+        self._threshold = threshold
+        self._tripped_at: float | None = None
+        self._cooldown = cooldown
+
+    def is_open(self) -> bool:
+        if self._tripped_at is None:
+            return False
+        import time
+        if time.time() - self._tripped_at >= self._cooldown:
+            self._failures = 0
+            self._tripped_at = None
+            return False
+        return True
+
+    def record_failure(self):
+        self._failures += 1
+        if self._failures >= self._threshold:
+            import time
+            self._tripped_at = time.time()
+            logger.warning(
+                "Spotlight circuit breaker tripped after %d failures, "
+                "cooldown %.0fs", self._threshold, self._cooldown,
+            )
+
+    def record_success(self):
+        self._failures = 0
+        self._tripped_at = None
+
+
+# Module-level singleton — shared across all DBpediaEntityLinker instances
+_spotlight_cb = _SpotlightCircuitBreaker(threshold=3, cooldown=120.0)
 
 # Words to strip from the front of noun chunks
 _STRIP_WORDS = frozenset({
@@ -32,9 +76,23 @@ _MENTION_BLOCKLIST = frozenset({
     "album", "band", "country", "city", "person", "actor", "actress",
     "writer", "singer", "politician", "company", "school", "university",
     "year", "date", "time", "place", "name", "age", "number",
-    "first", "last", "born", "died", "older", "younger",
+    "first", "last", "born", "died", "birth", "death", "father", "mother", "law", "older", "younger",
     "earlier", "later", "more", "fewer", "same", "different",
     "performer", "publisher", "composer", "musician",
+})
+
+# Keywords that precede entity titles in benchmark questions.
+# Used to extract "song Aren'T You Kind Of Glad We Did?" → entity name.
+_TITLE_KEYWORDS = frozenset({
+    "song", "film", "movie", "book", "novel", "album",
+    "series", "show", "play", "opera", "poem", "painting",
+})
+
+# Lowercase words allowed inside Title Cased entity names.
+_TITLE_CONNECTORS = frozenset({
+    "of", "the", "a", "an", "in", "on", "at", "to", "for",
+    "and", "or", "du", "le", "la", "el", "de", "von", "van",
+    "di", "des", "les", "un", "et", "vs", "as", "by", "no",
 })
 
 # Maps question keywords to the type of SUBJECT entities being compared.
@@ -80,6 +138,23 @@ _TYPE_SUFFIX_MAP = {
     'dbo:MusicalWork': 'album',
     'dbo:Country': 'country',
     'dbo:Company': 'company',
+    'dbo:Person': 'person',
+    'dbo:MusicalArtist': 'musician',
+    'dbo:City': 'city',
+}
+
+# Disambiguation suffixes to probe via SPARQL ASK (priority order).
+# DBpedia uses parenthetical suffixes: dbr:Being_Human_(TV_series),
+# dbr:1984_(novel). Persons rarely have suffixes, so empty list.
+_URI_PROBE_SUFFIXES: dict[str, list[str]] = {
+    'dbo:Film': ['film', 'movie'],
+    'dbo:Book': ['novel', 'book'],
+    'dbo:MusicalWork': ['song', 'album'],
+    'dbo:MusicalArtist': ['band', 'musician'],
+    'dbo:Person': [],
+    'dbo:Country': ['country'],
+    'dbo:Company': ['company'],
+    'dbo:City': ['city'],
 }
 
 
@@ -92,13 +167,23 @@ class DBpediaEntityLinker:
         sparql_client: Optional[DBpediaSPARQLClient] = None,
         cache_manager: Optional[CacheManager] = None,
         min_confidence: float = 0.5,
-        min_support: int = 20,
+        min_support: int = 5,
+        # Entities below this threshold still enter the pipeline but don't
+        # block the unlinked resolution loop from re-resolving the same mention.
+        high_confidence_threshold: float = 0.7,
+        llm_client=None,
+        llm_model: str = "llama-3.3-70b-versatile",
+        wiki_resolver: Optional[WikipediaResolver] = None,
     ):
         self.spotlight_endpoint = spotlight_endpoint
         self.sparql_client = sparql_client or DBpediaSPARQLClient()
         self.cache = cache_manager or CacheManager()
         self.min_confidence = min_confidence
         self.min_support = min_support
+        self.high_confidence_threshold = high_confidence_threshold
+        self.llm_client = llm_client  # OpenAI-compatible client for disambiguation
+        self.llm_model = llm_model
+        self.wiki_resolver = wiki_resolver
         self._http_client = httpx.Client(timeout=30.0)
 
     def __del__(self):
@@ -119,30 +204,124 @@ class DBpediaEntityLinker:
         """
         doc = _nlp(question)
         mentions: list[str] = []
+        # Track possessor-derived mentions so they survive substring removal.
+        # "Dr. Dre's real name" → possessor "Dr. Dre" is a better entity
+        # candidate than the full noun chunk.
+        possessor_derived: set[str] = set()
 
-        # Quoted strings
-        mentions.extend(re.findall(r'"([^"]+)"', question))
+        # Quoted strings (ASCII and curly double quotes)
+        mentions.extend(re.findall(r'["\u201C]([^"\u201D]+)["\u201D]', question))
 
-        # Noun chunks with stopword stripping
+        # Noun chunks with stopword stripping + possessive splitting
         for chunk in doc.noun_chunks:
             words = chunk.text.split()
+            original_words = list(words)
             while words and words[0].lower() in _STRIP_WORDS:
                 words.pop(0)
             text = " ".join(words).strip()
-            if text:
-                mentions.append(text)
+            stripping_occurred = len(words) < len(original_words)
+
+            if not words:
+                # Stripping removed all words — entity might start with strip word
+                text_original = " ".join(original_words).strip()
+                if text_original and len(text_original) > 1:
+                    mentions.append(text_original)
+                continue
+
+            mentions.append(text)
+            # When stripping removed leading words, also keep the original in case
+            # the article/preposition is part of the entity name (e.g. "The Who",
+            # "A Clockwork Orange", "The Band").
+            if stripping_occurred:
+                text_original = " ".join(original_words).strip()
+                if text_original.lower() != text.lower() and len(text_original) > 1:
+                    mentions.append(text_original)
+            # Split at possessive "'s" to extract the possessor as a
+            # separate mention (e.g., "Dr. Dre's real name" → "Dr. Dre")
+            poss_match = re.match(r"^(.+?)[''\u2019]s\b", text)
+            if poss_match:
+                possessor = poss_match.group(1).strip()
+                if possessor and len(possessor) > 1:
+                    mentions.append(possessor)
+                    possessor_derived.add(possessor.lower())
 
         # Named entities (skip numeric types)
         # Split on " or " for bridge_comparison patterns ("X or Y?")
+        # NOTE: don't split on "and" — it's common inside titles
+        # ("Angel And The Badman", "Joseph And The Amazing...").
         for ent in doc.ents:
             if ent.label_ not in ("CARDINAL", "ORDINAL", "QUANTITY", "PERCENT"):
                 if " or " in ent.text:
-                    for part in ent.text.split(" or "):
-                        part = part.strip()
-                        if part:
-                            mentions.append(part)
+                    parts = ent.text.split(" or ")
                 else:
-                    mentions.append(ent.text)
+                    parts = [ent.text]
+                for part in parts:
+                    part = part.strip()
+                    # Strip trailing "or" that spaCy sometimes leaves on
+                    # entity spans in comparison questions.
+                    # e.g. "The Singing Fool or" → "The Singing Fool"
+                    # Only strip "or" — other connectors (and, in, the, of)
+                    # can legitimately end titles ("The Girl In", "Joseph And").
+                    ent_words = part.split()
+                    while ent_words and ent_words[-1].lower() == "or":
+                        ent_words.pop()
+                    part = " ".join(ent_words).strip()
+                    if part:
+                        mentions.append(part)
+
+        # Title-after-keyword extraction: "song Aren'T You Kind Of Glad We
+        # Did?" → extract entity name by following capitalized words after
+        # a title keyword (song, film, book, etc.). Handles entity names
+        # with special chars that spaCy/Spotlight miss.
+        words = question.split()
+        for i, w in enumerate(words):
+            if w.lower().rstrip(".,?!:;") in _TITLE_KEYWORDS and i + 1 < len(words):
+                nxt = words[i + 1]
+                first_char = nxt.lstrip("'\"(\u2018\u201C")[:1]
+                if not first_char or not first_char.isupper():
+                    continue
+                # Collect Title Cased sequence. Connectors (of, the, and,
+                # or...) are only included if the NEXT word is capitalized
+                # — prevents "Inception or the" from leaking past the entity.
+                title_words = []
+                j = i + 1
+                while j < len(words):
+                    word = words[j]
+                    clean = word.lstrip("'\"(\u2018\u201C").rstrip(".,;")
+                    if not clean:
+                        break
+                    first = clean[0]
+                    if first.isupper():
+                        title_words.append(word)
+                        j += 1
+                    elif clean.lower() in _TITLE_CONNECTORS:
+                        # Look past consecutive connectors for a capitalized word
+                        k = j + 1
+                        found_upper = False
+                        while k < len(words):
+                            peek_word = words[k].lstrip("'\"\u2018\u201C(")
+                            peek_clean = peek_word.rstrip(".,;")
+                            if not peek_clean:
+                                break
+                            if peek_clean[0].isupper():
+                                # Found uppercase after connector chain → include all connectors
+                                for ci in range(j, k):
+                                    title_words.append(words[ci])
+                                found_upper = True
+                                j = k  # advance j to the capitalized word (next iter appends it)
+                                break
+                            elif peek_clean.lower() in _TITLE_CONNECTORS:
+                                k += 1
+                                continue
+                            else:
+                                break
+                        if not found_upper:
+                            break
+                    else:
+                        break
+                if len(title_words) >= 1:
+                    title = " ".join(title_words).rstrip(".,;")
+                    mentions.append(title)
 
         # Deduplicate case-insensitively, filter blocklisted words
         seen: set[str] = set()
@@ -155,11 +334,15 @@ class DBpediaEntityLinker:
                 seen.add(key)
                 unique.append(m)
 
-        # Remove substring mentions
+        # Remove substring mentions, but keep possessor-derived mentions
+        # even if they're substrings (they're more precise entity candidates).
         final: list[str] = []
         for m in unique:
-            if not any(
-                m.lower() != o.lower() and m.lower() in o.lower()
+            m_lower = m.lower()
+            if m_lower in possessor_derived:
+                final.append(m)  # always keep possessor-derived
+            elif not any(
+                m_lower != o.lower() and m_lower in o.lower()
                 for o in unique
             ):
                 final.append(m)
@@ -251,24 +434,16 @@ class DBpediaEntityLinker:
             except Exception:
                 pass  # can't verify, try fallback
 
-            # Direct URI probe: try dbr:Name_(type) pattern before text search.
-            # DBpedia uses this for disambiguation (e.g., Thomas_Jefferson_(film)).
-            probe_local = entity.label.replace(' ', '_')
-            probe_uri = f"http://dbpedia.org/resource/{probe_local}_({suffix})"
-            try:
-                probe_types = self.sparql_client.get_entity_types(probe_uri)
-                type_short = expected_type.replace('dbo:', '')
-                if any(type_short in t for t in probe_types):
-                    logger.info(
-                        f"URI probe hit: '{entity.label}' -> {probe_uri}"
-                    )
-                    validated.append(Entity(
-                        uri=probe_uri, label=entity.label,
-                        source="type_corrected",
-                    ))
-                    continue
-            except Exception:
-                pass  # probe failed, fall through to search
+            # Direct URI probe using shared helper (e.g., Thomas_Jefferson_(film))
+            base_uri = self._construct_dbpedia_uri(entity.label)
+            probe_uri = f"{base_uri}_({suffix})"
+            probed = self._probe_single_uri(probe_uri, expected_type)
+            if probed:
+                logger.info(f"URI probe hit: '{entity.label}' -> {probe_uri}")
+                probed.label = entity.label
+                probed.source = "type_corrected"
+                validated.append(probed)
+                continue
 
             # Type mismatch: search with cleaned phrase + type suffix
             search_query = f"{clean_obj} {suffix}" if clean_obj else f"{obj_phrase} {suffix}"
@@ -301,11 +476,15 @@ class DBpediaEntityLinker:
         unlinked: list[str] = []
 
         for mention in mentions:
-            m_lower = mention.lower().strip()
+            # Strip trailing punctuation that leaks from question text
+            # (e.g. "Lincoln." fails matching without this)
+            m_lower = unicodedata.normalize(
+                "NFC", mention.lower().strip().rstrip(".,;:!?"),
+            )
             m_words = set(m_lower.split())
             matched = False
             for sf in surface_forms:
-                sf_lower = sf.lower().strip()
+                sf_lower = unicodedata.normalize("NFC", sf.lower().strip())
                 sf_words = set(sf_lower.split())
                 # Jaccard similarity
                 intersection = m_words & sf_words
@@ -314,13 +493,199 @@ class DBpediaEntityLinker:
                 # Substring: mention IN surface_form is a match,
                 # but surface_form IN mention is a MISLINK (partial match)
                 mention_in_sf = m_lower in sf_lower
-                if jaccard >= 0.5 or mention_in_sf:
+                sf_in_mention = sf_lower in m_lower and sf_lower != m_lower
+                if mention_in_sf:
+                    matched = True
+                    break
+                if jaccard >= 0.5 and not sf_in_mention:
                     matched = True
                     break
             if not matched:
                 unlinked.append(mention)
 
         return unlinked
+
+    # ------------------------------------------------------------------
+    # Direct URI construction probe
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _construct_dbpedia_uri(mention: str) -> str:
+        """Convert a mention string to a DBpedia resource URI.
+
+        Preserves original casing from spaCy NER (DBpedia URIs are
+        case-sensitive and follow MediaWiki conventions). First letter
+        is always uppercased.
+        """
+        local = mention.strip().rstrip(".,;:!?").replace(" ", "_")
+        if local and local[0].islower():
+            local = local[0].upper() + local[1:]
+        return f"http://dbpedia.org/resource/{local}"
+
+    def _probe_single_uri(self, uri: str, type_hint: str | None) -> Entity | None:
+        """Probe a single URI: check existence, follow redirects, verify type.
+
+        Shared by both _probe_uri_variants() and _validate_entity_types().
+        Returns a validated Entity or None.
+        """
+        if not self.sparql_client.ask_entity_exists(uri):
+            return None
+
+        # Check redirect/disambiguation status
+        check = self.sparql_client.validate_entity_uri(uri)
+        if check["is_disambiguation"]:
+            return None
+        if check["redirect_target"]:
+            uri = check["redirect_target"]
+
+        # Verify type if hint provided
+        if type_hint:
+            type_short = type_hint.replace("dbo:", "")
+            try:
+                types = self.sparql_client.get_entity_types(uri)
+                if not any(type_short in t for t in types):
+                    return None
+            except Exception:
+                return None
+
+        return Entity(uri=uri, label="", source="uri_probe")
+
+    def _probe_uri_variants(
+        self, mention: str, type_hint: str | None,
+    ) -> Entity | None:
+        """Probe DBpedia URI naming conventions for a mention.
+
+        Cascade (max ~3-4 ASK queries):
+          1. Plain URI: dbr:{Mention_Text}
+          2. Type-suffixed: dbr:{Mention_Text}_(film), etc.
+        Returns first validated Entity or None.
+        """
+        base_uri = self._construct_dbpedia_uri(mention)
+
+        # 1. Plain URI probe
+        result = self._probe_single_uri(base_uri, type_hint)
+        if result:
+            result.label = mention
+            return result
+
+        # 2. Type-suffixed probes (only when type hint available)
+        if type_hint:
+            suffixes = _URI_PROBE_SUFFIXES.get(type_hint, [])
+            for suffix in suffixes:
+                suffixed_uri = f"{base_uri}_({suffix})"
+                result = self._probe_single_uri(suffixed_uri, type_hint)
+                if result:
+                    result.label = mention
+                    return result
+
+        return None
+
+    # ------------------------------------------------------------------
+    # LLM-based candidate disambiguation
+    # ------------------------------------------------------------------
+
+    def _llm_rerank_candidates(
+        self, question: str, mention: str, candidates: list[Entity],
+    ) -> Entity | None:
+        """Ask LLM to pick the best candidate entity for a mention.
+
+        Enriches each candidate with types and abstract (first sentence),
+        then asks the LLM to select the best match given the question context.
+
+        Returns the selected Entity, or None on any failure (caller falls
+        back to heuristic scoring).
+        """
+        # Lazy import cached on instance to avoid circular dependency
+        # (entity_linker is inside dbpedia package; llm_provider is top-level)
+        if not hasattr(self, "_call_llm"):
+            import importlib
+            self._call_llm = importlib.import_module("llm_provider").call_llm
+        call_llm = self._call_llm
+
+        # Enrich candidates with types + first-sentence abstract
+        enriched = []
+        for c in candidates:
+            try:
+                details = self.sparql_client.get_entity_by_uri(c.uri)
+            except Exception:
+                details = None
+            types_str = ""
+            abstract_str = ""
+            if details:
+                # Filter to dbo: types only, extract local names
+                dbo_types = [
+                    t.split("/")[-1] for t in (details.types or [])
+                    if "dbpedia.org/ontology/" in t
+                ]
+                types_str = ", ".join(dbo_types[:5]) if dbo_types else "unknown"
+                if details.abstract:
+                    # First sentence only (keep prompt small)
+                    first_sent = details.abstract.split(". ")[0]
+                    abstract_str = first_sent[:200]
+            enriched.append({
+                "entity": c,
+                "label": details.label if details else c.label,
+                "types": types_str or "unknown",
+                "abstract": abstract_str or "no description",
+            })
+
+        # Build numbered candidate list for the prompt
+        lines = []
+        for i, info in enumerate(enriched, 1):
+            lines.append(
+                f"{i}. {info['label']} (types: {info['types']}) "
+                f"- {info['abstract']}"
+            )
+        candidate_list = "\n".join(lines)
+
+        prompt = (
+            f'Given this question: "{question}"\n'
+            f'Which entity best matches the mention "{mention}"?\n\n'
+            f"{candidate_list}\n\n"
+            f"Reply with ONLY the number (1-{len(enriched)}) of the best "
+            f'match, or "none" if no candidate fits.'
+        )
+
+        try:
+            response = call_llm(
+                self.llm_client, prompt, self.llm_model,
+                max_tokens=10, temperature=0, max_attempts=2,
+            )
+        except Exception as e:
+            logger.warning(f"LLM reranking failed: {e}")
+            return None
+
+        # Parse response: try number first, then check for "none"
+        response = response.strip().lower()
+        match = re.search(r"(\d+)", response)
+        if not match:
+            # No number found — check for explicit "none" rejection
+            if "none" in response:
+                return None
+            logger.warning(f"LLM reranker unparseable response: {response!r}")
+            return None
+        idx = int(match.group(1))
+        if 1 <= idx <= len(enriched):
+            selected = enriched[idx - 1]["entity"]
+            logger.info(
+                f"LLM reranker selected #{idx} '{enriched[idx - 1]['label']}' "
+                f"for mention '{mention}'"
+            )
+            return selected
+        logger.warning(f"LLM reranker index {idx} out of range [1-{len(enriched)}]")
+        return None
+
+    def _build_reranker(
+        self, question: str,
+    ) -> Callable[[str, list[Entity]], Entity | None]:
+        """Create a reranker callback that closes over the LLM client + question.
+
+        The callback signature matches what client.py expects:
+          reranker(mention: str, candidates: list[Entity]) -> Entity | None
+        """
+        def reranker(mention: str, candidates: list[Entity]) -> Entity | None:
+            return self._llm_rerank_candidates(question, mention, candidates)
+        return reranker
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, max=10))
     def _call_spotlight(self, text: str) -> dict:
@@ -342,7 +707,9 @@ class DBpediaEntityLinker:
             logger.warning(f"Spotlight API error: {e}")
             raise
 
-    def link_entities(self, text: str, use_cache: bool = True) -> list[Entity]:
+    def link_entities(
+        self, text: str, use_cache: bool = True, question: str | None = None,
+    ) -> list[Entity]:
         """Extract and link entities from text using Spotlight + bif:contains.
 
         Cascade:
@@ -354,6 +721,7 @@ class DBpediaEntityLinker:
         Args:
             text: Input text to extract entities from
             use_cache: Whether to use cached results
+            question: Original question text for LLM disambiguation context
 
         Returns:
             List of linked Entity objects (every entity has a resolved URI)
@@ -366,19 +734,24 @@ class DBpediaEntityLinker:
 
         entities: list[Entity] = []
 
-        # Step 1: Spotlight
-        try:
-            result = self._call_spotlight(text)
-            resources = result.get("Resources", [])
-            for resource in resources:
-                entities.append(Entity(
-                    uri=resource["@URI"],
-                    label=resource["@surfaceForm"],
-                    confidence=float(resource.get("@similarityScore", 0.5)),
-                    source="spotlight",
-                ))
-        except Exception as e:
-            logger.warning(f"Spotlight failed: {e}")
+        # Step 1: Spotlight (with module-level circuit breaker to skip when down)
+        if _spotlight_cb.is_open():
+            logger.info("Spotlight circuit breaker open, skipping to spaCy fallback")
+        else:
+            try:
+                result = self._call_spotlight(text)
+                resources = result.get("Resources", [])
+                for resource in resources:
+                    entities.append(Entity(
+                        uri=resource["@URI"],
+                        label=resource["@surfaceForm"],
+                        confidence=float(resource.get("@similarityScore", 0.5)),
+                        source="spotlight",
+                    ))
+                _spotlight_cb.record_success()
+            except Exception as e:
+                logger.warning(f"Spotlight failed: {e}")
+                _spotlight_cb.record_failure()
 
         # Post-hoc type validation: if we can infer the expected type from the
         # question context, check Spotlight entities against it. If a Spotlight
@@ -388,24 +761,100 @@ class DBpediaEntityLinker:
             entities = self._validate_entity_types(entities, text, type_hint)
 
         # Step 2: spaCy mention extraction + unlinked detection
+        # Split entities by confidence: only high-confidence Spotlight links
+        # block the unlinked loop. Low-confidence links are kept as fallbacks
+        # but their surface forms don't prevent re-resolution.
         mentions = self._extract_mentions(text)
-        unlinked = self._find_unlinked(mentions, entities)
+        high_conf = [e for e in entities
+                     if e.confidence >= self.high_confidence_threshold]
+        low_conf = [e for e in entities
+                    if e.confidence < self.high_confidence_threshold
+                    and e.source == "spotlight"]
+        unlinked = self._find_unlinked(mentions, high_conf)
 
         if unlinked:
             if type_hint is None:
                 type_hint = self._extract_type_hint(text)
             existing_uris = {e.uri for e in entities}
 
+            # Build reranker callback if LLM client is available
+            q_ctx = question or text
+            reranker = self._build_reranker(q_ctx) if self.llm_client else None
+
             for mention in unlinked:
+                # Layer 1: Direct URI probe (fast SPARQL ASK, ~150ms)
+                probed = self._probe_uri_variants(mention, type_hint)
+                if probed and probed.uri not in existing_uris:
+                    logger.info(
+                        f"URI probe resolved '{mention}' -> {probed.uri}"
+                    )
+                    # Replace low-confidence Spotlight entity for same mention
+                    mention_lower = mention.lower().strip()
+                    entities = [
+                        e for e in entities
+                        if not (e in low_conf
+                                and e.label.lower().strip() == mention_lower)
+                    ]
+                    entities.append(probed)
+                    existing_uris.add(probed.uri)
+                    continue
+
+                # Layer 2: bif:contains fulltext search (existing)
                 found = self.sparql_client.search_entity_by_name(
-                    mention, entity_type=type_hint
+                    mention, entity_type=type_hint, reranker=reranker,
                 )
                 if found and found.uri not in existing_uris:
                     logger.info(
                         f"bif:contains resolved '{mention}' -> {found.uri}"
                     )
+                    # Replace low-confidence Spotlight entity for same mention
+                    mention_lower = mention.lower().strip()
+                    entities = [
+                        e for e in entities
+                        if not (e in low_conf
+                                and e.label.lower().strip() == mention_lower)
+                    ]
                     entities.append(found)
                     existing_uris.add(found.uri)
+                    continue
+
+                # Layer 3: Wikipedia search + redirect resolution (last resort)
+                if self.wiki_resolver:
+                    wiki_uris = self.wiki_resolver.resolve_to_dbpedia_uris(
+                        mention, type_hint
+                    )
+                    wiki_candidates = []
+                    for uri in wiki_uris:
+                        if uri not in existing_uris:
+                            try:
+                                if self.sparql_client.ask_entity_exists(uri):
+                                    wiki_candidates.append(
+                                        Entity(uri=uri, label=mention,
+                                               source="wiki_resolve")
+                                    )
+                            except Exception:
+                                pass
+                    if wiki_candidates:
+                        if len(wiki_candidates) == 1:
+                            wiki_found = wiki_candidates[0]
+                        elif reranker:
+                            wiki_found = reranker(mention, wiki_candidates)
+                            if wiki_found is None:
+                                wiki_found = wiki_candidates[0]
+                        else:
+                            wiki_found = wiki_candidates[0]
+                        if wiki_found and wiki_found.uri not in existing_uris:
+                            logger.info(
+                                f"Wiki resolve resolved '{mention}' -> {wiki_found.uri}"
+                            )
+                            mention_lower = mention.lower().strip()
+                            entities = [
+                                e for e in entities
+                                if not (e in low_conf
+                                        and e.label.lower().strip() == mention_lower)
+                            ]
+                            entities.append(wiki_found)
+                            existing_uris.add(wiki_found.uri)
 
         # Fallback: if nothing found at all, try old SPARQL label fallback
         if not entities:

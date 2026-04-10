@@ -9,7 +9,7 @@ Two-phase analysis:
     our pipeline's retrieval method and check if the value appears there. Detects
     disambiguation pages. This tests whether our pipeline can actually reach the info.
 
-Output: data/eval_1000q/answer_source_analysis_1000.json
+Output: data/eval_1000q/analysis/answer_source_analysis_1000.json
 """
 import argparse
 import json
@@ -170,7 +170,7 @@ def phase2_wiki_check(results: list, delay: float = 0.5) -> list:
     unique_entities = {hop["entity"] for _, _, hop in candidates}
 
     # Load existing cache if available
-    pages_path = Path(__file__).resolve().parent.parent / "data/eval_1000q/wiki_pages_phase2.json"
+    pages_path = Path(__file__).resolve().parent.parent / "data/eval_1000q/analysis/wiki_pages_phase2.json"
     if pages_path.exists():
         with open(pages_path) as f:
             cached = json.load(f)
@@ -359,9 +359,9 @@ def main():
     args = parser.parse_args()
 
     base = Path(__file__).resolve().parent.parent
-    eval_path = base / "data/eval_1000q/coverage_analysis_1000.json"
+    eval_path = base / "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
     dev_path = base / "data/dev_full.json"
-    out_path = base / "data/eval_1000q/answer_source_analysis_1000.json"
+    out_path = base / "data/eval_1000q/analysis/answer_source_analysis_1000.json"
 
     print("Loading data...")
     matched = load_data(str(eval_path), str(dev_path))

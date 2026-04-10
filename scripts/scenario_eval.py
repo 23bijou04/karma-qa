@@ -54,7 +54,18 @@ from logicrag_decomposition import _try_logicrag_decomposition  # noqa: E402
 from question_analysis import analyze_question  # noqa: E402
 from schema_projection import project  # noqa: E402
 
-DEFAULT_SCENARIO_FILE = "data/eval_1000q/scenario_classification_1000.json"
+DEFAULT_SCENARIO_FILE = "data/eval_1000q/ground-truth/scenario_classification_1000.json"
+LOGICRAG_CORPUS = os.path.join(
+    PROJECT_ROOT, "baselines", "LogicRAG", "dataset", "2wikimultihopqa_corpus.json"
+)
+
+
+def load_benchmark_corpus(corpus_file: str) -> list[dict]:
+    """Load benchmark corpus for fair TEXT-route comparison."""
+    with open(corpus_file) as f:
+        corpus = json.load(f)
+    print(f"Loaded benchmark corpus: {len(corpus)} entries from {corpus_file}")
+    return corpus
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +131,7 @@ def logicrag_forced_answer(
     kg_client,
     schema_disc,
     verbose: bool = False,
+    benchmark_corpus: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Force LogicRAG decomposition path, with SPARQL + text fallback.
 
@@ -198,6 +210,7 @@ def logicrag_forced_answer(
         llm_client=llm_client, model=model,
         verbose=verbose,
         seed_titles=seed_titles,
+        benchmark_corpus=benchmark_corpus,
     )
 
     if answer:
@@ -261,11 +274,11 @@ def main():
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds between questions (default: 2)")
     parser.add_argument("--api-key", default=None, help="API key")
-    parser.add_argument("--provider", default="groq", choices=["groq", "github"])
+    parser.add_argument("--provider", default="groq", choices=["groq", "github", "ollama"])
     parser.add_argument("--model", default="llama-3.3-70b-versatile")
     parser.add_argument("--scenario-file", default=DEFAULT_SCENARIO_FILE)
     parser.add_argument("--output", default=None,
-                        help="Output JSONL (default: data/eval_1000q/scenario_eval_{mode}.jsonl)")
+                        help="Output JSONL (default: data/eval_1000q/pilot-100q/scenario_eval_{mode}.jsonl)")
     parser.add_argument("--scenarios", default=None,
                         help="Comma-separated scenarios to include (e.g. D or A,B,D; default: all)")
     parser.add_argument("--verbose", action="store_true")
@@ -274,7 +287,7 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    output_file = args.output or f"data/eval_1000q/scenario_eval_{args.mode}.jsonl"
+    output_file = args.output or f"data/eval_1000q/pilot-100q/scenario_eval_{args.mode}.jsonl"
 
     # Load and select questions
     with open(args.scenario_file) as f:
@@ -303,6 +316,7 @@ def main():
     linker = DBpediaEntityLinker(min_confidence=0.5)
     kg_client = DBpediaSPARQLClient()
     schema_disc = SchemaDiscovery()
+    benchmark_corpus = load_benchmark_corpus(LOGICRAG_CORPUS)
 
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
 
@@ -337,6 +351,7 @@ def main():
                     llm_client=llm_client, linker=linker,
                     kg_client=kg_client, schema_disc=schema_disc,
                     verbose=args.verbose,
+                    benchmark_corpus=benchmark_corpus,
                 )
                 record["raw_answer"] = result.answer
                 record["predicted_answer"] = clean_answer(result.answer)
@@ -351,6 +366,7 @@ def main():
                 answer, method = logicrag_forced_answer(
                     question, entities, llm_client, args.model,
                     linker, kg_client, schema_disc, verbose=args.verbose,
+                    benchmark_corpus=benchmark_corpus,
                 )
                 record["raw_answer"] = answer
                 record["predicted_answer"] = clean_answer(answer)

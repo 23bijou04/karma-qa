@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, format_2hop_lines
+from dbpedia_qa.dbpedia.schema_discovery import (
+    CACHED_CLASS_SCHEMAS,
+    GENERIC_CLASSES,
+    format_2hop_lines,
+)
 
 if TYPE_CHECKING:
     from entity_profile import EntityProfile
@@ -67,30 +71,17 @@ class SchemaProjection:
         if self.primary_class:
             lines.append(f"Class: dbo:{self.primary_class}")
 
-        # Cached schema properties (filtered to primary class)
+        # Schema properties — unified path (all classes now in ontology cache)
         if self.primary_class and self.primary_class in CACHED_CLASS_SCHEMAS:
             cached = CACHED_CLASS_SCHEMAS[self.primary_class]
             if cached.get("dbo"):
-                lines.append(f"  dbo: {', '.join(cached['dbo'][:10])}")
-            if cached.get("dbp"):
-                lines.append(f"  dbp: {', '.join(cached['dbp'][:10])}")
-            # Filter property hints to question-relevant properties only
-            if cached.get("descriptions"):
-                relevant_names = self._relevant_property_names()
-                filtered = {
-                    k: v for k, v in cached["descriptions"].items()
-                    if k in relevant_names
-                } if relevant_names else dict(list(cached["descriptions"].items())[:5])
-                if filtered:
-                    lines.append("  Property hints:")
-                    for prop, desc in filtered.items():
-                        lines.append(f"    - {prop}: {desc}")
-            # Only include relevant chains
-            if self.relevant_chains:
-                chain_lines = format_2hop_lines(
-                    {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
-                )
-                lines.extend(chain_lines)
+                lines.append(f"  dbo: {', '.join(cached['dbo'][:15])}")
+        # 2-hop chains
+        if self.relevant_chains:
+            chain_lines = format_2hop_lines(
+                {"dbo_2hop": self.relevant_chains}, max_chains=5, max_props=4,
+            )
+            lines.extend(chain_lines)
 
         # Actual property values (question-relevant first, then others up to 10)
         actual = profile.actual_properties
@@ -175,7 +166,11 @@ def project(
         class_scores.sort(key=lambda x: (x[1], len(x[0])), reverse=True)
         primary_class = class_scores[0][0]
     else:
-        primary_class = None
+        # Fallback for uncached types: use first specific dbo: class
+        specific = [c for c in profile.all_classes if c not in GENERIC_CLASSES]
+        primary_class = specific[0] if specific else (
+            profile.all_classes[0] if profile.all_classes else None
+        )
 
     # 2. Relevant properties: analysis targets intersected with actual
     relevant = sorted(analysis.target_properties & profile.actual_property_set)
