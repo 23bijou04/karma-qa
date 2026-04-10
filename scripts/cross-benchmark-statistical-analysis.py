@@ -210,7 +210,8 @@ def generate_report(all_data: dict, all_agg: dict, all_mcnemar: dict,
         "- Judge: gemma3:12b (Ollama) for all evaluations",
         "- Metrics: EM, F1, Containment (automated), Judge EM (semantic judge)",
         f"- Statistical: McNemar test, Bonferroni-corrected alpha = {ALPHA:.4f}",
-        "- HotpotQA: closed-corpus setting (~10K passages)",
+        "- Retrieval corpora: 2Wiki ~6.1K snippets, HotpotQA ~9.8K passages, MuSiQue ~11.7K passages",
+        "- Hybrid additionally queries live DBpedia SPARQL + Spotlight APIs for entity linking and schema discovery",
         "",
         "## 3x3 Comparison Table (Judge EM %)",
         "",
@@ -234,8 +235,10 @@ def generate_report(all_data: dict, all_agg: dict, all_mcnemar: dict,
 
     lines.append("| LinearRAG (pub.‡) | 63.7% | 66.5% | 37.0% |")
     lines.append("")
-    lines.append("† Closed-corpus (~10K passages), not distractor or fullwiki setting")
-    lines.append("‡ LinearRAG paper: GPT-4o-mini backbone + GPT-4o-mini judge")
+    lines.append("† Closed retrieval corpus; Hybrid additionally queries live DBpedia APIs")
+    lines.append("‡ LinearRAG paper: GPT-4o-mini backbone + GPT-4o-mini judge (GPT-Acc). "
+                 "Published GPT-Acc not directly comparable to our Judge EM "
+                 "(different judge model and metric).")
     lines.append("")
 
     # EM and F1 table

@@ -198,8 +198,12 @@ def main():
             candidates = [gold] + (aliases or [])
             best_em = max(compute_em(record["new_answer"], c) for c in candidates if c)
             best_f1 = max(compute_f1(record["new_answer"], c) for c in candidates if c)
+            best_containment = max(
+                compute_containment(record["new_answer"], c) for c in candidates if c
+            )
             record["em"] = best_em
             record["f1"] = best_f1
+            record["containment"] = best_containment
 
             if best_em > 0:
                 recovered += 1

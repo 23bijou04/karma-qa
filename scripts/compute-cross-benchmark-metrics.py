@@ -11,12 +11,24 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import math
 import os
 from collections import defaultdict
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load project metrics for on-the-fly EM/F1/containment computation
+_spec = importlib.util.spec_from_file_location(
+    "metrics", os.path.join(PROJECT_ROOT, "evaluation", "metrics.py")
+)
+_metrics_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_metrics_mod)
+compute_em = _metrics_mod.compute_em
+compute_f1 = _metrics_mod.compute_f1
+compute_containment = _metrics_mod.compute_containment
+
 CROSS_DIR = os.path.join(PROJECT_ROOT, "data", "cross_benchmark")
 
 # System -> benchmark -> JSONL file mapping
@@ -56,7 +68,11 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def load_judged(path: str) -> list[dict]:
-    """Load JSONL records from judged file."""
+    """Load JSONL records from judged file.
+
+    Computes em/f1/containment on-the-fly when those fields are absent
+    (e.g. LinearRAG 2Wiki data which only has predicted_answer + gold_answer).
+    """
     records = []
     if not os.path.exists(path):
         return records
@@ -65,7 +81,18 @@ def load_judged(path: str) -> list[dict]:
             line = line.strip()
             if line:
                 try:
-                    records.append(json.loads(line))
+                    d = json.loads(line)
+                    # Recompute string metrics when absent
+                    if "em" not in d and d.get("predicted_answer") and d.get("gold_answer"):
+                        pred = d["predicted_answer"]
+                        candidates = [d["gold_answer"]]
+                        for a in d.get("gold_aliases", []):
+                            if a:
+                                candidates.append(a)
+                        d["em"] = max(compute_em(pred, c) for c in candidates)
+                        d["f1"] = max(compute_f1(pred, c) for c in candidates)
+                        d["containment"] = max(compute_containment(pred, c) for c in candidates)
+                    records.append(d)
                 except json.JSONDecodeError:
                     pass
     return records
@@ -172,10 +199,11 @@ def main():
                 row += f" {d['judge_em']:5.1f}% ({d['judge_em_ci_lo']:.1f}-{d['judge_em_ci_hi']:.1f}) |"
         print(row)
 
-    # LinearRAG published footnote
+    # Footnotes
     print()
     print("LinearRAG published (GPT-4o-mini): 2Wiki 63.7%, HotpotQA 66.5%, MuSiQue 37.0% GPT-Acc")
-    print("Note: HotpotQA evaluated in closed-corpus setting (~10K passages)")
+    print("Note: Retrieval corpora: 2Wiki ~6.1K snippets, HotpotQA ~9.8K passages, MuSiQue ~11.7K passages")
+    print("Note: Hybrid additionally queries live DBpedia SPARQL + Spotlight APIs for entity linking and schema discovery")
 
 
 if __name__ == "__main__":
