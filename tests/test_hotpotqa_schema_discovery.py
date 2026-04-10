@@ -19,6 +19,7 @@ from entity_profile import EntityProfile, build_entity_profile
 from question_analysis import analyze_question, enrich_analysis
 from schema_projection import project
 
+
 # ---------------------------------------------------------------------------
 # Helpers: build EntityProfile for each uncached type
 # ---------------------------------------------------------------------------

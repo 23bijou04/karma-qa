@@ -21,8 +21,8 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 try:
-    from SPARQLWrapper import JSON as SPARQL_JSON
     from SPARQLWrapper import SPARQLWrapper
+    from SPARQLWrapper import JSON as SPARQL_JSON
 except ImportError:
     print("SPARQLWrapper not installed. Run: pip install SPARQLWrapper")
     sys.exit(1)

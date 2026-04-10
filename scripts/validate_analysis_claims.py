@@ -6,8 +6,8 @@ Usage: python3 scripts/validate_analysis_claims.py
 """
 
 import json
-from collections import defaultdict
 from pathlib import Path
+from collections import defaultdict
 
 ROOT = Path(__file__).parent.parent
 HYBRID_FILE = ROOT / "data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl"
@@ -130,14 +130,14 @@ decomp_wins = [
 check("S2-sparql-wins", "Hybrid-only wins via SPARQL method", len(sparql_wins), 7)
 check("S2-decomp-wins", "Hybrid-only wins via logicrag_decomposed method", len(decomp_wins), 6)
 
-print("\n  [INFO] Hybrid-only win method breakdown:")
+print(f"\n  [INFO] Hybrid-only win method breakdown:")
 method_counts = defaultdict(int)
 for qid in hybrid_only_wins:
     method_counts[h_by_id[qid].get("method", "unknown")] += 1
 for m, c in sorted(method_counts.items()):
     print(f"         {m}: {c}")
 
-print("\n  [INFO] LogicRAG answers in hybrid-only wins:")
+print(f"\n  [INFO] LogicRAG answers in hybrid-only wins:")
 for qid in hybrid_only_wins:
     ans = l_by_id[qid].get("predicted_answer", "")
     q = h_by_id[qid]["question"][:60]
@@ -186,7 +186,7 @@ logicrag_only_inf = [
 ]
 check("S4-logicrag-only-wins", "# LogicRAG-only wins (inference)", len(logicrag_only_inf), 4)
 
-print("\n  [INFO] LogicRAG-only inference wins:")
+print(f"\n  [INFO] LogicRAG-only inference wins:")
 for qid in logicrag_only_inf:
     q = h_by_id[qid]["question"]
     ha = h_by_id[qid].get("predicted_answer", "")
@@ -242,7 +242,7 @@ unanswerable_neither = sum(
 )
 check("S6-unanswerable", "6 of 7 neither-correct have is_answerable=false", unanswerable_neither, 6)
 
-print("\n  [INFO] neither-correct details:")
+print(f"\n  [INFO] neither-correct details:")
 for qid in neither_ids:
     q = h_by_id[qid]["question"][:60]
     qt = h_by_id[qid]["question_type"]
@@ -325,8 +325,8 @@ for r in logicrag:
 
 print(f"  [INFO] Unique page titles seen in 100-q logicrag traces: {len(unique_pages)}")
 print(f"  [INFO] Total chunk references in traces: {total_chunks}")
-print("  [NOTE] Claim of 6,119 snippets / 6,120 unique pages refers to ALL 1000 questions —")
-print("         cannot verify from 100-q subset. Skipping direct check.")
+print(f"  [NOTE] Claim of 6,119 snippets / 6,120 unique pages refers to ALL 1000 questions —")
+print(f"         cannot verify from 100-q subset. Skipping direct check.")
 
 # Check if there's a corpus manifest or separate file
 corpus_paths = [

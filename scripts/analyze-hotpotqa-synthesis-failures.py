@@ -5,6 +5,7 @@ Excludes judge errors (em=1.0 but judge_correct=False).
 """
 
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path("/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa")

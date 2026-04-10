@@ -25,7 +25,6 @@ from dbpedia_qa.dbpedia import (
     SchemaDiscovery,
 )
 from dbpedia_qa.models import extract_final_answer
-
 from hybrid_qa import hybrid_answer
 from llm_provider import create_llm_client
 
@@ -194,7 +193,7 @@ def main():
     for r in results:
         rs = r.get("route_source", "error")
         new_routes[rs] = new_routes.get(rs, 0) + 1
-    print("\nNew route distribution:")
+    print(f"\nNew route distribution:")
     for route, count in sorted(new_routes.items(), key=lambda x: -x[1]):
         print(f"  {route}: {count}")
 

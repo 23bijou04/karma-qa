@@ -71,7 +71,6 @@ def load_models():
 def get_chunks_for_question(question: str):
     """Fetch Wikipedia pages and chunk them. Returns list of WikiChunk."""
     from dbpedia_qa.dbpedia import DBpediaEntityLinker
-
     from graphrag_wiki import link_entities_to_dbpedia, retrieve_and_chunk_wikipedia
 
     linker = DBpediaEntityLinker()

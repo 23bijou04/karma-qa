@@ -57,7 +57,7 @@ Fridrikh Ermler as the director, SPARQL trivially returns Rēzekne.
 
 ## 3. Pipeline Execution Trace
 
-### 3.1 Overall Flow (current 3-path architecture)
+### 3.1 Overall Flow (two-route architecture: SPARQL direct or LogicRAG decomposition)
 
 ```
 hybrid_answer()
@@ -67,7 +67,7 @@ hybrid_answer()
   ├── Step 4: SPARQL → 0 results (dbo:director missing)
   │   └── Retry with dbp:director → 0 results
   ├── Step 5: LogicRAG Decomposition → 2 sub-Qs [DETAILED BELOW]
-  └── (Step 6: Text fallback — NOT reached, LogicRAG returned an answer)
+  └── (Text fallback — NOT reached, LogicRAG returned an answer)
 ```
 
 ### 3.2 Step 4: SPARQL Direct — Why It Fails

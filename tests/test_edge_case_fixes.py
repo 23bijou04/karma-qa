@@ -15,6 +15,7 @@ import time
 # ---------------------------------------------------------------------------
 # C1: SERVICE keyword blocked by SPARQL read-only guard
 # ---------------------------------------------------------------------------
+
 from sparql_solver import _is_readonly_sparql
 
 

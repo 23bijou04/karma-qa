@@ -449,7 +449,7 @@ def main():
 
     total = len(records)
     correct = sum(results.values())
-    print("\nResults:")
+    print(f"\nResults:")
     print(f"  Total:   {total}")
     print(f"  Correct: {correct}")
     print(f"  Accuracy: {correct/total*100:.1f}%")

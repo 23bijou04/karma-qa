@@ -27,12 +27,7 @@ _parent = os.path.dirname(PROJECT_ROOT)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from dbpedia_qa.dbpedia import (
-    DBpediaEntityLinker,
-    DBpediaSPARQLClient,
-    SchemaDiscovery,
-    WikipediaResolver,
-)
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery, WikipediaResolver
 from dbpedia_qa.models import extract_final_answer
 
 from llm_provider import create_llm_client

@@ -28,10 +28,10 @@ _parent_dir = str(_root.parent)                       # 2026_02/ (parent of pkg)
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-from dbpedia_qa.dbpedia.entity_linker import (  # noqa: E402
+from dbpedia_qa.dbpedia.entity_linker import (        # noqa: E402
+    DBpediaEntityLinker,
     _MENTION_BLOCKLIST,
     _STRIP_WORDS,
-    DBpediaEntityLinker,
 )
 
 # ── constants ─────────────────────────────────────────────────────────────────

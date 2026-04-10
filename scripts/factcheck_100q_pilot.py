@@ -186,7 +186,7 @@ for hh, ll in hybrid_wins:
 
 check('LogicRAG "Unknown" in hybrid-only wins', 10, unknown_count)
 
-print("\n  LogicRAG predicted_answer in hybrid-only wins:")
+print(f"\n  LogicRAG predicted_answer in hybrid-only wins:")
 for hh, ll in hybrid_wins:
     ans = ll.get("predicted_answer", "")
     print(f"    [{hh.get('method')}]  logicrag_ans={repr(ans[:80])}")

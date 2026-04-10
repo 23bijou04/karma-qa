@@ -9,33 +9,34 @@
 
 ## Evaluation Results (`eval_1000q/`)
 
-Primary evaluation campaign on 1000-question stratified sample.
+Primary evaluation campaign on 1000-question subset (from LinearRAG evaluation set, Zly0523/linear-rag).
 
 ### Coverage & Classification
-- `coverage_analysis_1000.json` — Per-question KG coverage + answerability flags (produced by coverage analysis pipeline)
-- `scenario_classification_1000.json` — Questions classified by KG coverage scenario (produced by `scripts/classify_1000q_scenarios.py`)
+- `coverage_analysis_1000.json` — Per-question KG coverage + answerability flags (original analysis, narrow PROPERTY_MAP: 38.5% property, 34.6% answerable)
+- `coverage_analysis_1000_corrected.json` — Predicate-expanded correction (41.6% property, 37.5% answerable; intermediate, superseded by hop verification)
+- `hop_verification_results.json` — **Ground truth**: hop-by-hop chain verification against live DBpedia (36.8% predicate-complete, 11.9% strict value match). Script: `scripts/verify_hop_coverage.py`
+- `scenario_classification_1000.json` — Questions classified by KG coverage scenario (produced by `scripts/classify_1000q_scenarios.py`, based on original analysis)
 - `answer_source_analysis_1000.json` — Analysis of where correct answers originate (produced by `scripts/check_answer_sources.py`)
 
 ### SPARQL-Only Baseline
-- `sparql_eval_1000.jsonl` — 346 evaluated questions (JSONL, append-only with resume)
+- `sparql_eval_1000.jsonl` — 346 evaluated questions (original answerable set; JSONL, append-only with resume)
 - `sparql_eval_1000_summary.json` — Aggregate metrics
 
 ### GRASP Baseline
-- `grasp_eval_dbpedia.jsonl` — 346 evaluated questions
+- `grasp_eval_dbpedia.jsonl` — 346 evaluated questions (original answerable set)
 - `grasp_eval_dbpedia_summary.json` — Aggregate metrics
 - `grasp_eval_dbpedia_traces/` — Full WebSocket traces per question (348 files)
 - `grasp_failure_deep_analysis.md` — Manual analysis of GRASP failure modes
 - `grasp_trace_examples.md` — Annotated trace examples
 
 ### Hybrid Pipeline
-- `hybrid_eval_100_2hop.jsonl` — First 100-question eval (2-hop subset)
-- `hybrid_eval_100_2hop_judged.jsonl` — Same with LLM-as-judge scores
-- `hybrid_eval_100_2hop_report.md` — Summary report
-- `hybrid_eval_100_post_fix.jsonl` — Re-eval after bug fixes
-- `hybrid_eval_100_llm_hints.jsonl` — Eval with LLM hint routing
-- `hybrid_eval_100_decomp_fix.jsonl` — Eval after decomposition fixes
-- `*_judged.jsonl` variants — Each eval re-scored by LLM judge
-- `_rerun_100_ids.json` — Question IDs for the 100-question subset
+- `hybrid_eval_1000.jsonl` — Full 1000-question eval (in progress, auto-resumes)
+
+### Scenario Evals
+- `scenario_eval_hybrid.jsonl` — Hybrid pipeline on 60 scenario-stratified questions (10 per A–F)
+- `scenario_eval_hybrid_judged.jsonl` — Same with LLM-as-judge scores
+- `scenario_eval_logicrag_baseline.jsonl` — LogicRAG-only baseline on same 60 questions
+- `scenario_eval_logicrag_baseline_judged.jsonl` — Same with LLM-as-judge scores
 
 ### Cross-Pipeline
 - `evaluation_report_sparql_grasp.md` — SPARQL vs GRASP comparison report
@@ -45,7 +46,7 @@ Primary evaluation campaign on 1000-question stratified sample.
 Earlier evaluation campaign on 800-question sample (superseded by 1000q).
 
 - `coverage_analysis_800.json` — Per-question KG coverage (earlier version)
-- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL baseline results
+- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL component results (Hybrid's SPARQL path standalone)
 - `grasp_eval_dbpedia.jsonl` / `grasp_eval_dbpedia_judged.jsonl` — GRASP results
 - `graphrag_eval_failures.jsonl` — GraphRAG failure cases
 - `linearrag_eval_subset.json` — LinearRAG results for comparison

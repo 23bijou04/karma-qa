@@ -314,7 +314,7 @@ def print_statistics(results: list[dict]):
     val_ok = sum(1 for r in results if r["all_values_match"])
     chain_ok = sum(1 for r in results if r["chain_connected"])
 
-    print("\nOverall (all hops must pass):")
+    print(f"\nOverall (all hops must pass):")
     print(f"  All entities resolved:  {ent_ok}/{total} ({100*ent_ok/total:.1f}%)")
     print(f"  All properties exist:   {prop_ok}/{total} ({100*prop_ok/total:.1f}%)")
     print(f"  All values match:       {val_ok}/{total} ({100*val_ok/total:.1f}%)")
@@ -325,7 +325,7 @@ def print_statistics(results: list[dict]):
     for r in results:
         by_type[r["question_type"]].append(r)
 
-    print("\nBy question type:")
+    print(f"\nBy question type:")
     for qtype in sorted(by_type.keys()):
         items = by_type[qtype]
         n = len(items)
@@ -349,7 +349,7 @@ def print_statistics(results: list[dict]):
             if h["value_match"]:
                 hop_stats[idx]["val"] += 1
 
-    print("\nPer-hop statistics:")
+    print(f"\nPer-hop statistics:")
     for idx in sorted(hop_stats.keys()):
         s = hop_stats[idx]
         n = s["total"]
@@ -365,7 +365,7 @@ def print_statistics(results: list[dict]):
             if not h["property_exists"] and h["entity_resolved"]:
                 prop_missing[h["property"]] += 1
 
-    print("\nProperty existence (entity resolved but property missing):")
+    print(f"\nProperty existence (entity resolved but property missing):")
     for prop in sorted(prop_total.keys(), key=lambda p: -prop_missing.get(p, 0)):
         t = prop_total[prop]
         m = prop_missing.get(prop, 0)

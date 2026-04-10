@@ -9,11 +9,11 @@ import argparse
 import importlib.util
 import json
 import os
-import re
 import signal
 import sys
 import time
 import traceback
+import re
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -22,13 +22,9 @@ if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
 from dbpedia_qa.dbpedia import (
-    DBpediaEntityLinker,
-    DBpediaSPARQLClient,
-    SchemaDiscovery,
-    WikipediaResolver,
+    DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery, WikipediaResolver,
 )
 from dbpedia_qa.models import extract_final_answer
-
 from llm_provider import create_llm_client
 
 # Load metrics
@@ -180,7 +176,7 @@ def main():
             record["debug_info"] = {}
             record["has_hedging"] = False
             record["error"] = f"Timeout after {QUESTION_TIMEOUT}s"
-            print("  !! TIMEOUT")
+            print(f"  !! TIMEOUT")
         except Exception:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
