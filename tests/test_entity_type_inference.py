@@ -227,6 +227,12 @@ class TestDirectUriProbe:
             ["Person", "Agent"],  # original entity types
             ["Film", "Work"],     # probe URI types -- HIT
         ]
+        # _probe_single_uri also checks existence and disambiguation
+        linker.sparql_client.ask_entity_exists.return_value = True
+        linker.sparql_client.validate_entity_uri.return_value = {
+            "is_disambiguation": False,
+            "redirect_target": None,
+        }
 
         result = linker._validate_entity_types(
             [president],
