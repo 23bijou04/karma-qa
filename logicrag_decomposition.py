@@ -439,7 +439,8 @@ def _decompose_subquestions(
         return None  # Single-hop, skip decomposition
 
     if len(sub_qs) > 6:
-        sub_qs = sub_qs[:6]  # Safety cap
+        logger.warning("Truncated %d sub-questions to 6", len(sub_qs))
+        sub_qs = sub_qs[:6]
 
     # Build ordered SubQuestion list
     order = _topological_sort_indices(len(sub_qs), deps)

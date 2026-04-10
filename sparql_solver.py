@@ -216,7 +216,7 @@ def solve(
 
     if answer:
         clean = answer.strip().lower().rstrip(".")
-        if clean in _NULL_ANSWERS or any(null in clean for null in _NULL_ANSWERS):
+        if clean in _NULL_ANSWERS:
             answer = None
 
     if answer and _LIST_ARTICLE_PATTERN.search(answer.strip()):

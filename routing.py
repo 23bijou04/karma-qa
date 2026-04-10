@@ -596,7 +596,7 @@ def route_question(
                 if route in ("SPARQL", "DECOMPOSE"):
                     return (route, f"llm_prop:{reason}")
     except Exception as e:
-        logger.debug("Stage 2 LLM property extraction failed: %s", e)
+        logger.warning("Stage 2 LLM property extraction failed: %s", e)
 
     # Stage 3: TEXT fallback
     if debug:
