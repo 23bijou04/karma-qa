@@ -68,7 +68,7 @@ def force_ipv4():
 # Data loading (same as grasp_evaluation.py)
 # ---------------------------------------------------------------------------
 
-DEFAULT_COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
+DEFAULT_COVERAGE_FILE = "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
 
 def load_answerable_questions(coverage_file: str) -> list[dict]:
     with open(coverage_file) as f:

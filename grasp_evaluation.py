@@ -35,7 +35,7 @@ from evaluation.metrics import compute_containment, compute_em, compute_f1
 # ---------------------------------------------------------------------------
 
 GRASP_WS_URL = "wss://grasp.cs.uni-freiburg.de/api/live"
-COVERAGE_FILE = "data/old_800q_results/coverage_analysis_800.json"
+COVERAGE_FILE = "data/eval_1000q/ground-truth/coverage_analysis_1000.json"
 WS_TIMEOUT = 180        # seconds per WebSocket message
 QUESTION_TIMEOUT = 600   # 10 min overall per question
 MAX_RETRIES = 3
