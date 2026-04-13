@@ -28,6 +28,7 @@ if _parent not in sys.path:
 
 # Reuse metrics loader from batch eval
 import importlib.util
+
 _spec = importlib.util.spec_from_file_location(
     "metrics", os.path.join(PROJECT_ROOT, "evaluation", "metrics.py")
 )
@@ -38,9 +39,13 @@ compute_f1 = _metrics.compute_f1
 compute_containment = _metrics.compute_containment
 
 from dbpedia_qa.dbpedia import (
-    DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery, WikipediaResolver,
+    DBpediaEntityLinker,
+    DBpediaSPARQLClient,
+    SchemaDiscovery,
+    WikipediaResolver,
 )
 from dbpedia_qa.models import extract_final_answer
+
 from hybrid_qa import hybrid_answer
 from llm_provider import create_llm_client
 from sparql_evaluation import force_ipv4

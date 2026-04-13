@@ -5,6 +5,8 @@ from question_analysis import (
     KEYWORD_TO_PROPERTIES,
     analyze_question,
 )
+
+
 class TestKeywordToProperties:
     def test_director_present(self):
         assert "director" in KEYWORD_TO_PROPERTIES

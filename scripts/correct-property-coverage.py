@@ -11,7 +11,7 @@ import json
 import time
 from pathlib import Path
 
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import JSON, SPARQLWrapper
 
 # ---------------------------------------------------------------------------
 # Config
@@ -166,7 +166,7 @@ def main():
     ent_true = sum(1 for q in questions if q["all_entities_exist"])
 
     print(f"\n{'='*60}")
-    print(f"EXACT CORRECTED COVERAGE")
+    print("EXACT CORRECTED COVERAGE")
     print(f"{'='*60}")
     print(f"Entity coverage:   {ent_true}/{total} = {100*ent_true/total:.1f}% (unchanged)")
     print(f"Property coverage: {original_prop_true} → {new_prop_true}/{total} "
