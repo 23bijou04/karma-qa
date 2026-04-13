@@ -208,11 +208,23 @@ python scripts/unified_comparison.py
 python scripts/compare_evals_statistical.py
 ```
 
-### 5. Ablation study
+### 5. Cross-benchmark evaluation (HotPotQA, MuSiQue)
 
 ```bash
-# Run levels 0 (no KG), 1 (entity-only), and 4 (oracle)
-python -m ablation_study_v3.runner --api-key $GROQ_API_KEY --n-per-type 5 --levels 0 1 4
+# Prepare HotPotQA + MuSiQue datasets
+python scripts/prepare-cross-benchmark-data.py
+
+# Run Hybrid on HotPotQA + MuSiQue
+python scripts/run-hybrid-cross-benchmark.py --benchmark hotpotqa
+python scripts/run-hybrid-cross-benchmark.py --benchmark musique
+
+# Run LogicRAG baseline on same benchmarks
+python scripts/run-logicrag-cross-benchmark.py --benchmark hotpotqa
+python scripts/run-logicrag-cross-benchmark.py --benchmark musique
+
+# Aggregate metrics + statistical tests
+python scripts/compute-cross-benchmark-metrics.py
+python scripts/cross-benchmark-statistical-analysis.py
 ```
 
 ## Configuration
@@ -250,10 +262,12 @@ All pipelines support `--provider groq|github` and `--model <name>`:
 ├── question_analysis.py        # Question type classification
 ├── entity_discovery.py         # Type-guided entity discovery from KG
 ├── entity_profile.py           # Entity profile construction from KG
-├── graphrag_wiki.py            # GraphRAG text-only pipeline (earlier prototype)
-├── graphrag_debug.py           # Debug view of pipeline intermediates
+├── graphrag_wiki.py            # Wikipedia retrieval + entity linking helpers
 ├── llm_provider.py             # Unified LLM factory (Groq, GitHub Models)
 ├── models.py                   # Entity, Triple, HybridResult dataclasses
+├── wiki_utils.py               # Wikipedia text fetch utilities
+├── sampling.py                 # Stratified sampling + McNemar test
+├── llm_judge.py                # LLM-as-judge helper
 │
 ├── dbpedia/                    # KG integration layer
 │   ├── client.py               #   SPARQL client with rate limiting + caching
@@ -270,35 +284,32 @@ All pipelines support `--provider groq|github` and `--model <name>`:
 ├── evaluation/
 │   └── metrics.py              # Official EM/F1/containment metrics
 │
-├── sparql_evaluation.py        # LLM-SPARQL evaluation baseline
+├── sparql_evaluation.py        # LLM-SPARQL evaluation baseline + helper library
 ├── grasp_evaluation.py         # GRASP WebSocket evaluation client
 │
-├── scripts/                    # Evaluation & analysis scripts
-│   ├── hybrid_batch_eval.py    #   Batch eval runner (1000q, auto-resume)
-│   ├── judge_hybrid_eval.py    #   LLM-as-judge for hybrid results
-│   ├── unified_comparison.py   #   Cross-system comparison tables
-│   ├── compare_evals_statistical.py  # McNemar + Wilson CI tests
-│   ├── verify_hop_coverage.py  #   Hop-by-hop DBpedia predicate verification
-│   ├── classify_1000q_scenarios.py   # KG coverage scenario classification
-│   └── ...                     #   (see Scripts section below)
+├── scripts/                    # Evaluation scripts (reproduction)
+│   ├── hybrid_batch_eval.py                # Hybrid batch runner (1000q, auto-resume)
+│   ├── judge_hybrid_eval.py                # LLM-as-judge
+│   ├── unified_comparison.py               # Cross-system table (2WikiMultiHopQA)
+│   ├── compare_evals_statistical.py        # McNemar + Wilson CI
+│   ├── run-hybrid-cross-benchmark.py       # Hybrid on HotPotQA/MuSiQue
+│   ├── run-logicrag-cross-benchmark.py     # LogicRAG on HotPotQA/MuSiQue
+│   ├── run-logicrag-1000q.py               # LogicRAG on 2WikiMultiHopQA
+│   ├── convert-linearrag-predictions.py    # LinearRAG output → eval format
+│   ├── prepare-cross-benchmark-data.py     # HotPotQA + MuSiQue data prep
+│   ├── compute-cross-benchmark-metrics.py  # Cross-benchmark metrics
+│   ├── cross-benchmark-statistical-analysis.py  # Cross-benchmark stats
+│   └── grasp_evaluate_results.py           # GRASP offline re-scoring
 │
 ├── baselines/
 │   ├── LinearRAG/              # LinearRAG baseline (self-contained, own venv)
 │   └── LogicRAG/               # LogicRAG baseline
 │
-├── ablation_study_v3/          # 5-level ablation (L0–L4)
-│   ├── runner.py               #   Ablation runner
-│   ├── sampling.py             #   Stratified sampling (50/type, seed=42)
-│   ├── levels_base.py          #   Levels 0, 1, 4
-│   ├── levels_kg.py            #   Levels 2, 3 (KG-based)
-│   ├── llm_judge.py            #   LLM-as-judge evaluation
-│   └── wiki_utils.py           #   Wikipedia text utilities
-│
 ├── data/
-│   ├── dev_full.json           # 12,576 questions (gitignored, 53MB, see note below)
-│   └── eval_1000q/             # 1000-question evaluation results (JSONL)
+│   ├── eval_1000q/             # 2WikiMultiHopQA 1000q results (JSONL)
+│   └── cross_benchmark/        # HotPotQA + MuSiQue results (JSONL)
 │
-├── tests/                      # 30+ unit/integration tests
+├── tests/                      # Unit/integration tests
 └── docs/                       # Project documentation
 ```
 
@@ -324,42 +335,36 @@ Every question goes through the same first three steps, then diverges based on s
 
 Within decomposition, each sub-question independently uses SPARQL when the KG has the data or falls back to Wikipedia text retrieval (RAG with bi-encoder + cross-encoder reranking) when it doesn't.
 
-## Ablation Study
-
-The `ablation_study_v3/` module measures the impact of KG detail on answer quality across 5 levels:
-
-| Level | Description | Context Provided |
-|:-----:|-------------|-----------------|
-| 0 | No KG (entity names only) | Just entity names from the question |
-| 1 | Entity-Only KG | Verified DBpedia entity URIs |
-| 2 | Entity + Important Relations | Key properties from schema discovery |
-| 3 | Full KG + Wikipedia Fallback | Complete KG triples + Wikipedia text |
-| 4 | Oracle KG | Ground truth evidence triples |
-
-Sample: 200 questions (50 per type), seed=42. Statistical tests: Wilson CI, McNemar with Bonferroni correction.
-
 ## Scripts
 
-All utility scripts live in `scripts/`.
+All evaluation scripts live in `scripts/`.
 
-### Benchmark Preparation
-
-| Script | Purpose |
-|--------|---------|
-| `verify_hop_coverage.py` | Hop-by-hop verification of DBpedia predicate existence for each evidence triple. Produces ground truth (`hop_verification_results.json`). |
-| `extract_linearrag_1k.py` | Extract LinearRAG's 1K question subset from `dev_full.json` with DBpedia coverage analysis. |
-| `classify_1000q_scenarios.py` | Classify questions by KG coverage scenario (A–F: KG_COMPLETE through ENTITY_NOT_FOUND). |
-| `check_answer_sources.py` | Check whether gold answers are reachable via DBpedia properties or Wikipedia text. |
-
-### Evaluation
+### Reproduction (2WikiMultiHopQA)
 
 | Script | Purpose |
 |--------|---------|
-| `hybrid_batch_eval.py` | Batch evaluation of Hybrid QA on 1000 questions. JSONL append-only with auto-resume. |
-| `judge_hybrid_eval.py` | LLM-as-judge for any eval JSONL — adds `judge_correct` field via semantic equivalence. |
-| `unified_comparison.py` | Cross-system comparison (Hybrid, SPARQL, GRASP, LinearRAG) with Wilson CIs and McNemar tests. |
-| `compare_evals_statistical.py` | McNemar test + per-type breakdown comparing two judged JSONL files. |
-| `grasp_evaluate_results.py` | Offline re-scoring of GRASP results with heuristic cleaning and LLM judge. |
+| `hybrid_batch_eval.py` | Batch Hybrid evaluation on 1000q (auto-resume JSONL) |
+| `run-logicrag-1000q.py` | LogicRAG baseline on 1000q |
+| `convert-linearrag-predictions.py` | Convert LinearRAG output to eval format |
+| `judge_hybrid_eval.py` | LLM-as-judge (adds `judge_correct` field) |
+| `unified_comparison.py` | Cross-system comparison table (Hybrid, SPARQL, GRASP, LinearRAG, LogicRAG) |
+| `compare_evals_statistical.py` | McNemar + per-type breakdown |
+
+### Reproduction (HotPotQA + MuSiQue)
+
+| Script | Purpose |
+|--------|---------|
+| `prepare-cross-benchmark-data.py` | Download + verify HotPotQA/MuSiQue datasets |
+| `run-hybrid-cross-benchmark.py` | Hybrid on HotPotQA/MuSiQue |
+| `run-logicrag-cross-benchmark.py` | LogicRAG on HotPotQA/MuSiQue |
+| `compute-cross-benchmark-metrics.py` | Aggregate cross-benchmark metrics |
+| `cross-benchmark-statistical-analysis.py` | McNemar across 3 systems × 3 benchmarks |
+
+### GRASP
+
+| Script | Purpose |
+|--------|---------|
+| `grasp_evaluate_results.py` | Offline re-scoring of GRASP results with LLM judge |
 
 ## Key Technical Decisions
 

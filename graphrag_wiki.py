@@ -30,7 +30,7 @@ if _parent not in sys.path:
 
 from ddgs import DDGS
 
-from ablation_study_v3.wiki_utils import (
+from wiki_utils import (
     _rate_limit_wiki,
     get_wikipedia_text_by_title,
     uri_to_wiki_title,

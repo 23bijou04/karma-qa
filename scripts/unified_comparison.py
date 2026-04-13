@@ -20,7 +20,7 @@ from itertools import combinations
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from ablation_study_v3.sampling import mcnemar_test
+from sampling import mcnemar_test
 from evaluation.metrics import compute_containment, compute_em, compute_f1, normalize_answer
 
 

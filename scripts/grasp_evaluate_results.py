@@ -78,9 +78,9 @@ def rescore(results: list[dict]) -> list[dict]:
 def run_judge(results: list[dict], model: str = "qwen2.5:7b") -> list[dict]:
     """Run LLM judge on non-EM-matching answers."""
     try:
-        from ablation_study_v3.llm_judge import judge_one
+        from llm_judge import judge_one
     except ImportError:
-        print("Warning: Could not import judge_one from ablation_study_v3.llm_judge")
+        print("Warning: Could not import judge_one from llm_judge")
         print("Falling back to inline implementation")
         judge_one = _judge_one_fallback
 
