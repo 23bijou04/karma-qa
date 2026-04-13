@@ -172,7 +172,18 @@ def hybrid_answer(question: str, api_key: str = None,
             },
         }
     except Exception as e:
-        debug_info = {"assembly_error": str(e)}
+        # Seed required keys so downstream stage_timings writes don't KeyError.
+        # Without this, a metadata assembly failure (e.g. missing attribute on
+        # projections) would crash the entire question at lines 193/215/345.
+        debug_info = {
+            "assembly_error": str(e),
+            "stage_timings": {
+                "entity_linking_s": round(t_entity_link - t_start, 3),
+                "schema_projection_s": round(t_schema - t_entity_link, 3),
+                "routing_s": round(t_route - t_schema, 3),
+            },
+        }
+        logger.warning("debug_info assembly failed: %s", e)
 
     # === Step 4: Direct SPARQL (single-hop or multi-hop with full schema) ===
     sparql_answer = None
@@ -225,7 +236,10 @@ def hybrid_answer(question: str, api_key: str = None,
     # Safety net: if an entity has a direct property answering the question,
     # use SPARQL instead of TEXT. Catches routing gaps from entity-linking
     # failures where properties weren't detected but the URI is correct.
-    if entities and analysis.target_properties and schema_ctx:
+    # Skip if we already tried SPARQL in Step 4 — the re-solve would be
+    # identical and wastes an LLM call + SPARQL roundtrip.
+    if (route != "SPARQL"
+            and entities and analysis.target_properties and schema_ctx):
         from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
 
         for entity in entities:
@@ -258,7 +272,11 @@ def hybrid_answer(question: str, api_key: str = None,
                                 debug_info=debug_info,
                             )
                         break  # Only need one hit to attempt SPARQL
-                except Exception:
+                except Exception as ask_err:
+                    logger.debug(
+                        "Step 5b ASK failed (%s, %s): %s",
+                        entity.label, prop, ask_err,
+                    )
                     continue  # ASK failed, try next property
             else:
                 continue

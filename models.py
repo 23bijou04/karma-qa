@@ -1,8 +1,16 @@
 """Data models for DBpedia Hybrid QA system."""
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Matches a single trailing parenthetical clause, e.g. " (also known as X)".
+# Applied once post-extraction — LLMs frequently append disambiguators that
+# break EM/F1 scoring against short gold answers.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
 
 
 def extract_final_answer(text: str) -> str:
@@ -10,14 +18,30 @@ def extract_final_answer(text: str) -> str:
 
     Uses last-match semantics (backward compatible with the old split()[-1] pattern).
     Shared utility for all pipelines to avoid inconsistent extraction logic.
-    Returns the text after the marker, or the original text if no marker found.
+
+    Behavior:
+      - If marker found: return text after the LAST marker, trimmed, with a
+        single trailing parenthetical stripped (e.g. "John Smith (director)"
+        -> "John Smith"). This normalizes LLM output against short gold answers.
+      - If marker missing: log a warning (so eval scripts can detect format
+        regressions) and return the original text unchanged to preserve
+        passthrough semantics for callers that already pre-clean.
+      - None/empty input returns "".
     """
     if not text:
         return text or ""
-    # Find all occurrences; take text after the last one
     matches = list(re.finditer(r"FINAL ANSWER:", text, re.IGNORECASE))
     if matches:
-        return text[matches[-1].end():].strip()
+        extracted = text[matches[-1].end():].strip()
+        # Strip a single trailing parenthetical clause (common LLM habit)
+        extracted = _TRAILING_PAREN_RE.sub("", extracted).strip()
+        return extracted
+    # No marker — this indicates the LLM didn't follow instructions.
+    # Log once at DEBUG (routine under retry loops, noisy at WARNING).
+    logger.debug(
+        "extract_final_answer: no FINAL ANSWER marker (len=%d); returning raw text",
+        len(text),
+    )
     return text
 
 

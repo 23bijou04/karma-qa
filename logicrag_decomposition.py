@@ -302,12 +302,36 @@ def _generate_final_answer(
 def _build_info_summary(
     sub_questions: list, known_facts: dict[int, str],
 ) -> str:
-    """Build provenance-tagged info summary from resolved sub-questions."""
-    return "\n".join(
-        f"- [{('SPARQL' if sq.method == 'sparql' else 'TEXT')}] "
-        f"{sq.text} -> {known_facts[sq.original_idx]}"
-        for sq in sub_questions if sq.original_idx in known_facts
-    )
+    """Build provenance-tagged info summary from resolved sub-questions.
+
+    Emits [UNKNOWN] entries for unresolved sub-Qs so the final-answer prompt
+    can detect broken chains and refuse to fabricate. Previously this silently
+    dropped failed sub-Qs, enabling Hop1+Hop3 synthesis without Hop2.
+    """
+    lines = []
+    for sq in sub_questions:
+        if sq.original_idx in known_facts:
+            method_tag = "SPARQL" if sq.method == "sparql" else "TEXT"
+            lines.append(f"- [{method_tag}] {sq.text} -> {known_facts[sq.original_idx]}")
+        else:
+            lines.append(f"- [UNKNOWN] {sq.text} -> (could not resolve)")
+    return "\n".join(lines)
+
+
+def _chain_has_gap(
+    sub_questions: list, known_facts: dict[int, str],
+) -> bool:
+    """Return True if any sub-Q that feeds downstream deps is unresolved.
+
+    Used as a guard before emitting a final answer — prevents partial-chain
+    synthesis when an intermediate hop failed.
+    """
+    resolved_idxs = set(known_facts.keys())
+    all_deps: set[int] = set()
+    for sq in sub_questions:
+        all_deps.update(sq.depends_on or [])
+    # Any dep that isn't resolved breaks the chain
+    return bool(all_deps - resolved_idxs)
 
 
 # ---------------------------------------------------------------------------
@@ -822,14 +846,25 @@ def _try_logicrag_decomposition(
         )
         return (final if final else sole_answer), sub_q_log
 
-    # Build info_summary with provenance labels
+    # Build info_summary with provenance labels (includes [UNKNOWN] markers)
     info_summary = _build_info_summary(sub_questions, known_facts)
+    chain_broken = _chain_has_gap(sub_questions, known_facts)
 
     if verbose:
         print("\n  --- Final Answer ---")
         print(f"  Facts ({len(known_facts)}):")
         for line in info_summary.split("\n"):
             print(f"    {line}")
+        if chain_broken:
+            print("  WARNING: dependency chain has unresolved hops")
+
+    # Record chain status in debug metadata so eval scripts can filter
+    _last_decomp_meta["chain_has_gap"] = chain_broken
+
+    # If the chain is broken, we must NOT let the LLM synthesize across the gap.
+    # Signal uncertainty instead of fabricating an answer from partial facts.
+    if chain_broken:
+        return None, sub_q_log
 
     final = _generate_final_answer(
         question, info_summary, llm_client, model,

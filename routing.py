@@ -329,15 +329,17 @@ def verify_sparql_feasibility(
         if not hop1_prop or not entities:
             return (route, reason)
 
-        # Determine hop-2 property for 2-hop ASK verification
+        # Determine hop-2 property for 2-hop ASK verification.
+        # Scan ALL dbo: candidates — don't break on the first one if it fails
+        # validation, otherwise we silently degrade to 1-hop verification.
         hop2_dbo_prop = None
         if analysis.hop2_properties:
             for p in analysis.hop2_properties:
-                if p.startswith("dbo:"):
-                    candidate = p[4:].strip()
-                    # Validate: must be a valid property identifier
-                    if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', candidate):
-                        hop2_dbo_prop = candidate
+                if not p.startswith("dbo:"):
+                    continue
+                candidate = p[4:].strip()
+                if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', candidate):
+                    hop2_dbo_prop = candidate
                     break
 
         from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri

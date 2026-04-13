@@ -46,6 +46,8 @@ IMPORTANT — the sub-questions below form a reasoning chain:
 - Do NOT return an intermediate entity when a later sub-question has resolved the final answer.
 - If a sub-question returns a list, pick the item that satisfies the condition in the original question.
 - For yes/no questions with multiple sub-questions, combine ALL sub-answers (both must be true for "yes").
+- If any sub-question is marked [UNKNOWN], the chain is incomplete. Do NOT fabricate
+  a final answer by skipping the gap — respond with: FINAL ANSWER: unknown
 {comparison_instructions}
 Question: {question}
 
