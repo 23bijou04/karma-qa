@@ -339,6 +339,16 @@ Within decomposition, each sub-question independently uses SPARQL when the KG ha
 
 All evaluation scripts live in `scripts/`.
 
+> **Reproducing the paper numbers:** check out the `paper-baseline` tag before
+> running any evaluation script. Later commits on `main` include post-submission
+> bug fixes that change runtime behavior on a minority of questions and will
+> produce slightly different numbers.
+>
+> ```bash
+> git checkout paper-baseline    # frozen state that produced the reported results
+> git checkout main              # resume development branch
+> ```
+
 ### Reproduction (2WikiMultiHopQA)
 
 | Script | Purpose |
