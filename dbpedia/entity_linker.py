@@ -72,6 +72,11 @@ _STRIP_WORDS = frozenset({
 # Common nouns that appear as spaCy mentions but are NOT entity names.
 # These would resolve to ontology/property URIs, not resources.
 _MENTION_BLOCKLIST = frozenset({
+    # question words — resolve to dbr:Who, dbr:What etc. via SPARQL/uri_probe fallback
+    "who", "what", "where", "when", "which", "how", "whom", "whose", "why",
+    # demonstratives/pronouns that slip through spaCy noun-chunk extraction
+    "that", "this", "these", "those",
+    # common nouns — resolve to ontology/property URIs, not resources
     "film", "movie", "director", "book", "author", "novel", "song",
     "album", "band", "country", "city", "person", "actor", "actress",
     "writer", "singer", "politician", "company", "school", "university",
