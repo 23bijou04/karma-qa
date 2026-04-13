@@ -21,6 +21,8 @@ import time
 import traceback
 from collections import defaultdict
 
+from tqdm import tqdm
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 _parent = os.path.dirname(PROJECT_ROOT)
@@ -210,6 +212,12 @@ def main():
 
     print(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
 
+    # tqdm progress bar with live metrics (inspired by LinearRAG's evaluate.py)
+    pbar = tqdm(
+        remaining, desc="Hybrid QA", unit="q",
+        initial=len(done_ids), total=len(done_ids) + len(remaining),
+    )
+
     for i, q in enumerate(remaining):
         qid = q["question_id"]
         question = q["question"]
@@ -259,7 +267,7 @@ def main():
             record["debug_info"] = {}
             record["has_hedging"] = False
             record["error"] = f"Timeout after {QUESTION_TIMEOUT}s"
-            print(f"  !! TIMEOUT after {QUESTION_TIMEOUT}s, skipping")
+            tqdm.write(f"  !! TIMEOUT after {QUESTION_TIMEOUT}s, skipping {qid}")
         except Exception:
             record["raw_answer"] = ""
             record["predicted_answer"] = ""
@@ -301,29 +309,19 @@ def main():
         by_method[method]["em"] += record["em"]
         by_method[method]["f1"] += record["f1"]
 
-        # Progress
-        em_tag = "EM=1" if record["em"] > 0 else f"F1={record['f1']:.2f}"
-        if record["containment"] > 0 and record["em"] == 0:
-            em_tag += " cont=1"
-        elapsed = time.time() - _stats["start"]
-        eta = (elapsed / done) * (len(remaining) - done) if done > 0 else 0
-        print(
-            f"[{len(done_ids)+done}/{len(done_ids)+len(remaining)}] "
-            f"{question[:60]}..."
-        )
-        print(
-            f"  -> gold='{gold}' pred='{pred[:60]}' [{em_tag}] "
-            f"method={record['method']} {record['latency_seconds']}s"
-        )
-        if done % 25 == 0:
-            print(
-                f"  --- Running: EM={em_sum/done*100:.1f}% F1={f1_sum/done*100:.1f}% "
-                f"| Elapsed={elapsed/60:.1f}min ETA={eta/60:.1f}min ---"
-            )
+        # Update tqdm postfix with live metrics
+        pbar.set_postfix({
+            "EM": f"{em_sum / done * 100:.1f}%",
+            "F1": f"{f1_sum / done * 100:.1f}%",
+            "route": record["method"],
+        })
+        pbar.update(1)
 
         # Rate limit delay
         if i < len(remaining) - 1:
             time.sleep(args.delay)
+
+    pbar.close()
 
     # Final summary
     total_done = len(done_ids) + len(remaining)

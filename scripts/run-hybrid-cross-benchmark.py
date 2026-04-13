@@ -22,6 +22,8 @@ import traceback
 from collections import defaultdict
 from datetime import datetime
 
+from tqdm import tqdm
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 _parent = os.path.dirname(PROJECT_ROOT)
@@ -262,6 +264,12 @@ def main():
 
     log(f"\n--- Starting {len(remaining)} questions (delay={args.delay}s) ---\n")
 
+    # tqdm progress bar with live metrics (log file gets per-question details)
+    pbar = tqdm(
+        remaining, desc=f"Hybrid {args.benchmark}", unit="q",
+        initial=len(done_ids), total=len(done_ids) + len(remaining),
+    )
+
     for i, q in enumerate(remaining):
         qid = q["question_id"]
         question = q["question"]
@@ -361,22 +369,29 @@ def main():
         by_method[method]["em"] += record["em"]
         by_method[method]["f1"] += record["f1"]
 
+        # Write per-question detail to log file (not tqdm bar)
         em_tag = "EM=1" if record["em"] > 0 else f"F1={record['f1']:.2f}"
-        log(f"[{done}/{len(remaining)}] {question[:60]}...")
-        log(f"  -> gold='{gold}' pred='{pred[:60]}' [{em_tag}] "
-            f"method={record['method']} {record['latency_seconds']}s "
-            f"{'KG' if record['dbpedia_linked'] else 'noKG'}")
+        if _log_file:
+            _log_file.write(
+                f"[{done}/{len(remaining)}] {question[:60]}...\n"
+                f"  -> gold='{gold}' pred='{pred[:60]}' [{em_tag}] "
+                f"method={record['method']} {record['latency_seconds']}s "
+                f"{'KG' if record['dbpedia_linked'] else 'noKG'}\n"
+            )
+            _log_file.flush()
 
-        if done % 25 == 0:
-            elapsed = time.time() - _stats["start"]
-            eta = (elapsed / done) * (len(remaining) - done) if done > 0 else 0
-            log(f"  --- Running: EM={em_sum / done * 100:.1f}% "
-                f"F1={f1_sum / done * 100:.1f}% "
-                f"KG={kg_linked_count}/{done} ({kg_linked_count / done * 100:.0f}%) "
-                f"| Elapsed={elapsed / 60:.1f}min ETA={eta / 60:.1f}min ---")
+        # Update tqdm postfix with live metrics
+        pbar.set_postfix({
+            "EM": f"{em_sum / done * 100:.1f}%",
+            "F1": f"{f1_sum / done * 100:.1f}%",
+            "KG": f"{kg_linked_count / done * 100:.0f}%",
+        })
+        pbar.update(1)
 
         if i < len(remaining) - 1:
             time.sleep(args.delay)
+
+    pbar.close()
 
     # Final summary
     total = len(remaining)

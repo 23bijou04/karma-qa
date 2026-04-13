@@ -24,6 +24,8 @@ import string
 import sys
 import time
 
+from tqdm import tqdm
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -199,8 +201,14 @@ def main():
 
     correct_count = done_correct
 
+    # tqdm progress bar with live judge accuracy
+    pbar = tqdm(
+        remaining, desc="Judging", unit="q",
+        initial=len(done), total=len(records),
+    )
+
     with open(output_path, "a") as out:
-        for i, rec in enumerate(remaining):
+        for rec in pbar:
             try:
                 rec["judge_correct"] = judge(
                     client, rec["question"], rec["gold_answer"],
@@ -208,7 +216,7 @@ def main():
                     aliases=rec.get("gold_aliases", []),
                 )
             except Exception as e:
-                print(f"  Error judging {rec['question_id']}: {e}")
+                tqdm.write(f"  Error judging {rec['question_id']}: {e}")
                 rec["judge_correct"] = False
 
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -217,10 +225,12 @@ def main():
             if rec["judge_correct"]:
                 correct_count += 1
 
-            if (i + 1) % 20 == 0:
-                total_so_far = len(done) + i + 1
-                print(f"  Judged {total_so_far}/{len(records)} "
-                      f"({correct_count}/{total_so_far} correct)")
+            # Update tqdm postfix with live judge accuracy
+            total_so_far = len(done) + pbar.n
+            pbar.set_postfix({
+                "Judge_EM": f"{correct_count}/{total_so_far}",
+                "Acc": f"{correct_count / total_so_far * 100:.1f}%",
+            })
 
             if args.provider != "ollama":
                 time.sleep(0.5)  # rate limit courtesy for remote APIs
