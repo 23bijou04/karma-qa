@@ -3,9 +3,11 @@ Write final judge results for LinearRAG part2 (333 records).
 Manual decisions for all 82 ambiguous cases are hardcoded here.
 """
 import json
+from pathlib import Path
 
-INPUT = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/judge_input/linearrag_part2.jsonl"
-OUTPUT = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/judge_output/linearrag_part2.jsonl"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INPUT = PROJECT_ROOT / "data/eval_1000q/judge_input/linearrag_part2.jsonl"
+OUTPUT = PROJECT_ROOT / "data/eval_1000q/judge_output/linearrag_part2.jsonl"
 
 # Manual decisions for ambiguous cases
 # Format: id -> True/False
@@ -449,7 +451,7 @@ def main():
 
     total = len(records)
     correct = sum(results.values())
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Total:   {total}")
     print(f"  Correct: {correct}")
     print(f"  Accuracy: {correct/total*100:.1f}%")

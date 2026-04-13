@@ -5,9 +5,11 @@ Uses rule-based normalization for clear cases, flags ambiguous for manual review
 import json
 import re
 import unicodedata
+from pathlib import Path
 
-INPUT = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/judge_input/linearrag_part2.jsonl"
-OUTPUT = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/judge_output/linearrag_part2.jsonl"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INPUT = PROJECT_ROOT / "data/eval_1000q/judge_input/linearrag_part2.jsonl"
+OUTPUT = PROJECT_ROOT / "data/eval_1000q/judge_output/linearrag_part2.jsonl"
 
 
 def normalize(s: str) -> str:

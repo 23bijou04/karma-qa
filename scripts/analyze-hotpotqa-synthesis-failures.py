@@ -5,12 +5,11 @@ Excludes judge errors (em=1.0 but judge_correct=False).
 """
 
 import json
-import sys
 from pathlib import Path
 
-ROOT = Path("/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa")
-INPUT = ROOT / "data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl"
-OUTPUT_IDS = ROOT / "data/cross_benchmark/hotpotqa/synthesis_failure_19_ids.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INPUT = PROJECT_ROOT / "data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl"
+OUTPUT_IDS = PROJECT_ROOT / "data/cross_benchmark/hotpotqa/synthesis_failure_19_ids.json"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

@@ -6,9 +6,11 @@ against actual JSONL data (first 100 lines of each file).
 import json
 import statistics
 from collections import defaultdict
+from pathlib import Path
 
-HYBRID_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl"
-LOGICRAG_PATH = "/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa/data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+HYBRID_PATH = PROJECT_ROOT / "data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl"
+LOGICRAG_PATH = PROJECT_ROOT / "data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl"
 
 
 def load_jsonl(path, limit=100):
@@ -186,7 +188,7 @@ for hh, ll in hybrid_wins:
 
 check('LogicRAG "Unknown" in hybrid-only wins', 10, unknown_count)
 
-print(f"\n  LogicRAG predicted_answer in hybrid-only wins:")
+print("\n  LogicRAG predicted_answer in hybrid-only wins:")
 for hh, ll in hybrid_wins:
     ans = ll.get("predicted_answer", "")
     print(f"    [{hh.get('method')}]  logicrag_ans={repr(ans[:80])}")

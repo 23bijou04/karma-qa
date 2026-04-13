@@ -137,6 +137,22 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 ```
 
+## Data
+
+**To verify our results:** All evaluation results are committed in `data/eval_1000q/` — no additional downloads needed. The 1000-question subset, ground truth, and all judged results are in the repository.
+
+**To re-run evaluations from scratch:** The evaluation scripts load questions from `data/eval_1000q/ground-truth/coverage_analysis_1000.json` (committed), so you can re-run the Hybrid pipeline without the full benchmark dataset.
+
+**To run analysis scripts** (hop verification, benchmark error detection, entity linking accuracy): These require the full 2WikiMultiHopQA dev set (`dev_full.json`, 53MB, gitignored). Download from the [2WikiMultiHopQA repository](https://github.com/Alab-NII/2wikimultihop) and place in `data/dev_full.json`.
+
+**Baselines:** LinearRAG and LogicRAG are external systems with their own environments:
+
+```bash
+git clone https://github.com/DEEP-PolyU/LinearRAG.git baselines/LinearRAG
+git clone https://github.com/chensyCN/LogicRAG.git baselines/LogicRAG
+# Each baseline has a REPRODUCE.md with setup instructions
+```
+
 ## Quick Start
 
 ### 1. Set your API key
@@ -279,7 +295,7 @@ All pipelines support `--provider groq|github` and `--model <name>`:
 │   └── wiki_utils.py           #   Wikipedia text utilities
 │
 ├── data/
-│   ├── dev_full.json           # 12,576 questions (gitignored, 53MB)
+│   ├── dev_full.json           # 12,576 questions (gitignored, 53MB, see note below)
 │   └── eval_1000q/             # 1000-question evaluation results (JSONL)
 │
 ├── tests/                      # 30+ unit/integration tests
@@ -400,6 +416,20 @@ pytest tests/test_routing_2hop.py::test_name
 # Lint
 ruff check .
 ruff check . --fix   # auto-fix
+```
+
+## Citation
+
+If you use this system in your research, please cite:
+
+```bibtex
+@mastersthesis{dbpedia_hybrid_qa_2026,
+  title     = {Schema-Routed Hybrid Question Answering over DBpedia and Wikipedia},
+  author    = {Pham, Thi},
+  year      = {2026},
+  school    = {University},
+  note      = {\url{https://github.com/phamthi1812/dbpedia-qa}}
+}
 ```
 
 ## License
