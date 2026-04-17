@@ -9,6 +9,7 @@ Providers:
   ollama — http://localhost:11434/v1         (no key required)
 """
 
+import json
 import logging
 import os
 import time
@@ -89,6 +90,24 @@ def call_llm(
             content = resp.choices[0].message.content
             if content is None:
                 raise ValueError("LLM returned empty content (None)")
+            # Run 2 instrumentation: gated Groq-fingerprint capture for post-hoc drift diagnosis.
+            # No-op unless LLM_FP_LOG env var is set (phase-02 enables it per cell).
+            _fp_log = os.environ.get("LLM_FP_LOG")
+            if _fp_log:
+                try:
+                    usage = getattr(resp, "usage", None)
+                    usage_dict = usage.model_dump() if usage is not None and hasattr(
+                        usage, "model_dump"
+                    ) else None
+                    with open(_fp_log, "a") as fh:
+                        fh.write(json.dumps({
+                            "t": time.time(),
+                            "model": getattr(resp, "model", None),
+                            "fingerprint": getattr(resp, "system_fingerprint", None),
+                            "usage": usage_dict,
+                        }) + "\n")
+                except Exception as log_err:
+                    logger.debug("LLM_FP_LOG write failed (non-fatal): %s", log_err)
             return content.strip()
         except Exception as e:
             if _is_retryable(e) and attempt < max_attempts - 1:
