@@ -225,8 +225,9 @@ def main():
             if rec["judge_correct"]:
                 correct_count += 1
 
-            # Update tqdm postfix with live judge accuracy
-            total_so_far = len(done) + pbar.n
+            # Update tqdm postfix with live judge accuracy.
+            # pbar.n reflects iterations BEFORE this yield; add 1 for the current record.
+            total_so_far = len(done) + pbar.n + 1
             pbar.set_postfix({
                 "Judge_EM": f"{correct_count}/{total_so_far}",
                 "Acc": f"{correct_count / total_so_far * 100:.1f}%",
