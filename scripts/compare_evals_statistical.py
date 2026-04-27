@@ -31,8 +31,15 @@ def load(path):
     return results
 
 
-def mcnemar(baseline, revised):
-    """Compute McNemar test on paired judge_correct outcomes."""
+def mcnemar(baseline, revised, round_values=True):
+    """Compute McNemar test on paired judge_correct outcomes.
+
+    Args:
+        baseline, revised: dict[qid, row] with `judge_correct` bool.
+        round_values: if True (default, back-compat) round chi2→2dp and p→4dp.
+            Pass False when precision matters (e.g. Bonferroni multiplication,
+            borderline-significance classification near α/k).
+    """
     shared = set(baseline) & set(revised)
     b, c = 0, 0  # b=base_correct+rev_wrong, c=base_wrong+rev_correct
     regressions, improvements = [], []
@@ -55,8 +62,8 @@ def mcnemar(baseline, revised):
         "improved": c,
         "regressed": b,
         "net": c - b,
-        "chi2": round(chi2, 2),
-        "p_value": round(p_val, 4),
+        "chi2": round(chi2, 2) if round_values else chi2,
+        "p_value": round(p_val, 4) if round_values else p_val,
         "significance": sig,
         "regression_rate": f"{b / (b + c) * 100:.1f}%" if (b + c) else "N/A",
         "improvements": improvements,
