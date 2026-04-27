@@ -42,6 +42,56 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 | LinearRAG | **93.6%** (220/235) | 96.7% (236/244) | 71.9% (297/413) | 80.6% (87/108) |
 | LogicRAG | 72.8% (171/235) | 92.6% (226/244) | 61.7% (255/413) | 86.1% (93/108) |
 
+## Architecture
+
+### Schema-Routed Hybrid Pipeline (`hybrid_qa.py`)
+
+The core idea: **use the KG schema to decide the solving strategy**. The system inspects what DBpedia actually knows about the entities in the question, then picks one of two routes:
+
+```
+Question
+   |
+1. Entity Linking — DBpedia Spotlight (spaCy fallback)
+   |
+2. Schema Discovery — entity classes, properties, sample values via SPARQL
+   |
+3. Schema Projection — question-aware property filtering (4-layer pipeline)
+   |
+4. Route Decision — 3-stage: deterministic rules → SPARQL ASK → LLM fallback
+   |
+   ├─ SPARQL Direct (schema covers the question)
+   │    → LLM generates SPARQL using projected schema URIs
+   │    → Execute with retry (feed errors back to LLM)
+   │
+   └─ LogicRAG Decomposition (multi-hop or incomplete schema)
+        → LLM decomposes into dependency-ordered sub-questions
+        → Each sub-Q solved independently (SPARQL when KG has it, text when not)
+        → Grounded answers chained downstream → final synthesis
+   |
+Answer (with method + route source attribution)
+```
+
+**Text retrieval** (Wikipedia + RAG) is not a separate route — it's the fallback mechanism *within* each sub-question when SPARQL can't answer it, and the last resort if both routes above fail entirely.
+
+### Three-Stage Routing
+
+The routing system (`routing.py`) decides SPARQL-direct vs decomposition:
+
+1. **Deterministic rules** — keyword-to-property lookup (e.g., "directed" → `dbo:director`), 2-hop chain matching, comparison detection
+2. **SPARQL ASK verification** — tests if the proposed triple actually exists in DBpedia before committing to SPARQL
+3. **LLM fallback** — if no rule matches, asks the LLM to classify based on discovered schema
+
+### Comparison Systems
+
+| System | Entry Point | Strategy | Scope |
+|--------|-------------|----------|-------|
+| **Hybrid (main)** | `hybrid_qa.py` | Schema-routed: SPARQL direct or LogicRAG decomposition | Our contribution |
+| LLM-SPARQL | `sparql_evaluation.py` | SPARQL-only with schema discovery | Component baseline |
+| GRASP | `grasp_evaluation.py` | External KG QA via WebSocket API | External baseline |
+| LinearRAG | `baselines/LinearRAG/` | Linear decomposition + retrieval | External baseline |
+| LogicRAG | `baselines/LogicRAG/` | Logic-based decomposition | External baseline |
+| GraphRAG | `graphrag_wiki.py` | Text-only: KG exploration + Wikipedia + LLM | Earlier prototype |
+
 ## Requirements
 
 - Python 3.10+
