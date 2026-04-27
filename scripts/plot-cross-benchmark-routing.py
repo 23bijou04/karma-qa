@@ -55,8 +55,8 @@ QUESTION_SEGMENTS = [
 
 # Sub-question 2-mode partition (bottom -> top).
 SUBQ_SEGMENTS = [
-    ("sub_sparql", "Sub-SPARQL", "#0072B2"),
-    ("sub_text",   "Sub-text",   "#E69F00"),
+    ("sub_sparql", "SPARQL", "#0072B2"),
+    ("sub_text",   "Text",   "#E69F00"),
 ]
 
 
