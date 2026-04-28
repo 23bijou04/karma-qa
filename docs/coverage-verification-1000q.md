@@ -9,7 +9,7 @@
 
 The 2WikiMultiHopQA benchmark provides multi-hop questions where each answer requires traversing a chain of evidence triples: seed entity → hop-1 property → bridge entity → hop-2 property → answer. Our prior coverage analysis on the full dev set (12,576 questions) established entity coverage of 92.5% and per-pair property coverage of 60.1%, yielding a full-dataset answerability rate of 31.1%.
 
-To obtain more rigorous numbers for thesis reporting, we used a 1000-question evaluation subset (from LinearRAG's evaluation set, Zly0523/linear-rag) and conducted three progressively more rigorous verification passes against live DBpedia SPARQL, culminating in a hop-by-hop chain verification that checks every evidence triple independently.
+To obtain more rigorous numbers for paper reporting, we used a 1000-question evaluation subset (from LinearRAG's evaluation set, Zly0523/linear-rag) and conducted three progressively more rigorous verification passes against live DBpedia SPARQL, culminating in a hop-by-hop chain verification that checks every evidence triple independently.
 
 ## 2. Methodology Progression
 
@@ -133,7 +133,7 @@ Of the 368 questions where all predicates exist, only 119 have exact-string matc
 |--------|-------|------------------|----------|
 | Original answerable | 34.6% (346) | Predicate exists (narrow map) | Historical (superseded by hop-verified 368) |
 | Predicate-corrected | 37.5% (375) | Predicate exists (expanded map) | Superseded |
-| **Property-complete (hop)** | **36.8% (368)** | All predicates exist per hop | **Primary thesis number** |
+| **Property-complete (hop)** | **36.8% (368)** | All predicates exist per hop | **Primary paper number** |
 | Strict match | 11.9% (119) | Exact value string match | Artificially low (date format artifact) |
 
 **Recommendation:** Report **36.8% (368/1000, hop-verified predicate existence)** as the primary "KG-answerable" rate. It is the most honest and defensible number: it verifies that every evidence predicate exists at every hop via live SPARQL traversal, without baking in assumptions about value normalization. The gap between 36.8% (predicates exist) and 11.9% (strict match) quantifies date format mismatch, entity disambiguation, and label normalization costs — these are reported as data quality findings, not adjustments to the primary number.
@@ -156,7 +156,7 @@ The 1000q hop-verified rate (36.8%) is moderately higher than the full dev set a
 
 2. **Property coverage depends heavily on methodology.** The original narrow PROPERTY_MAP (38.5%) understates coverage by ~3pp due to missing predicate mappings. But even with perfect mapping (41.6%), fresh entity resolution drops it to 36.8%.
 
-3. **The property mapping gap is a known, fixable limitation** of the analysis pipeline, not of DBpedia itself. The five unmapped properties and four with narrow predicates could be corrected in the analysis code. However, for thesis reporting, the hop-verified numbers are more honest because they also capture entity disambiguation errors that the analysis pipeline masks.
+3. **The property mapping gap is a known, fixable limitation** of the analysis pipeline, not of DBpedia itself. The five unmapped properties and four with narrow predicates could be corrected in the analysis code. However, for paper reporting, the hop-verified numbers are more honest because they also capture entity disambiguation errors that the analysis pipeline masks.
 
 4. **The 36.8% → 11.9% strict-match gap is dominated by date format mismatch** (DBpedia stores `xsd:date` values while the benchmark uses human-readable text), plus entity disambiguation and label normalization. The 249-question gap between predicate-complete and strict-match is a data quality finding, not a reason to adjust the primary number.
 

@@ -1,6 +1,6 @@
 """Comprehensive tests for evaluation/metrics.py.
 
-Every evaluation number in the thesis flows through this module.
+Every evaluation number in the paper flows through this module.
 Tests are grouped by function. Failures indicate potential metric bugs — do NOT
 adjust tests to make them pass; report instead.
 """

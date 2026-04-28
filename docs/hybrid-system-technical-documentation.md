@@ -3,7 +3,7 @@
 **Version:** 1.2
 **Last Updated:** 2026-03-27
 **Scope:** Complete technical specification of the DBpedia Hybrid QA system for 2WikiMultiHopQA benchmark
-**Target Audience:** Thesis researchers, system maintainers, hyperparameter tuners
+**Target Audience:** Paper researchers, system maintainers, hyperparameter tuners
 
 ---
 
@@ -123,7 +123,7 @@ The system implements four distinct QA pipelines, each suited to different quest
 
 ### Design Philosophy
 
-**Thesis:** Entity-only knowledge graph (no relations) + Wikipedia text retrieval can effectively answer multi-hop QA without full relation coverage.
+**Core claim:** Entity-only knowledge graph (no relations) + Wikipedia text retrieval can effectively answer multi-hop QA without full relation coverage.
 
 **Key Insights:**
 - DBpedia entity coverage is high (93.6% on 1000q benchmark)
@@ -2327,7 +2327,7 @@ Single table stores chunks + embeddings together per page title.
 **Rationale:**
 - **Benchmark constraint:** 2WikiMultiHopQA sourced from Wikidata; using Wikidata for answers = data leakage
 - **Entity-heavy assumption:** Entities are well-covered (93.6% on 1000q); facts encoded in Wikipedia text
-- **Thesis claim:** Text + entity linking can bridge property gaps
+- **Core claim:** Text + entity linking can bridge property gaps
 
 **Tradeoff:**
 - ✓ Avoids data leakage
@@ -2455,7 +2455,7 @@ The following parameters lack empirical justification or sensitivity analysis:
 
 ## Appendix: Recommendations for Future Work
 
-### High-Impact for Thesis:
+### High-Impact for Paper:
 - Systematically tune seed budget allocation (test 40/40, 50/40, 70/20, etc.)
 - Vary bi-encoder top_k (15, 20, 30) and reranker top_k (5, 8, 12) on benchmark
 - Measure impact of MAX_CONTEXT_CHARS reduction (20K, 22.5K, 25K, 27.5K)
@@ -2473,4 +2473,4 @@ The following parameters lack empirical justification or sensitivity analysis:
 
 Total lines: ~2,430 (including tables, code blocks, ASCII diagrams)
 
-This document is thesis-ready for citing specific hyperparameter choices and documenting experimental variations.
+This document is paper-ready for citing specific hyperparameter choices and documenting experimental variations.

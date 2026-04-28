@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate 3-benchmark DBpedia grounding results into a thesis-ready markdown report.
+"""Aggregate 3-benchmark DBpedia grounding results into a paper-ready markdown report.
 
 Reads pre-computed JSON from verify-*-grounding.py scripts and emits one .md file.
 Usage:

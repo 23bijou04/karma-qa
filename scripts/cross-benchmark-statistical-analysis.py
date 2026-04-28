@@ -3,7 +3,7 @@
 
 Computes McNemar tests (pairwise, Bonferroni-corrected), Wilson CIs,
 per-question-type breakdowns, KG augmentation analysis, and generates
-a thesis-ready markdown report.
+a paper-ready markdown report.
 
 Usage:
     python scripts/cross-benchmark-statistical-analysis.py

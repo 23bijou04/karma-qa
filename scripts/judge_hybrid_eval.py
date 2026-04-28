@@ -6,7 +6,7 @@ boolean field using LLM semantic equivalence check.
 Resume-safe: skips already-judged question IDs.
 
 Note: default model (gemma3:12b via Ollama) has not been formally validated
-as a judge. For thesis-grade results, validate against human annotations
+as a judge. For paper-grade results, validate against human annotations
 on a 100-question sample, or use a stronger model (--provider groq --model
 llama-3.3-70b-versatile).
 
