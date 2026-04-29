@@ -6,10 +6,10 @@ and per-sub-question TEXT resolution in logicrag_decomposition.py.
 
 import logging
 
-from wiki_utils import uri_to_wiki_title
 from dbpedia_qa.models import Entity, extract_final_answer
 from graphrag_wiki import assemble_context, retrieve_wikipedia
 from llm_provider import call_llm
+from wiki_utils import uri_to_wiki_title
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 # Phase 02 — Run 2 Execution (10 cells, ~35h sequential — baselines-first order)
 #
 # USAGE:
-#   cd /Users/e23e889b/Documents/2026/2026_02/dbpedia_qa
+#   cd <repo-root>
 #   git checkout run2-instrumentation
 #   tmux new -s run2
 #   export GROQ_API_KEY=gsk_...
@@ -35,7 +35,11 @@ set -o pipefail
 # ----------------------------------------------------------------------------
 # Preflight guards
 # ----------------------------------------------------------------------------
-REPO_ROOT="/Users/e23e889b/Documents/2026/2026_02/dbpedia_qa"
+# Resolve repo root from git (works for any reviewer's checkout location).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+    echo "FAIL: not inside a git repo (run from repo checkout)"; exit 1
+fi
 cd "$REPO_ROOT" || { echo "FAIL: cannot cd to $REPO_ROOT"; exit 1; }
 
 if [ -z "${GROQ_API_KEY:-}" ]; then

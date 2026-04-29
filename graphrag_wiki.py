@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import re
 import sys
 import time
@@ -30,15 +31,15 @@ if _parent not in sys.path:
 
 from ddgs import DDGS
 
+from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
+from dbpedia_qa.models import Entity, extract_final_answer
+from llm_provider import call_llm, create_llm_client
 from wiki_utils import (
     _rate_limit_wiki,
     get_wikipedia_text_by_title,
     uri_to_wiki_title,
 )
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
-from dbpedia_qa.models import Entity, extract_final_answer
-from llm_provider import call_llm, create_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +438,10 @@ def extract_relevant_sections(text: str, keywords: list[str],
 # 3. Web search for Wikipedia pages
 # ---------------------------------------------------------------------------
 
-_WIKI_SEARCH_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
+# User-Agent: Wikipedia API requires a descriptive UA; reviewers can set
+# WIKI_UA_CONTACT env var to add their own contact for higher rate limits.
+_WIKI_UA_CONTACT = os.getenv("WIKI_UA_CONTACT", "academic research")
+_WIKI_SEARCH_HEADERS = {"User-Agent": f"DBpediaQA/1.0 ({_WIKI_UA_CONTACT})"}
 
 
 def web_search_wikipedia(query: str, limit: int = 5) -> list[str]:

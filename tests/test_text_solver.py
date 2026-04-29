@@ -1,12 +1,8 @@
 """Unit tests for text_solver.solve() — Wikipedia retrieval, context assembly, LLM reasoning."""
 
-import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from dbpedia_qa.models import Entity
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +68,7 @@ class TestSolveKeywordPath:
         mock_keyword.return_value = "Some Wikipedia context."
         mock_call_llm.return_value = "FINAL ANSWER: Christopher Nolan"
 
-        from text_solver import TEXT_SUBQ_PROMPT, TEXT_REASON_PROMPT, solve
+        from text_solver import solve
         answer = solve(**_make_solve_args(is_subquestion=True))
 
         assert answer == "Christopher Nolan"

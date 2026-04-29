@@ -35,7 +35,6 @@ import logicrag_decomposition  # noqa: E402
 import routing as routing_mod  # noqa: E402
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
-from wiki_utils import uri_to_wiki_title  # noqa: E402
 from dbpedia_qa.dbpedia import (  # noqa: E402
     DBpediaEntityLinker,
     DBpediaSPARQLClient,
@@ -50,6 +49,7 @@ from logicrag_decomposition import _try_logicrag_decomposition  # noqa: E402
 from question_analysis import analyze_question  # noqa: E402
 from routing import route_question  # noqa: E402
 from schema_projection import project  # noqa: E402
+from wiki_utils import uri_to_wiki_title  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

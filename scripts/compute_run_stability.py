@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from evaluation.metrics import compute_containment, compute_em  # noqa: E402
+from evaluation.metrics import compute_containment  # noqa: E402
 
 REPO = ROOT
 REPORT_OUT = REPO.parent / "thirag-paper" / "plans" / "reports" / "run-stability-260420-1605-xp-tables.md"
@@ -237,7 +237,7 @@ def main() -> None:
     for sys_name in ["ThiRAG", "LogicRAG", "LinearRAG"]:
         s = results[(sys_name, "2WikiMHQA")]
         allrow.append(f"{fmt(s['acc_mean'])}±{fmt(s['acc_half_range'])}")
-    lines.append(f"| All | 1000 | " + " | ".join(allrow) + " |")
+    lines.append("| All | 1000 | " + " | ".join(allrow) + " |")
 
     # Global stability summary.
     drifts_acc = [s['acc_half_range'] * 2 for s in results.values() if s.get('n_run2')]

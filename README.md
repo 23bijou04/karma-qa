@@ -112,6 +112,14 @@ python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-e
 
 # Clone baselines used by evaluation scripts
 git clone https://github.com/chensyCN/LogicRAG.git baselines/LogicRAG
+git clone https://github.com/Zly0523/linear-rag.git baselines/LinearRAG
+# LinearRAG is self-contained with its own venv; see baselines/LinearRAG/REPRODUCE.md
+
+# LLM judge (gemma3:12b via Ollama) — required to reproduce headline Judge EM numbers
+# macOS: brew install ollama && brew services start ollama
+# Linux: curl -fsSL https://ollama.com/install.sh | sh && systemctl --user start ollama
+ollama pull gemma3:12b   # ~8 GB, one-time
+ollama list              # verify gemma3:12b is present
 ```
 
 Key deps (declared in `pyproject.toml`): `groq`, `openai`, `sentence-transformers`, `faiss-cpu`, `spacy`, `tenacity`, `ddgs`, `websockets`, `huggingface_hub`.

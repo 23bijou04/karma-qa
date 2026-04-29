@@ -2,11 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from dbpedia_qa.models import Entity
-from sparql_solver import _is_readonly_sparql, solve
-
+from sparql_solver import solve
 
 # ---------------------------------------------------------------------------
 # Helpers

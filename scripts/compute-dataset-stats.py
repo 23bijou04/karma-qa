@@ -16,9 +16,8 @@ Rules (see plan phase-02):
 from __future__ import annotations
 
 import json
-import sys
 from collections import Counter
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent

@@ -1,6 +1,7 @@
 """Wikipedia + LLM utilities with retry logic for ablation study."""
 
 import logging
+import os
 import re
 import time
 from typing import Optional
@@ -13,7 +14,8 @@ from llm_provider import call_llm as _call_llm
 
 logger = logging.getLogger(__name__)
 
-WIKI_HEADERS = {"User-Agent": "DBpediaQA/1.0 (academic research; phamthi1812@gmail.com)"}
+_WIKI_UA_CONTACT = os.getenv("WIKI_UA_CONTACT", "academic research")
+WIKI_HEADERS = {"User-Agent": f"DBpediaQA/1.0 ({_WIKI_UA_CONTACT})"}
 WIKI_DELAY = 1.0  # seconds between Wikipedia API calls (avoid 403s)
 _last_wiki_call = 0.0
 _wiki_backoff_until = 0.0  # timestamp — skip calls until this time after 403
