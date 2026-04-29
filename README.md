@@ -105,10 +105,12 @@ python scripts/judge_hybrid_eval.py data/eval_1000q/hybrid/hybrid_eval_1000.json
 ### Baselines
 
 ```bash
-# LogicRAG — 2WikiMultiHopQA + cross-benchmark
+# LogicRAG — uses its own venv (2WikiMultiHopQA + cross-benchmark)
+source baselines/LogicRAG/venv_logicrag/bin/activate
 python scripts/run-logicrag-1000q.py --api-key $GROQ_API_KEY
 python scripts/run-logicrag-cross-benchmark.py --benchmark hotpotqa --api-key $GROQ_API_KEY
 python scripts/run-logicrag-cross-benchmark.py --benchmark musique  --api-key $GROQ_API_KEY
+deactivate
 
 # LinearRAG — uses its own venv (see baselines/LinearRAG/REPRODUCE.md for 2Wiki setup)
 cd baselines/LinearRAG && source venv_linearrag/bin/activate
