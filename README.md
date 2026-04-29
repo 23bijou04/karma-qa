@@ -21,9 +21,7 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
 | **Hybrid (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
-| SPARQL component | 91.6% (337/368) | [88.3%, 94.0%] |
 | LinearRAG | 88.0% (324/368) | [84.3%, 91.0%] |
-| GRASP | 79.1% (291/368) | [74.6%, 82.9%] |
 | LogicRAG | 73.9% (272/368) | [69.2%, 78.1%] |
 
 ### Cross-Benchmark (1000q each)
@@ -86,11 +84,8 @@ The routing system (`routing.py`) decides SPARQL-direct vs decomposition:
 | System | Entry Point | Strategy | Scope |
 |--------|-------------|----------|-------|
 | **Hybrid (main)** | `hybrid_qa.py` | Schema-routed: SPARQL direct or LogicRAG decomposition | Our contribution |
-| LLM-SPARQL | `sparql_evaluation.py` | SPARQL-only with schema discovery | Component baseline |
-| GRASP | `grasp_evaluation.py` | External KG QA via WebSocket API | External baseline |
 | LinearRAG | `baselines/LinearRAG/` | Linear decomposition + retrieval | External baseline |
 | LogicRAG | `baselines/LogicRAG/` | Logic-based decomposition | External baseline |
-| GraphRAG | `graphrag_wiki.py` | Text-only: KG exploration + Wikipedia + LLM | Earlier prototype |
 
 ## Requirements
 
@@ -140,6 +135,19 @@ python scripts/run-hybrid-cross-benchmark.py --benchmark musique  --api-key $GRO
 python scripts/judge_hybrid_eval.py data/eval_1000q/hybrid/hybrid_eval_1000.jsonl
 ```
 
+### Baselines
+
+```bash
+# LogicRAG — 2WikiMultiHopQA + cross-benchmark
+python scripts/run-logicrag-1000q.py --api-key $GROQ_API_KEY
+python scripts/run-logicrag-cross-benchmark.py --benchmark hotpotqa --api-key $GROQ_API_KEY
+python scripts/run-logicrag-cross-benchmark.py --benchmark musique  --api-key $GROQ_API_KEY
+
+# LinearRAG — uses its own venv (see baselines/LinearRAG/REPRODUCE.md)
+# After running LinearRAG natively, convert predictions to our schema:
+python scripts/convert-linearrag-predictions.py
+```
+
 LLM settings: `temperature=0`, exponential-backoff retry on 429s. Groq routes across heterogeneous accelerators — expect ±0.3pp drift across reruns.
 
 ## Result files
@@ -151,10 +159,12 @@ Headline: **Hybrid 89.4 %** (894/1000) Judge EM on 2WikiMultiHopQA, **92.9 %** (
 | Hybrid 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
 | LinearRAG 1000q (judged) | `data/eval_1000q/linearrag/linearrag_1000q_judged.jsonl` |
 | LogicRAG 1000q (judged) | `data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl` |
-| SPARQL component 368q | `data/eval_1000q/sparql/sparql_*_judged.jsonl` |
-| GRASP 368q | `data/eval_1000q/grasp/grasp_*_judged.jsonl` |
 | Hybrid HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
 | Hybrid MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
+| LinearRAG HotPotQA | `data/cross_benchmark/hotpotqa/linearrag_hotpotqa_1000q_judged.jsonl` |
+| LinearRAG MuSiQue | `data/cross_benchmark/musique/linearrag_musique_1000q_judged.jsonl` |
+| LogicRAG HotPotQA | `data/cross_benchmark/hotpotqa/logicrag_hotpotqa_1000q_judged.jsonl` |
+| LogicRAG MuSiQue | `data/cross_benchmark/musique/logicrag_musique_1000q_judged.jsonl` |
 | 1000q manifest | `data/eval_1000q/ground-truth/coverage_analysis_1000.json` |
 | 368q hop verification | `data/eval_1000q/ground-truth/hop_verification_results.json` |
 
@@ -198,8 +208,7 @@ Selected files shown — see repo for full layout.
 ├── evaluation/
 │   └── metrics.py              # Official EM/F1/containment metrics
 │
-├── sparql_evaluation.py        # LLM-SPARQL evaluation baseline + helper library
-├── grasp_evaluation.py         # GRASP WebSocket evaluation client
+├── sparql_evaluation.py        # SPARQL helper library (used internally by hybrid_qa)
 │
 ├── scripts/                    # Evaluation scripts (reproduction)
 │   ├── hybrid_batch_eval.py                # Hybrid batch runner (1000q, auto-resume)
