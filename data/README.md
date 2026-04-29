@@ -29,11 +29,11 @@ Primary evaluation campaign on 1000-question subset (from LinearRAG evaluation s
 - `grasp_failure_deep_analysis.md` — Manual analysis of GRASP failure modes
 - `grasp_trace_examples.md` — Annotated trace examples
 
-### Hybrid Pipeline
+### SchemaRAG Pipeline
 - `hybrid_eval_1000.jsonl` — Full 1000-question eval (in progress, auto-resumes)
 
 ### Scenario Evals
-- `scenario_eval_hybrid.jsonl` — Hybrid pipeline on 60 scenario-stratified questions (10 per A–F)
+- `scenario_eval_hybrid.jsonl` — SchemaRAG pipeline on 60 scenario-stratified questions (10 per A–F)
 - `scenario_eval_hybrid_judged.jsonl` — Same with LLM-as-judge scores
 - `scenario_eval_logicrag_baseline.jsonl` — LogicRAG-only baseline on same 60 questions
 - `scenario_eval_logicrag_baseline_judged.jsonl` — Same with LLM-as-judge scores
@@ -46,7 +46,7 @@ Primary evaluation campaign on 1000-question subset (from LinearRAG evaluation s
 Earlier evaluation campaign on 800-question sample (superseded by 1000q).
 
 - `coverage_analysis_800.json` — Per-question KG coverage (earlier version)
-- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL component results (Hybrid's SPARQL path standalone)
+- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL component results (SchemaRAG's SPARQL path standalone)
 - `grasp_eval_dbpedia.jsonl` / `grasp_eval_dbpedia_judged.jsonl` — GRASP results
 - `graphrag_eval_failures.jsonl` — GraphRAG failure cases
 - `linearrag_eval_subset.json` — LinearRAG results for comparison

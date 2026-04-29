@@ -1,6 +1,6 @@
-# DBpedia Hybrid QA
+# DBpedia SchemaRAG
 
-Hybrid QA over DBpedia + Wikipedia for 2WikiMultiHopQA, HotPotQA, MuSiQue.
+SchemaRAG over DBpedia + Wikipedia for 2WikiMultiHopQA, HotPotQA, MuSiQue.
 
 ## Key Results
 
@@ -10,7 +10,7 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
-| **Hybrid (ours)** | **89.4%** (894/1000) | [87.3%, 91.2%] |
+| **SchemaRAG (ours)** | **89.4%** (894/1000) | [87.3%, 91.2%] |
 | LinearRAG | 84.0% (840/1000) | [81.6%, 86.1%] |
 | LogicRAG | 74.5% (745/1000) | [71.7%, 77.1%] |
 
@@ -20,7 +20,7 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
-| **Hybrid (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
+| **SchemaRAG (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
 | LinearRAG | 88.0% (324/368) | [84.3%, 91.0%] |
 | LogicRAG | 73.9% (272/368) | [69.2%, 78.1%] |
 
@@ -28,7 +28,7 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 
 | System    | 2WikiMultiHopQA | HotPotQA |
 |-----------|:-:|:-:|
-| Hybrid    | 89.4%      | 86.1%      |
+| SchemaRAG | 89.4%      | 86.1%      |
 | LinearRAG | 84.0%      | 86.9%      |
 | LogicRAG  | 74.5%      | 78.8%      |
 
@@ -36,13 +36,13 @@ Evaluated on a 1000-question subset (from [LinearRAG](https://github.com/Zly0523
 
 | System | bridge_comparison | comparison | compositional | inference |
 |--------|:-:|:-:|:-:|:-:|
-| **Hybrid** | 91.9% (216/235) | **95.9%** (234/244) | **82.6%** (341/413) | **95.4%** (103/108) |
+| **SchemaRAG** | 91.9% (216/235) | **95.9%** (234/244) | **82.6%** (341/413) | **95.4%** (103/108) |
 | LinearRAG | **93.6%** (220/235) | 96.7% (236/244) | 71.9% (297/413) | 80.6% (87/108) |
 | LogicRAG | 72.8% (171/235) | 92.6% (226/244) | 61.7% (255/413) | 86.1% (93/108) |
 
 ## Architecture
 
-### Schema-Routed Hybrid Pipeline (`hybrid_qa.py`)
+### Schema-Routed SchemaRAG Pipeline (`hybrid_qa.py`)
 
 The core idea: **use the KG schema to decide the solving strategy**. The system inspects what DBpedia actually knows about the entities in the question, then picks one of two routes:
 
@@ -83,7 +83,7 @@ The routing system (`routing.py`) decides SPARQL-direct vs decomposition:
 
 | System | Entry Point | Strategy | Scope |
 |--------|-------------|----------|-------|
-| **Hybrid (main)** | `hybrid_qa.py` | Schema-routed: SPARQL direct or LogicRAG decomposition | Our contribution |
+| **SchemaRAG (main)** | `hybrid_qa.py` | Schema-routed: SPARQL direct or LogicRAG decomposition | Our contribution |
 | LinearRAG | `baselines/LinearRAG/` | Linear decomposition + retrieval | External baseline |
 | LogicRAG | `baselines/LogicRAG/` | Logic-based decomposition | External baseline |
 
@@ -152,15 +152,15 @@ LLM settings: `temperature=0`, exponential-backoff retry on 429s. Groq routes ac
 
 ## Result files
 
-Headline: **Hybrid 89.4 %** (894/1000) Judge EM on 2WikiMultiHopQA, **92.9 %** (342/368) on the hop-verified subset.
+Headline: **SchemaRAG 89.4 %** (894/1000) Judge EM on 2WikiMultiHopQA, **92.9 %** (342/368) on the hop-verified subset.
 
 | Result | JSONL |
 |---|---|
-| Hybrid 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
+| SchemaRAG 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
 | LinearRAG 1000q (judged) | `data/eval_1000q/linearrag/linearrag_1000q_judged.jsonl` |
 | LogicRAG 1000q (judged) | `data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl` |
-| Hybrid HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
-| Hybrid MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
+| SchemaRAG HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
+| SchemaRAG MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
 | LinearRAG HotPotQA | `data/cross_benchmark/hotpotqa/linearrag_hotpotqa_1000q_judged.jsonl` |
 | LinearRAG MuSiQue | `data/cross_benchmark/musique/linearrag_musique_1000q_judged.jsonl` |
 | LogicRAG HotPotQA | `data/cross_benchmark/hotpotqa/logicrag_hotpotqa_1000q_judged.jsonl` |
@@ -211,11 +211,11 @@ Selected files shown — see repo for full layout.
 ├── sparql_evaluation.py        # SPARQL helper library (used internally by hybrid_qa)
 │
 ├── scripts/                    # Evaluation scripts (reproduction)
-│   ├── hybrid_batch_eval.py                # Hybrid batch runner (1000q, auto-resume)
+│   ├── hybrid_batch_eval.py                # SchemaRAG batch runner (1000q, auto-resume)
 │   ├── judge_hybrid_eval.py                # LLM-as-judge
 │   ├── unified_comparison.py               # Cross-system table (2WikiMultiHopQA)
 │   ├── compare_evals_statistical.py        # McNemar + Wilson CI
-│   ├── run-hybrid-cross-benchmark.py       # Hybrid on HotPotQA/MuSiQue
+│   ├── run-hybrid-cross-benchmark.py       # SchemaRAG on HotPotQA/MuSiQue
 │   ├── run-logicrag-cross-benchmark.py     # LogicRAG on HotPotQA/MuSiQue
 │   ├── grounding/                          # Hop-verification scripts (2Wiki/HotPotQA/MuSiQue)
 │   └── ...

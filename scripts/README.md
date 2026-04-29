@@ -4,9 +4,9 @@
 
 | Script | Purpose | Output |
 |---|---|---|
-| `hybrid_batch_eval.py` | Batch-run hybrid pipeline on 1000q set (auto-resumes from JSONL) | `data/eval_1000q/hybrid_eval_*.jsonl` |
-| `judge_hybrid_eval.py` | LLM-as-judge re-scoring of hybrid eval results | `*_judged.jsonl` variants |
-| `unified_comparison.py` | Cross-pipeline comparison tables (SPARQL vs GRASP vs Hybrid) | stdout / markdown |
+| `hybrid_batch_eval.py` | Batch-run SchemaRAG pipeline on 1000q set (auto-resumes from JSONL) | `data/eval_1000q/hybrid_eval_*.jsonl` |
+| `judge_hybrid_eval.py` | LLM-as-judge re-scoring of SchemaRAG eval results | `*_judged.jsonl` variants |
+| `unified_comparison.py` | Cross-pipeline comparison tables (SPARQL vs GRASP vs SchemaRAG) | stdout / markdown |
 | `compare_evals_statistical.py` | Statistical significance: McNemar test, Wilson CI, Bonferroni | stdout |
 | `graphrag_eval_failures.py` | Analyze and categorize GraphRAG pipeline failures | `data/eval_1000q/graphrag_eval_failures.jsonl` |
 | `grasp_evaluate_results.py` | Offline re-evaluation/re-scoring of GRASP JSONL results | stdout |
