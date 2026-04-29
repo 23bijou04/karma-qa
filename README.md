@@ -110,10 +110,22 @@ python scripts/run-logicrag-1000q.py --api-key $GROQ_API_KEY
 python scripts/run-logicrag-cross-benchmark.py --benchmark hotpotqa --api-key $GROQ_API_KEY
 python scripts/run-logicrag-cross-benchmark.py --benchmark musique  --api-key $GROQ_API_KEY
 
-# LinearRAG — uses its own venv (see baselines/LinearRAG/REPRODUCE.md)
-# Run on 2Wiki, then HotPotQA + MuSiQue per the same REPRODUCE.md instructions.
-# After running natively, convert predictions to our schema:
-python scripts/convert-linearrag-predictions.py
+# LinearRAG — uses its own venv (see baselines/LinearRAG/REPRODUCE.md for 2Wiki setup)
+cd baselines/LinearRAG && source venv_linearrag/bin/activate
+
+# 2Wiki (1000q)
+python run_full_eval.py
+
+# Cross-benchmark (HotPotQA + MuSiQue)
+OPENAI_API_KEY=$GROQ_API_KEY OPENAI_BASE_URL=https://api.groq.com/openai/v1 \
+  python run-cross-benchmark-eval.py --dataset hotpotqa
+OPENAI_API_KEY=$GROQ_API_KEY OPENAI_BASE_URL=https://api.groq.com/openai/v1 \
+  python run-cross-benchmark-eval.py --dataset musique
+
+# Back to project root, convert 2Wiki predictions to our schema:
+cd ../..
+python scripts/convert-linearrag-predictions.py \
+  baselines/LinearRAG/results/2wikimultihop/eval_<timestamp>/predictions.json
 ```
 
 LLM settings: `temperature=0`, exponential-backoff retry on 429s. Groq routes across heterogeneous accelerators — expect ±0.3pp drift across reruns.
