@@ -142,10 +142,10 @@ Headline (canonical run = run 1, judge = gemma3:12b):
 
 | Result | JSONL |
 |---|---|
-| SchemaRAG 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
-| SchemaRAG 368q hop-verified (judged) | `data/eval_1000q/hybrid/hybrid_hop368_judged.jsonl` |
-| LinearRAG 1000q (judged) | `data/eval_1000q/linearrag/linearrag_1000q_judged.jsonl` |
-| LogicRAG 1000q (judged) | `data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl` |
+| SchemaRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
+| SchemaRAG 2WikiMultiHopQA 368q hop-verified (judged) | `data/eval_1000q/hybrid/hybrid_hop368_judged.jsonl` |
+| LinearRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/linearrag/linearrag_1000q_judged.jsonl` |
+| LogicRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl` |
 | SchemaRAG HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
 | SchemaRAG MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
 | LinearRAG HotPotQA | `data/cross_benchmark/hotpotqa/linearrag_hotpotqa_1000q_judged.jsonl` |
