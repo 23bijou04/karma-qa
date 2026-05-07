@@ -1,6 +1,6 @@
 """Tests for routing rules: structured SchemaProjection-based routing."""
 
-from dbpedia_qa.models import Entity
+from models import Entity
 from entity_profile import EntityProfile
 from question_analysis import analyze_question
 from routing import (

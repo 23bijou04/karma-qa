@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dbpedia_qa.dbpedia.schema_discovery import (
+from dbpedia.schema_discovery import (
     CACHED_CLASS_SCHEMAS,
     PROPERTY_RANGES,
     SchemaDiscovery,
@@ -239,24 +239,24 @@ class TestFormat2HopLinesDeep:
 
 class TestPropertyToClassesDbp:
     def test_father_maps_to_person(self):
-        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        from dbpedia.schema_discovery import PROPERTY_TO_CLASSES
         assert "father" in PROPERTY_TO_CLASSES
         assert "Person" in PROPERTY_TO_CLASSES["father"]
 
     def test_mother_maps_to_person(self):
-        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        from dbpedia.schema_discovery import PROPERTY_TO_CLASSES
         assert "mother" in PROPERTY_TO_CLASSES
         assert "Person" in PROPERTY_TO_CLASSES["mother"]
 
     def test_founder_maps_to_company(self):
-        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        from dbpedia.schema_discovery import PROPERTY_TO_CLASSES
         # 'founder' (dbp) is gone after ontology refactor; 'foundedBy' (dbo) is the canonical prop
         assert "foundedBy" in PROPERTY_TO_CLASSES
         assert "Company" in PROPERTY_TO_CLASSES["foundedBy"]
 
     def test_all_dbp_properties_indexed(self):
         """Every dbp property in CACHED_CLASS_SCHEMAS is in PROPERTY_TO_CLASSES."""
-        from dbpedia_qa.dbpedia.schema_discovery import PROPERTY_TO_CLASSES
+        from dbpedia.schema_discovery import PROPERTY_TO_CLASSES
         for cls_name, schema in CACHED_CLASS_SCHEMAS.items():
             for prop in schema.get("dbp", []):
                 assert prop in PROPERTY_TO_CLASSES, (

@@ -7,8 +7,8 @@ ampersands, accented characters, and other tricky entity names.
 
 import pytest
 
-from dbpedia_qa.dbpedia.entity_linker import DBpediaEntityLinker
-from dbpedia_qa.dbpedia.sparql_utils import (
+from dbpedia.entity_linker import DBpediaEntityLinker
+from dbpedia.sparql_utils import (
     build_bif_expression,
     escape_bif_term,
     escape_sparql_string,

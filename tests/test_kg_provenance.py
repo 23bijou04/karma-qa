@@ -1,6 +1,6 @@
 """Tests for Phase 1+3: KG provenance, kg_facts injection, relation-guided section boosting."""
 
-from dbpedia_qa.models import Entity, HybridResult
+from models import Entity, HybridResult
 
 
 class TestEntityDiscoveryRelation:

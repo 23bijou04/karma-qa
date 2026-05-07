@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dbpedia_qa.dbpedia.entity_linker import DBpediaEntityLinker
-from dbpedia_qa.models import Entity
+from dbpedia.entity_linker import DBpediaEntityLinker
+from models import Entity
 from tests.test_data.stress_test_cases import SPACY_NER_CASES, SPARQL_FALLBACK_CASES
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -124,7 +124,7 @@ class TestCacheBehavior:
         A set() call is always retrievable until process restart.
         This test documents the limitation rather than asserting correctness.
         """
-        from dbpedia_qa.dbpedia.cache import CacheManager
+        from dbpedia.cache import CacheManager
 
         cache = CacheManager()
         cache.set("k", [{"uri": "http://dbpedia.org/resource/Old", "label": "Old",

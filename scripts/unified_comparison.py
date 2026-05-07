@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unified comparison of all QA systems on LinearRAG's 1K question set.
 
-Compares Hybrid QA (primary), Schema-Guided SPARQL, GRASP, and LinearRAG.
+Compares Hybrid QA (primary), Schema-Guided SPARQL, and LinearRAG.
 Produces 5 tables with Wilson CIs and McNemar tests.
 
 Usage:
@@ -77,7 +77,7 @@ def load_linearrag_predictions(path):
 
 
 def load_jsonl_results(path):
-    """Load SPARQL, GRASP, or Hybrid JSONL results. Field: question_id."""
+    """Load SPARQL or Hybrid JSONL results. Field: question_id."""
     results = {}
     with open(path) as f:
         for line in f:
@@ -172,8 +172,6 @@ def main():
                         default="data/eval_1000q/hybrid/hybrid_eval_1000.jsonl")
     parser.add_argument("--sparql-file",
                         default="data/eval_1000q/sparql/original-346q/sparql_eval_1000.jsonl")
-    parser.add_argument("--grasp-file",
-                        default="data/eval_1000q/grasp/original-346q/grasp_eval_dbpedia.jsonl")
     parser.add_argument("--linearrag-file",
                         default="data/eval_1000q/linearrag_predictions_1000.json")
     args = parser.parse_args()
@@ -189,7 +187,6 @@ def main():
     print("\nLoading system results...")
     hybrid_all = try_load(args.hybrid_file, load_jsonl_results, "Hybrid QA")
     sparql = try_load(args.sparql_file, load_jsonl_results, "Schema-Guided SPARQL")
-    grasp = try_load(args.grasp_file, load_jsonl_results, "GRASP")
     linearrag_all = try_load(args.linearrag_file, load_linearrag_predictions, "LinearRAG")
 
     # Filter to answerable subset
@@ -203,8 +200,6 @@ def main():
         answerable_systems["Hybrid QA"] = hybrid_ans
     if sparql:
         answerable_systems["Schema-Guided SPARQL"] = sparql
-    if grasp:
-        answerable_systems["GRASP"] = grasp
     if linearrag_ans:
         answerable_systems["LinearRAG"] = linearrag_ans
 
@@ -453,7 +448,6 @@ def main():
                 "hybrid_pred": hybrid_all.get(qid, {}).get("predicted_answer", ""),
                 "hybrid_method": hybrid_all.get(qid, {}).get("method", ""),
                 "sparql_pred": sparql.get(qid, {}).get("predicted_answer", ""),
-                "grasp_pred": grasp.get(qid, {}).get("predicted_answer", ""),
                 "linearrag_pred": linearrag_all.get(qid, {}).get("predicted_answer", ""),
             }
             for qid in all_ids
@@ -485,23 +479,12 @@ def main():
         f.write(f"- **Common evaluation set**: {len(common_ids)} questions "
                 f"(intersection of all systems with results)\n")
         f.write(f"- **Systems**: {', '.join(system_names)}\n")
-        f.write("- **LLM**: Groq `llama-3.3-70b-versatile` (Hybrid, SPARQL, LinearRAG); "
-                "`gpt-5-mini` (GRASP)\n\n")
-
-        # GRASP coverage note
-        if grasp:
-            grasp_n = len(grasp)
-            grasp_pct = grasp_n / len(answerable_ids) * 100 if answerable_ids else 0
-            if grasp_pct < 95:
-                f.write(f"> **Note**: GRASP evaluated {grasp_n}/{len(answerable_ids)} "
-                        f"answerable questions ({grasp_pct:.0f}% coverage) due to WebSocket "
-                        f"server errors (HTTP 503). Common-set comparisons are restricted "
-                        f"to the {len(common_ids)}-question intersection.\n\n")
+        f.write("- **LLM**: Groq `llama-3.3-70b-versatile`\n\n")
 
         # Structural fairness note
         f.write("> **Structural fairness note:** The full-1000 comparison includes "
-                "632 questions (63.2%) where SPARQL-only systems (Schema-Guided SPARQL, "
-                "GRASP) cannot answer due to missing KG relations. Hybrid and LinearRAG "
+                "632 questions (63.2%) where the Schema-Guided SPARQL baseline "
+                "cannot answer due to missing KG relations. Hybrid and LinearRAG "
                 "have text-based fallback paths for these questions. Full-1000 numbers "
                 "reflect overall system capability, not retrieval quality alone.\n\n")
 

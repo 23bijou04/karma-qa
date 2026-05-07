@@ -24,7 +24,7 @@ if _parent not in sys.path:
 
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
-from dbpedia_qa.models import Entity, extract_final_answer  # noqa: E402
+from models import Entity, extract_final_answer  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from llm_provider import call_llm  # noqa: E402
 from logicrag_prompts import DEPENDENCY_RAG_PROMPT, get_final_answer_prompt  # noqa: E402
@@ -354,7 +354,7 @@ def _make_fallback_entity(name: str, kg_client=None,
     uri = f"http://dbpedia.org/resource/{local_name}"
 
     if kg_client:
-        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        from dbpedia.sparql_utils import escape_sparql_uri
         safe_uri = escape_sparql_uri(uri)
         try:
             result = kg_client.query(f"ASK {{ <{safe_uri}> ?p ?o }}")

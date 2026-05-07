@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from dbpedia_qa.models import Entity
+from models import Entity
 from logicrag_decomposition import (
     SubQuestion,
     _make_fallback_entity,
@@ -273,7 +273,7 @@ class TestMakeFallbackEntity:
 
 HAS_NETWORK = True
 try:
-    from dbpedia_qa.dbpedia.client import DBpediaSPARQLClient
+    from dbpedia.client import DBpediaSPARQLClient
     _test_client = DBpediaSPARQLClient()
     _test_client.search_entity_by_name("Christopher Nolan")
 except Exception:
@@ -286,7 +286,7 @@ class TestBridgeEntityResolution:
 
     @pytest.fixture(autouse=True)
     def setup_client(self):
-        from dbpedia_qa.dbpedia.client import DBpediaSPARQLClient
+        from dbpedia.client import DBpediaSPARQLClient
         self.kg_client = DBpediaSPARQLClient()
 
     def test_single_entity(self):

@@ -16,7 +16,7 @@ if _root not in sys.path:
 
 import pytest  # noqa: E402
 
-from dbpedia_qa.dbpedia.sparql_utils import (  # noqa: E402
+from dbpedia.sparql_utils import (  # noqa: E402
     build_bif_expression,
     escape_sparql_string,
     escape_sparql_uri,

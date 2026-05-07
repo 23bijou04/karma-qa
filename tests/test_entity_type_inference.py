@@ -2,10 +2,10 @@
 
 from unittest.mock import MagicMock
 
-from dbpedia_qa.dbpedia.entity_linker import (
+from dbpedia.entity_linker import (
     DBpediaEntityLinker,
 )
-from dbpedia_qa.models import Entity
+from models import Entity
 
 
 class TestExtractTypeHint:

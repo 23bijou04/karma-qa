@@ -10,7 +10,7 @@ import httpx
 import spacy
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from ..models import Entity
+from models import Entity
 from .cache import CacheManager
 from .client import DBpediaSPARQLClient
 from .wiki_resolver import WikipediaResolver

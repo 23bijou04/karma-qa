@@ -9,8 +9,8 @@ Covers:
 
 import pytest
 
-from dbpedia_qa.dbpedia.entity_linker import _TYPE_SUFFIX_MAP, DBpediaEntityLinker
-from dbpedia_qa.models import Entity
+from dbpedia.entity_linker import _TYPE_SUFFIX_MAP, DBpediaEntityLinker
+from models import Entity
 from tests.test_data.stress_test_cases import TYPE_HINT_CASES, TYPE_VALIDATION_CASES
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ def test_type_validation_year_title_clean_p1(linker_no_network, mock_sparql_clie
 @pytest.mark.p0
 def test_type_suffix_map_completeness():
     """All types in TYPE_HINTS and RELATION_TYPE_HINTS must have _TYPE_SUFFIX_MAP entries."""
-    from dbpedia_qa.dbpedia.entity_linker import (
+    from dbpedia.entity_linker import (
         _TYPE_SUFFIX_MAP,
         RELATION_TYPE_HINTS,
         TYPE_HINTS,

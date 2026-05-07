@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dbpedia_qa.dbpedia.schema_discovery import (
+from dbpedia.schema_discovery import (
     CACHED_CLASS_SCHEMAS,
     GENERIC_CLASSES,
     format_2hop_lines,

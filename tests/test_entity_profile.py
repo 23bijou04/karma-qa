@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_TO_CLASSES
+from dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_TO_CLASSES
 from entity_profile import EntityProfile, build_entity_profile
 
 

@@ -35,12 +35,12 @@ _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
-from dbpedia_qa.dbpedia.schema_discovery import (
+from dbpedia.schema_discovery import (
     CACHED_CLASS_SCHEMAS,
     SchemaDiscovery,
     format_2hop_lines,
 )
-from dbpedia_qa.models import extract_final_answer
+from models import extract_final_answer
 from evaluation.metrics import compute_containment, compute_em, compute_f1
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ def force_ipv4():
     _ipv4_patched = True
 
 # ---------------------------------------------------------------------------
-# Data loading (same as grasp_evaluation.py)
+# Data loading
 # ---------------------------------------------------------------------------
 
 DEFAULT_COVERAGE_FILE = "data/eval_1000q/ground-truth/coverage_analysis_1000.json"

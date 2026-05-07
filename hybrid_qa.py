@@ -27,21 +27,21 @@ import sys
 import time
 from pathlib import Path
 
-_parent = str(Path(__file__).resolve().parent.parent)
-if _parent not in sys.path:
-    sys.path.insert(0, _parent)
+_project_root = str(Path(__file__).resolve().parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import logicrag_decomposition  # noqa: E402
 import routing as routing_mod  # noqa: E402
 import sparql_solver  # noqa: E402
 import text_solver  # noqa: E402
-from dbpedia_qa.dbpedia import (  # noqa: E402
+from dbpedia import (  # noqa: E402
     DBpediaEntityLinker,
     DBpediaSPARQLClient,
     SchemaDiscovery,
     WikipediaResolver,
 )
-from dbpedia_qa.models import HybridResult  # noqa: E402
+from models import HybridResult  # noqa: E402
 from entity_profile import build_entity_profile  # noqa: E402
 from graphrag_wiki import link_entities_to_dbpedia  # noqa: E402
 from llm_provider import create_llm_client  # noqa: E402
@@ -240,7 +240,7 @@ def hybrid_answer(question: str, api_key: str = None,
     # identical and wastes an LLM call + SPARQL roundtrip.
     if (route != "SPARQL"
             and entities and analysis.target_properties and schema_ctx):
-        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        from dbpedia.sparql_utils import escape_sparql_uri
 
         for entity in entities:
             if not entity.uri:

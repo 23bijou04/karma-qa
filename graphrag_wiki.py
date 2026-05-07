@@ -24,16 +24,16 @@ from urllib.parse import unquote
 
 import requests
 
-# Ensure parent directory is on sys.path for dbpedia_qa package imports
-_parent = str(Path(__file__).resolve().parent.parent)
-if _parent not in sys.path:
-    sys.path.insert(0, _parent)
+# Ensure project root is on sys.path for top-level module imports
+_project_root = str(Path(__file__).resolve().parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from ddgs import DDGS
 
-from dbpedia_qa.dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
-from dbpedia_qa.models import Entity, extract_final_answer
+from dbpedia import DBpediaEntityLinker, DBpediaSPARQLClient, SchemaDiscovery
+from dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS
+from models import Entity, extract_final_answer
 from llm_provider import call_llm, create_llm_client
 from wiki_utils import (
     _rate_limit_wiki,

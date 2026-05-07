@@ -1,6 +1,6 @@
 """Tests for extract_final_answer() — shared answer extraction utility."""
 
-from dbpedia_qa.models import extract_final_answer
+from models import extract_final_answer
 
 
 class TestExtractFinalAnswer:

@@ -24,7 +24,6 @@ data/
 │   ├── linearrag/linearrag_1000q*.jsonl
 │   ├── logicrag/logicrag_1000q_traced*.jsonl
 │   ├── sparql/hop368/                   # SPARQL component on 368q
-│   ├── grasp/hop368/                    # GRASP on 368q
 │   └── unified_comparison_1000.json
 └── cross_benchmark/
     ├── hotpotqa/                        # 3 systems on HotPotQA 1000q

@@ -136,7 +136,7 @@ class TestSpotlightCircuitBreaker:
         circuit breaker must be shared across all linker instances to
         track Spotlight health across the batch run.
         """
-        from dbpedia_qa.dbpedia import entity_linker as el_module
+        from dbpedia import entity_linker as el_module
 
         # Before fix: _spotlight_cb won't exist in the module
         # After fix: _spotlight_cb should be a circuit breaker instance

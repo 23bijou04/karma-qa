@@ -37,7 +37,7 @@ def spacy_nlp():
 @pytest.fixture
 def mock_sparql_client():
     """Mock DBpediaSPARQLClient with configurable responses."""
-    from dbpedia_qa.dbpedia.client import DBpediaSPARQLClient
+    from dbpedia.client import DBpediaSPARQLClient
     client = create_autospec(DBpediaSPARQLClient, instance=True)
     client.get_entity_types.return_value = []
     client.search_entity_by_name.return_value = None
@@ -48,7 +48,7 @@ def mock_sparql_client():
 @pytest.fixture
 def linker_no_network(mock_sparql_client):
     """DBpediaEntityLinker that never hits the network."""
-    from dbpedia_qa.dbpedia.entity_linker import DBpediaEntityLinker
+    from dbpedia.entity_linker import DBpediaEntityLinker
     linker = DBpediaEntityLinker.__new__(DBpediaEntityLinker)
     linker.sparql_client = mock_sparql_client
     linker.spotlight_endpoint = "http://localhost:0/annotate"

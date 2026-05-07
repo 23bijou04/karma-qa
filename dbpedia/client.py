@@ -13,7 +13,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ..models import Entity
+from models import Entity
 from .cache import CacheManager
 from .sparql_utils import (
     build_bif_expression,
