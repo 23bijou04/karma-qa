@@ -7,7 +7,7 @@ _root = str(Path(__file__).resolve().parent.parent)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from dbpedia_qa.dbpedia.wiki_resolver import WikipediaResolver  # noqa: E402
+from dbpedia.wiki_resolver import WikipediaResolver  # noqa: E402
 
 
 def _mock_resp(data: dict) -> MagicMock:

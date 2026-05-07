@@ -11,8 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
-from dbpedia_qa.models import Entity
+from dbpedia.sparql_utils import escape_sparql_uri
+from models import Entity
 
 if TYPE_CHECKING:
     from schema_projection import SchemaProjection

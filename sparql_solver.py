@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from dbpedia_qa.models import Entity, extract_final_answer
+from models import Entity, extract_final_answer
 from llm_provider import call_llm
 from routing import _sparql_results_to_entities
 from sparql_evaluation import (

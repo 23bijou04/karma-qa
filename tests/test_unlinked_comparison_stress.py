@@ -13,8 +13,8 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from dbpedia_qa.dbpedia.entity_linker import DBpediaEntityLinker  # noqa: E402
-from dbpedia_qa.models import Entity  # noqa: E402
+from dbpedia.entity_linker import DBpediaEntityLinker  # noqa: E402
+from models import Entity  # noqa: E402
 from routing import _has_incomplete_entity_coverage  # noqa: E402
 from tests.test_data.stress_test_cases import (  # noqa: E402
     COMPARISON_COVERAGE_CASES,

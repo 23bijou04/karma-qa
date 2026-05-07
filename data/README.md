@@ -2,60 +2,46 @@
 
 ## Benchmark Data
 
-- `dev_full.json` — 2WikiMultiHopQA dev set: 12,576 questions (53MB, gitignored)
-- `test_full.json` — 2WikiMultiHopQA test set (53MB, gitignored)
-- `train_full.json` — 2WikiMultiHopQA train set (682MB, gitignored)
+- `dev_full.json` — 2WikiMultiHopQA dev set: 12,576 questions (gitignored, fetch from upstream: https://github.com/Alab-NII/2wikimultihop)
 - `sample_2wikimultihopqa.json` — Small sample for quick testing
+- `ontology_cache.json` — DBpedia ontology cache
 
-## Evaluation Results (`eval_1000q/`)
+## Evaluation Results
 
-Primary evaluation campaign on 1000-question subset (from LinearRAG evaluation set, Zly0523/linear-rag).
+Primary evaluation campaign on 1000-question subset (sourced from the LinearRAG evaluation set, `Zly0523/linear-rag`).
 
-### Coverage & Classification
-- `coverage_analysis_1000.json` — Per-question KG coverage + answerability flags (original analysis, narrow PROPERTY_MAP: 38.5% property, 34.6% answerable)
-- `coverage_analysis_1000_corrected.json` — Predicate-expanded correction (41.6% property, 37.5% answerable; intermediate, superseded by hop verification)
-- `hop_verification_results.json` — **Ground truth**: hop-by-hop chain verification against live DBpedia (36.8% predicate-complete, 11.9% strict value match). Script: `scripts/verify_hop_coverage.py`
-- `scenario_classification_1000.json` — Questions classified by KG coverage scenario (produced by `scripts/classify_1000q_scenarios.py`, based on original analysis)
-- `answer_source_analysis_1000.json` — Analysis of where correct answers originate (produced by `scripts/check_answer_sources.py`)
+### `eval_1000q/`
 
-### SPARQL-Only Baseline
-- `sparql_eval_1000.jsonl` — 346 evaluated questions (original answerable set; JSONL, append-only with resume)
-- `sparql_eval_1000_summary.json` — Aggregate metrics
+#### Ground truth
+- `ground-truth/coverage_analysis_1000.json` — Per-question KG coverage + answerability flags
+- `ground-truth/coverage_analysis_1000_corrected.json` — Predicate-expanded correction (intermediate, superseded)
+- `ground-truth/hop_verification_results.json` — Hop-by-hop chain verification against live DBpedia (primary ground truth)
+- `ground-truth/hop_verification_results_260414.json` — Re-run (zero drift)
+- `ground-truth/property_coverage_verification.json`, `property_verification_results.json` — Property-level checks
+- `ground-truth/scenario_classification_1000.json` — KG-coverage scenario labels (A–F)
+- `ground-truth/entity_qid_cache.json`, `benchmark_error_flags.json` — Caches/flags
 
-### GRASP Baseline
-- `grasp_eval_dbpedia.jsonl` — 346 evaluated questions (original answerable set)
-- `grasp_eval_dbpedia_summary.json` — Aggregate metrics
-- `grasp_eval_dbpedia_traces/` — Full WebSocket traces per question (348 files)
-- `grasp_failure_deep_analysis.md` — Manual analysis of GRASP failure modes
-- `grasp_trace_examples.md` — Annotated trace examples
+#### Per-system results (raw + LLM-judged)
+- `hybrid/hybrid_eval_1000{,_judged,_run2_judged}.jsonl` — SchemaRAG primary
+- `hybrid/hybrid_hop368_judged.jsonl` — Hop-verified 368q subset
+- `hybrid/ablation/*.jsonl`, `mixed_route_cohort_ids.txt` — Ablation cohorts
+- `linearrag/linearrag_1000q{,_judged,_run2_judged}.jsonl` + `linearrag_hop368_judged.jsonl`
+- `linearrag_predictions_1000{,_run2}.json` — Raw LinearRAG predictions
+- `logicrag/logicrag_1000q_traced{,_judged,_judged_claude,_run2_judged}.jsonl` + `logicrag_hop368_judged.jsonl`
+- `sparql/hop368/sparql_eval_1000_hop368{,_judged,_summary}.{jsonl,json}` — Schema-Guided SPARQL component
+- `sparql/original-346q/sparql_eval_1000{,_judged,_summary}.{jsonl,json}` — Earlier SPARQL run
+- `unified_comparison_1000.json` — Cross-system per-question comparison
 
-### SchemaRAG Pipeline
-- `hybrid_eval_1000.jsonl` — Full 1000-question eval (in progress, auto-resumes)
+### `cross_benchmark/`
 
-### Scenario Evals
-- `scenario_eval_hybrid.jsonl` — SchemaRAG pipeline on 60 scenario-stratified questions (10 per A–F)
-- `scenario_eval_hybrid_judged.jsonl` — Same with LLM-as-judge scores
-- `scenario_eval_logicrag_baseline.jsonl` — LogicRAG-only baseline on same 60 questions
-- `scenario_eval_logicrag_baseline_judged.jsonl` — Same with LLM-as-judge scores
+#### HotPotQA (`hotpotqa/`) and MuSiQue (`musique/`)
+For each benchmark:
+- `{hybrid,linearrag,logicrag}_<bench>_1000q{,_judged,_run2_judged}.jsonl`
+- `dbpedia_grounding_results.json` — Entity/connectivity/answer grounding stats
+- `ablation/*.jsonl`, `mixed_route_cohort_ids.txt` — Mixed-route / text-only-decomp cohorts
 
-### Cross-Pipeline
-- `evaluation_report_sparql_grasp.md` — SPARQL vs GRASP comparison report
-
-## Historical Results (`old_800q_results/`)
-
-Earlier evaluation campaign on 800-question sample (superseded by 1000q).
-
-- `coverage_analysis_800.json` — Per-question KG coverage (earlier version)
-- `sparql_eval.jsonl` / `sparql_eval_judged.jsonl` — SPARQL component results (SchemaRAG's SPARQL path standalone)
-- `grasp_eval_dbpedia.jsonl` / `grasp_eval_dbpedia_judged.jsonl` — GRASP results
-- `graphrag_eval_failures.jsonl` — GraphRAG failure cases
-- `linearrag_eval_subset.json` — LinearRAG results for comparison
-- `grasp_verification_results.json` — GRASP answer verification
-- `*_traces/` directories — Per-question debug traces
-- `*_summary.json` — Aggregate metrics per pipeline
+`metrics_summary.json` — Aggregated cross-benchmark metrics.
 
 ## Other
 
-- `wiki_cache.db` — SQLite cache for Wikipedia page content (used by `rag/cache.py`)
-- `ontology/` — DBpedia ontology reference files
-- `sparql_eval_traces/` — SPARQL evaluation debug traces (top-level, from early experiments)
+- `wiki_cache.db` — SQLite cache for Wikipedia page content (used by `rag/cache.py`, gitignored)

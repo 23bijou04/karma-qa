@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from dbpedia_qa.models import Entity
+from models import Entity
 
 # ---------------------------------------------------------------------------
 # Helpers

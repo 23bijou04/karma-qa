@@ -17,7 +17,7 @@ if _root not in sys.path:
 
 import pytest  # noqa: E402
 
-from dbpedia_qa.dbpedia.entity_linker import DBpediaEntityLinker  # noqa: E402
+from dbpedia.entity_linker import DBpediaEntityLinker  # noqa: E402
 from tests.test_data.stress_test_cases import (  # noqa: E402
     MENTION_ADDITIONAL_CASES,
     MENTION_DEDUP_CASES,

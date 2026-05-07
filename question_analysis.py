@@ -8,7 +8,7 @@ No LLM calls — purely regex + dictionary lookup.
 import re
 from dataclasses import dataclass, field
 
-from dbpedia_qa.dbpedia.schema_discovery import (
+from dbpedia.schema_discovery import (
     CACHED_CLASS_SCHEMAS,
     PROPERTY_RANGES,
     PROPERTY_TO_CLASSES,

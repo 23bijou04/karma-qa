@@ -19,8 +19,8 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
-from dbpedia_qa.dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
-from dbpedia_qa.models import Entity
+from dbpedia.schema_discovery import CACHED_CLASS_SCHEMAS, PROPERTY_RANGES
+from models import Entity
 from question_analysis import COMPARISON_WORDS
 
 if TYPE_CHECKING:
@@ -342,7 +342,7 @@ def verify_sparql_feasibility(
                     hop2_dbo_prop = candidate
                     break
 
-        from dbpedia_qa.dbpedia.sparql_utils import escape_sparql_uri
+        from dbpedia.sparql_utils import escape_sparql_uri
 
         def _ask_entity(entity: Entity) -> bool:
             """Run ASK query for a single entity. Returns True if chain exists."""

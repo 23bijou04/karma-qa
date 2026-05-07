@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from dbpedia_qa.models import Entity
+from models import Entity
 from entity_discovery import (
     _score_candidates,
     discover_context_entities,

@@ -25,18 +25,16 @@ from datetime import datetime
 from tqdm import tqdm
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-_parent = os.path.dirname(PROJECT_ROOT)
-if _parent not in sys.path:
-    sys.path.insert(0, _parent)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-from dbpedia_qa.dbpedia import (  # noqa: E402
+from dbpedia import (  # noqa: E402
     DBpediaEntityLinker,
     DBpediaSPARQLClient,
     SchemaDiscovery,
     WikipediaResolver,
 )
-from dbpedia_qa.models import extract_final_answer  # noqa: E402
+from models import extract_final_answer  # noqa: E402
 
 from hybrid_qa import hybrid_answer  # noqa: E402
 from llm_provider import create_llm_client  # noqa: E402
