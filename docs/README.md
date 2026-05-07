@@ -1,35 +1,14 @@
 # Documentation Index
 
-Quick reference for project documentation.
+Paper-supporting documentation for the DBpedia SchemaRAG system.
 
 ---
 
-## System Documentation
+## Paper Artifacts
 
 | File | Description |
 |------|-------------|
-| [hybrid-system-technical-documentation.md](hybrid-system-technical-documentation.md) | Complete technical spec of the hybrid QA system (architecture, modules, data flow) |
-
-## Evaluation Results
-
-| File | Description |
-|------|-------------|
-| [evaluation_report_sparql_grasp.md](evaluation_report_sparql_grasp.md) | Schema-Guided SPARQL vs GRASP comparison on hop-verified 368q subset |
-| [grasp_failure_deep_analysis.md](grasp_failure_deep_analysis.md) | Deep analysis of GRASP system failures |
-| [grasp_trace_examples.md](grasp_trace_examples.md) | Annotated GRASP trace examples showing failure modes |
-
-## KG Coverage & Answerability
-
-| File | Description |
-|------|-------------|
-| [coverage-verification-1000q.md](coverage-verification-1000q.md) | DBpedia coverage verification on the 1000q eval subset (entity, property, hop coverage) |
-| [wikimultihop-dbpedia-answerability.md](wikimultihop-dbpedia-answerability.md) | How many 2WikiMultiHopQA questions can be answered with DBpedia SPARQL? |
-
-## Project Management
-
-| File | Description |
-|------|-------------|
-| [project-changelog.md](project-changelog.md) | Record of features, fixes, improvements |
+| [paper-supplementary.tex](paper-supplementary.tex) | Supplementary material (LaTeX) for the paper |
 
 ---
 

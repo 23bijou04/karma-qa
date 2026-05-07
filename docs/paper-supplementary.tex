@@ -1,0 +1,464 @@
+% =============================================================================
+% SchemaRAG paper -- supplementary appendix (extended)
+% =============================================================================
+% These sections were trimmed from the LNCS submission (input/appendix.tex in
+% the thirag-paper repo) to fit the page budget. They are preserved here in
+% the dbpedia_qa codebase as supplementary material for reviewers and readers
+% who want the full evidence: per-benchmark routing counts, two narrated
+% execution paths, and a complete end-to-end LLM-prompt trace of one query
+% through every operator of Algorithm~1 (\textsc{ThiRAG}).
+%
+% Cross-references in this file (Algorithm~\ref{alg:thirag},
+% Table~\ref{tab:trace}, Figure~\ref{fig:routing-cross-benchmark}, citation
+% keys) point into the main paper PDF.
+% =============================================================================
+
+\section{Cross-benchmark routing breakdown}
+\label{sec:routing-breakdown}
+
+Figure~\ref{fig:routing-cross-benchmark} in the main text shows
+the Q-level and Sub-Q-level routing distributions;
+Table~\ref{tab:routing-cross-benchmark-appendix} gives the
+underlying routing counts.
+
+\begin{table}[t]
+\caption{Per-benchmark routing statistics over 1{,}000 questions each.
+Direct SPARQL: whole question answered by Text2SPARQL without
+decomposition. Sub-Qs: total sub-questions produced when decomposition
+fires. Sub-SPARQL\%: percentage of generated sub-questions resolved
+symbolically. Any-SPARQL\%: fraction of original questions in which at
+least one sub-question hit the SPARQL path.
+Routing distributions on 2WikiMHQA and MuSiQue are stable
+across runs (any-SPARQL drift $\le 2.6\%$); HotpotQA is
+more variable ($15.4\%$), reflecting LLM stochasticity in
+the coverage check when KG support is sparse.}
+\label{tab:routing-cross-benchmark-appendix}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Metric} & \textbf{2WikiMHQA} & \textbf{HotpotQA} & \textbf{MuSiQue} \\
+\midrule
+Direct SPARQL (\%)            & 29.5  & 6.1   & 2.4  \\
+Decomposition fired (\%)      & 70.1  & 88.7  & 96.5 \\
+\quad Sub-questions generated & 1544  & 1807  & 2508 \\
+\quad Sub-SPARQL (\%)         & 40.5  & 7.6   & 18.0 \\
+\midrule
+\textbf{Any-SPARQL touch (\%)} & \textbf{70.0} & \textbf{17.4} & \textbf{42.6} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Running examples: two execution paths}
+\label{app:running-examples}
+
+We illustrate the two execution paths of Algorithm~\ref{alg:thirag}
+on questions from 2WikiMultiHopQA over DBpedia.  Path~A exercises
+the KG-only fast path (lines~3--6 of Algorithm~\ref{alg:thirag});
+Path~B exercises the decompose-and-mixed-routing branch
+(lines~7--19).  The step-by-step trace in the main text
+(Table~\ref{tab:trace}) takes a third question end-to-end through
+every operator.
+
+\smallskip\noindent\emph{Path~A --- KG-only fast path (lines~3--6).}\enspace
+Consider $Q{=}$``Where was the director of film Thomas Jefferson (Film) born?''
+$\textsc{EntityLink}$ maps \emph{Thomas Jefferson} to
+\texttt{dbr:Thomas\_Jefferson\_(film)} (class \texttt{dbo:Film}).
+$\textsc{SchemaProject}$ retrieves relevant properties
+\texttt{dbo:director}, \texttt{dbo:birthPlace}; the projected schema
+covers the full 2-hop chain required by~$Q$.
+The coverage check at line~3 succeeds, so $\textsc{Text2SPARQL}$
+generates the query
+\texttt{\small SELECT ?bp WHERE \{ dbr:Thomas\_Jefferson\_(film)
+dbo:director/dbo:birthPlace ?bp \}}, which returns \emph{Brooklyn}.
+The answer is returned at line~5 without decomposition.
+
+\smallskip\noindent\emph{Path~B --- Decompose + mixed routing
+  (lines~7--19).}\enspace
+Consider $Q{=}$``What nationality is Matilda of Frisia's husband?''
+$\textsc{EntityLink}$ maps \emph{Matilda of Frisia} to
+\texttt{dbr:Matilda\_of\_Frisia} (class \texttt{dbo:Person}).
+$\textsc{SchemaProject}$ finds that the \texttt{dbo:spouse} property
+\emph{is} present in this entity's local schema, but the required
+second-hop property (\texttt{nationality} of the spouse) is not
+directly accessible.  The coverage check at line~3 fails: the
+projected schema cannot answer~$Q$ in a single query.
+The system decomposes~$Q$ into two subproblems:
+$p_1{=}$``Who is Matilda of Frisia's husband?'' and
+$p_2{=}$``What nationality is [$p_1$]?'' with dependency $p_2
+\!\to\! p_1$.
+For~$p_1$, schema re-scoping confirms that the \texttt{spouse}
+property is present ($\mathcal{S}_1$ covers~$\hat{p}_1$), so
+$\textsc{Text2SPARQL}$ returns \emph{Henry~I of France}.
+For~$p_2$, the resolved entity \texttt{dbr:Henry\_I\_of\_France}
+does not expose a usable \texttt{nationality} property in the
+projected schema, so $\textsc{TextRetrieve}$ retrieves passages
+from Wikipedia confirming that Henry~I was \emph{French}.
+$\textsc{Synthesize}$ produces the final answer: \emph{French}.
+
+\smallskip\noindent
+Path~A shows how the direct SPARQL check avoids unnecessary
+decomposition when the KG is complete.  Path~B shows the text
+fallback: the system decomposes the question, resolves the first
+subproblem symbolically via SPARQL, and falls back to text for the
+second.  The per-subproblem routing is decisive.
+On the same question, LinearRAG~\cite{Zhuang2025} retrieves passages
+that describe Henry~I as ``\emph{king of the Franks}'' and mention
+``\emph{Frankish} domination'' of Frisia in the same context window;
+it produces the answer \emph{Frankish} (marked incorrect by both
+judges).  The confusion arises because LinearRAG attempts to answer
+the two-hop question in a single retrieval pass: the passages that
+mention Matilda's husband also use the medieval title ``king of the
+Franks,'' and the model conflates this historical designation with
+nationality.  \sysname avoids this failure by decomposing the
+question and grounding the intermediate entity through SPARQL:
+$p_1$ returns the unambiguous resource
+\texttt{dbr:Henry\_I\_of\_France}, and $p_2$ retrieves text
+specifically about Henry~I, where the nationality \emph{French}
+is stated directly.
+
+\subsection{End-to-End Trace with Full LLM Prompts for Mixed Routing}
+\label{app:trace-dotti}
+
+\newtcolorbox{llmcall}[2][]{%
+  enhanced jigsaw, breakable,
+  colback=blue!3, colframe=blue!55!black,
+  fonttitle=\bfseries\small, coltitle=white,
+  title={#2}, left=4pt, right=4pt, top=3pt, bottom=3pt,
+  boxrule=0.5pt, arc=2pt,
+  breakable=true, pad at break*=2mm,
+  before upper={\parindent=0pt}, #1}
+\newtcolorbox{opstate}[1][]{%
+  enhanced jigsaw, breakable,
+  colback=gray!8, colframe=gray!50,
+  left=4pt, right=4pt, top=2pt, bottom=2pt,
+  boxrule=0.3pt, arc=1pt, #1}
+
+\noindent We trace $Q{=}$\emph{``What did the spouse of Andrea Dotti win a
+Tony for?''} (gold: \emph{for Best Performance by a Leading Actress in a
+Play in Ondine}; MuSiQue~\cite{Trivedi2022}, QID
+\texttt{2hop\_\_280451\_84616}) through every operator of
+Algorithm~\ref{alg:thirag}. Five LLM-call boxes (in blue) carry the full
+prompts and outputs; gray boxes carry the deterministic operator state
+(entity-linking, schema projection, coverage, grounding, retrieval) between calls.
+At the top level, $\textsc{Covers}$ fails because no
+\texttt{dbo:tonyAward} (or any award-category) predicate is instantiated
+on the linked entity, so the system refuses to fabricate it and falls
+through to symbolic decomposition; $p_1$ is then resolved by SPARQL
+(\texttt{dbo:spouse} is covered) and $p_2$ by text retrieval.
+
+\begin{opstate}
+\textbf{Steps 1--3 (deterministic, no LLM).}\\
+$E{=}\{\texttt{dbr:Andrea\_Dotti\_(psychiatrist)}\}$ (\texttt{dbo:Person});
+$\mathcal{S}{=}\{(\texttt{dbo:spouse},\texttt{dbo:Person}),(\texttt{dbo:birthDate},\textit{xsd:date}),\dots\}$;
+$\textsc{Covers}(\mathcal{S},Q){=}\textbf{false}$ (\emph{Tony}/\emph{award} unmatched, no \texttt{dbo:tonyAward})
+$\Rightarrow$ decompose.
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#1 --- Decompose}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Decompose this multi-hop question into independent sub-questions.
+QUESTION: What did the spouse of Andrea Dotti win a Tony for?
+ENTITIES: Andrea Dotti
+SCHEMA:   dbo:Person -> spouse, birthDate, birthPlace, ...
+          Actual: dbo:spouse -> dbr:Audrey_Hepburn
+Rules:    one fact per sub-Q; mark dependencies;
+          bridge questions allowed.
+JSON only, no explanation.
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|{"sub_questions":["Who is the spouse of Andrea Dotti?",|
+\verb|"What did [Q0] win a Tony for?"], "dependencies":[[1,0]]}|
+\end{llmcall}
+
+\begin{opstate}
+\textbf{Resolve $p_1$ ``Who is the spouse of Andrea Dotti?'' --- SPARQL path.}
+$\hat{p}_1{=}p_1$ (no predecessor);
+$E_{p_1}{=}\{\texttt{dbr:Andrea\_Dotti\_(psychiatrist)}\}$;
+$\textsc{Covers}(\mathcal{S}_{p_1},\hat{p}_1){=}\textbf{true}$ (\texttt{dbo:spouse} in Person schema).
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#2 --- SPARQL Generation}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+You are a SPARQL expert for DBpedia.
+Entity:   Andrea Dotti
+URI:      <http://dbpedia.org/resource/Andrea_Dotti_(psychiatrist)>
+Class:    dbo:Person
+  dbo:    spouse, birthDate, birthPlace, ...
+  Actual: dbo:spouse -> dbr:Audrey_Hepburn
+QUESTION: Who is the spouse of Andrea Dotti?
+RULES:    use exact URIs; always add LIMIT 100.
+\end{verbatim}
+\end{small}
+\textit{Output:}
+\begin{small}\begin{verbatim}
+SELECT ?s WHERE {
+  <.../Andrea_Dotti_(psychiatrist)> dbo:spouse ?s . } LIMIT 100
+\end{verbatim}
+\end{small}
+\textit{Execution result:} \verb|[{"s":"dbr:Audrey_Hepburn"}]|
+\end{llmcall}
+
+\begin{llmcall}{LLM Call \#3 --- Answer Extraction}
+\textit{Prompt:} \verb|Question: Who is the spouse of Andrea Dotti?|\\
+\verb|SPARQL Results: [{"s":"Audrey Hepburn"}]|\\
+\verb|End your response with FINAL ANSWER: <your answer>|\\
+\textit{Output:} \verb|FINAL ANSWER: Audrey Hepburn|
+$\Rightarrow M[p_1]\gets\emph{Audrey Hepburn}$.
+\end{llmcall}
+
+\begin{opstate}
+\textbf{Resolve $p_2$ --- Ground + re-project.}
+$\hat{p}_2{=}$``What did Audrey Hepburn win a Tony for?'';
+$E_{p_2}{=}\{\texttt{dbr:Audrey\_Hepburn}\}$ (Person);
+$\mathcal{S}_{p_2}$: no \texttt{dbo:tonyAward}/award-category property;
+$\textsc{Covers}{=}\textbf{false}$
+$\Rightarrow$ \textbf{route to text}.
+RAG: bi-encoder top-20 $\to$ cross-encoder top-8.
+Reranked chunk: \emph{``Audrey Hepburn\dots won the Tony Award for
+Best Performance by a Leading Actress in a Play for her role in
+Ondine\dots''}
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#4 --- Text Reasoning}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Sub-question: What did Audrey Hepburn win a Tony for?
+Known facts: Q0 = Audrey Hepburn
+Wikipedia: === Audrey Hepburn / (Lead) === ... won the Tony Award
+for Best Performance by a Leading Actress in a Play for her role
+in Ondine ...
+Instructions: brief factual answer; end with FINAL ANSWER: <answer>
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|FINAL ANSWER: Best Performance by a|
+\verb|Leading Actress in a Play in Ondine|
+$\Rightarrow M[p_2]\gets\emph{Best Performance by a Leading Actress in a Play in Ondine}$.
+\end{llmcall}
+
+\begin{llmcall}{LLM Call \#5 --- Synthesize}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Give ONLY the direct answer, most concise way possible.
+Question: What did the spouse of Andrea Dotti win a Tony for?
+Information Summary:
+- [SPARQL] Who is the spouse of Andrea Dotti? -> Audrey Hepburn
+- [TEXT]   What did [Q0] win a Tony for? ->
+           Best Performance by a Leading Actress in a Play in Ondine
+FINAL ANSWER: <your answer>
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|FINAL ANSWER: for Best Performance by a Leading|
+\verb|Actress in a Play in Ondine| $\checkmark$
+\end{llmcall}
+
+\begin{table}[h]
+\centering
+\caption{I/O summary for the Andrea Dotti trace (cross-reference for the boxes above).}
+\label{tab:trace-dotti-io-summary-full}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}c l l l c@{}}
+\toprule
+\textbf{\#} & \textbf{Operator} & \textbf{Input} & \textbf{Output} & \textbf{LLM} \\
+\midrule
+1  & EntityLink     & $Q$                  & \texttt{dbr:Andrea\_Dotti\_(psychiatrist)}                  & ---  \\
+2  & SchemaProject  & entity + $Q$         & \texttt{spouse}$\checkmark$, \texttt{tonyAward}$\times$    & ---  \\
+3  & Covers         & $\mathcal{S}$        & \textbf{false}                                              & ---  \\
+4  & Decompose      & $Q$, schema          & $p_1, p_2$; $p_2{\to}p_1$                                   & \#1  \\
+\midrule
+5  & Ground($p_1$)  & $M{=}\emptyset$      & ``Who is the spouse of Andrea Dotti?''                      & ---  \\
+6  & Covers($p_1$)  & Person schema        & \textbf{true}                                              & ---  \\
+7  & Text2SPARQL    & schema + $\hat{p}_1$ & SPARQL query                                                & \#2  \\
+8  & Execute        & query                & \texttt{dbr:Audrey\_Hepburn}                                & ---  \\
+9  & ExtractAnswer  & results              & ``Audrey Hepburn''                                          & \#3  \\
+\midrule
+10 & Ground($p_2$)  & $M[p_1]$             & ``What did Audrey Hepburn win a Tony for?''                 & ---  \\
+11 & Covers($p_2$)  & Person schema        & \textbf{false}                                             & ---  \\
+12 & RAG retrieve   & $\hat{p}_2$, corpus  & Wikipedia lead of Audrey Hepburn                            & ---  \\
+13 & TextReason     & chunks + $\hat{p}_2$ & ``Best Performance\dots Ondine''                            & \#4  \\
+\midrule
+14 & Synthesize     & $M{=}\{p_1, p_2\}$   & \textbf{for Best Performance\dots Ondine}                   & \#5  \\
+\bottomrule
+\end{tabular}
+}% end \resizebox
+\end{table}
+
+\noindent 5 LLM calls total. The routing decision (SPARQL for $p_1$, text for $p_2$)
+is determined entirely by symbolic schema coverage---no learned classifier.
+
+% ============================================================================
+% Deprecated 2026-04-29: Atomised trace below replaced by Dotti above.
+% Kept inside \iffalse per project convention; do not delete.
+% See app:trace-dotti for active trace.
+% ============================================================================
+\iffalse
+
+% ============================================================================
+% Active trace: compact tcolorbox-per-LLM-call format (5 calls + state blocks).
+% Q = "Who is the mother of the director of film Atomised (Film)?"
+% Gold: Gisela Elsner | Predicted: Gisela Elsner (correct)
+% From real evaluation run (hybrid_eval_1000.jsonl)
+% ============================================================================
+
+\subsection{End-to-End Trace with Full LLM Prompts for Mixed Routing}
+\label{app:trace-atomised}
+
+\newtcolorbox{llmcall}[2][]{%
+  enhanced jigsaw, breakable,
+  colback=blue!3, colframe=blue!55!black,
+  fonttitle=\bfseries\small, coltitle=white,
+  title={#2}, left=4pt, right=4pt, top=3pt, bottom=3pt,
+  boxrule=0.5pt, arc=2pt,
+  breakable=true, pad at break*=2mm,
+  before upper={\parindent=0pt}, #1}
+\newtcolorbox{opstate}[1][]{%
+  enhanced jigsaw, breakable,
+  colback=gray!8, colframe=gray!50,
+  left=4pt, right=4pt, top=2pt, bottom=2pt,
+  boxrule=0.3pt, arc=1pt, #1}
+
+\noindent We trace $Q{=}$\emph{``Who is the mother of the director of film
+Atomised (Film)?''} (gold: \emph{Gisela Elsner}) through every operator of
+Algorithm~\ref{alg:thirag}. Five LLM-call boxes (in blue) carry the full
+prompts and outputs; gray boxes carry the deterministic operator state
+(entity-linking, schema projection, coverage, grounding, retrieval) between calls.
+
+\begin{opstate}
+\textbf{Steps 1--3 (deterministic, no LLM).}\\
+$E = \{\texttt{dbr:Atomised\_(film)}\}$;
+$\mathcal{S}$: \texttt{director}$\checkmark$, \texttt{mother}/\texttt{parent}$\times$;
+$\textsc{Covers}(\mathcal{S},Q){=}\textbf{false}\Rightarrow$ decompose.
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#1 --- Decompose}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Decompose this multi-hop question into independent sub-questions.
+QUESTION: Who is the mother of the director of film
+          Atomised (Film)?
+ENTITIES: Atomised
+SCHEMA:   dbo:Film -> director, producer, ...
+          Actual: dbo:director -> Oskar Roehler
+Rules:    one fact per sub-Q; mark dependencies;
+          bridge questions allowed.
+JSON only, no explanation.
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|{"sub_questions":["Who directed Atomised?",|
+\verb|"Who is the mother of [Q0]?"], "dependencies":[[1,0]]}|
+\end{llmcall}
+
+\begin{opstate}
+\textbf{Resolve $p_1$ ``Who directed Atomised?'' --- SPARQL path.}
+$\textsc{Covers}(\mathcal{S}_{p_1},\hat{p}_1){=}\textbf{true}$ (\texttt{director} in Film schema).
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#2 --- SPARQL Generation}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+You are a SPARQL expert for DBpedia.
+Entity:   Atomised
+URI:      <http://dbpedia.org/resource/Atomised_(film)>
+Class:    dbo:Film
+  dbo:    director, producer, starring, ...
+  Actual: dbo:director -> Oskar Roehler
+QUESTION: Who directed Atomised?
+RULES:    use exact URIs; always add LIMIT 100.
+\end{verbatim}
+\end{small}
+\textit{Output:}
+\begin{small}\begin{verbatim}
+SELECT ?director WHERE {
+  <.../Atomised_(film)> dbo:director ?director . } LIMIT 100
+\end{verbatim}
+\end{small}
+\textit{Execution result:} \verb|[{"director":"dbr:Oskar_Roehler"}]|
+\end{llmcall}
+
+\begin{llmcall}{LLM Call \#3 --- Answer Extraction}
+\textit{Prompt:} \verb|Question: Who directed Atomised?|\\
+\verb|SPARQL Results: [{"director":"Oskar Roehler"}]|\\
+\verb|End your response with FINAL ANSWER: <your answer>|\\
+\textit{Output:} \verb|FINAL ANSWER: Oskar Roehler|
+$\Rightarrow M[p_1]\gets\emph{Oskar Roehler}$.
+\end{llmcall}
+
+\begin{opstate}
+\textbf{Resolve $p_2$ --- Ground + re-project.}
+$\hat{p}_2{=}$``Who is the mother of Oskar Roehler?'';
+$E_{p_2}{=}\{\texttt{dbr:Oskar\_Roehler}\}$ (Person);
+$\textsc{Covers}{=}\textbf{false}$ (no \texttt{mother}/\texttt{parent})
+$\Rightarrow$ \textbf{route to text}.
+RAG: bi-encoder top-20 $\to$ cross-encoder top-8.
+Reranked chunk: \emph{``Oskar Roehler\dots was born in Starnberg as the son of
+writer Gisela Elsner and the writer Klaus Roehler.''}
+\end{opstate}
+
+\begin{llmcall}{LLM Call \#4 --- Text Reasoning}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Sub-question: Who is the mother of Oskar Roehler?
+Known facts: Q0 = Oskar Roehler
+Wikipedia: === Oskar Roehler / (Lead) === ... son of writer Gisela
+Elsner and the writer Klaus Roehler. ...
+Instructions: brief factual answer; end with FINAL ANSWER: <answer>
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|FINAL ANSWER: Gisela Elsner|
+$\Rightarrow M[p_2]\gets\emph{Gisela Elsner}$.
+\end{llmcall}
+
+\begin{llmcall}{LLM Call \#5 --- Synthesize}
+\textit{Prompt (abbrev.):}
+\begin{small}\begin{verbatim}
+Give ONLY the direct answer, most concise way possible.
+Question: Who is the mother of the director of film Atomised (Film)?
+Information Summary:
+- [SPARQL] Who directed Atomised? -> Oskar Roehler
+- [TEXT]   Who is the mother of [Q0]? -> Gisela Elsner
+FINAL ANSWER: <your answer>
+\end{verbatim}
+\end{small}
+\textit{Output:} \verb|FINAL ANSWER: Gisela Elsner| $\checkmark$
+\end{llmcall}
+
+\begin{table}[h]
+\centering
+\caption{I/O summary for the Atomised trace (cross-reference for the boxes above).}
+\label{tab:trace-io-summary-full}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}c l l l c@{}}
+\toprule
+\textbf{\#} & \textbf{Operator} & \textbf{Input} & \textbf{Output} & \textbf{LLM} \\
+\midrule
+1  & EntityLink     & $Q$                  & \texttt{dbr:Atomised\_(film)}                       & ---  \\
+2  & SchemaProject  & entity + $Q$         & \texttt{director}$\checkmark$, \texttt{mother}$\times$ & ---  \\
+3  & Covers         & $\mathcal{S}$        & \textbf{false}                                       & ---  \\
+4  & Decompose      & $Q$, schema          & $p_1, p_2$; $p_2{\to}p_1$                            & \#1  \\
+\midrule
+5  & Ground($p_1$)  & $M{=}\emptyset$      & ``Who directed Atomised?''                            & ---  \\
+6  & Covers($p_1$)  & Film schema          & \textbf{true}                                        & ---  \\
+7  & Text2SPARQL    & schema + $\hat{p}_1$ & SPARQL query                                          & \#2  \\
+8  & Execute        & query                & \texttt{dbr:Oskar\_Roehler}                          & ---  \\
+9  & ExtractAnswer  & results              & ``Oskar Roehler''                                    & \#3  \\
+\midrule
+10 & Ground($p_2$)  & $M[p_1]$             & ``mother of Oskar Roehler?''                          & ---  \\
+11 & Covers($p_2$)  & Person schema        & \textbf{false}                                       & ---  \\
+12 & RAG retrieve   & $\hat{p}_2$, corpus  & Wikipedia lead of Oskar Roehler                       & ---  \\
+13 & TextReason     & chunks + $\hat{p}_2$ & ``Gisela Elsner''                                    & \#4  \\
+\midrule
+14 & Synthesize     & $M{=}\{p_1, p_2\}$   & \textbf{Gisela Elsner}                               & \#5  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent 5 LLM calls total. The routing decision (SPARQL for $p_1$, text for $p_2$)
+is determined entirely by schema coverage---no learned classifier.
+
+\fi % --- end deprecated Atomised block (replaced by app:trace-dotti) ---
