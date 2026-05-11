@@ -6,24 +6,6 @@ KARMA over DBpedia + Wikipedia for 2WikiMultiHopQA, HotPotQA, MuSiQue.
 
 Evaluated on 1000-question subsets (from [LinearRAG](https://github.com/Zly0523/linear-rag) evaluation set). All systems judged with the same LLM judge (gemma3:12b) for fair comparison. 95% CIs are Wilson intervals.
 
-### Full 1000q (2WikiMultiHopQA, all questions)
-
-| System | Judge EM | 95% CI |
-|--------|----------|--------|
-| **KARMA (ours)** | **89.4%** (894/1000) | [87.3%, 91.2%] |
-| LinearRAG | 84.0% (840/1000) | [81.6%, 86.1%] |
-| LogicRAG | 74.5% (745/1000) | [71.7%, 77.1%] |
-
-### Hop-Verified 368q (KG-Answerable Subset, 2WikiMultiHopQA)
-
-368 questions where DBpedia has all required predicates at every reasoning hop.
-
-| System | Judge EM | 95% CI |
-|--------|----------|--------|
-| **KARMA (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
-| LinearRAG | 88.0% (324/368) | [84.3%, 91.0%] |
-| LogicRAG | 73.9% (272/368) | [69.2%, 78.1%] |
-
 ### Cross-Benchmark (1000q each)
 
 | System    | 2WikiMultiHopQA | HotPotQA | MuSiQue |
