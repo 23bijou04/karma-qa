@@ -186,13 +186,3 @@ See paper §3 for the method. Entry point: `hybrid_qa.py`. Baselines in `baselin
 
 MIT — see [`LICENSE`](LICENSE).
 
-## Citation
-
-```bibtex
-@inproceedings{karma2026,
-  title  = {KARMA: Schema-Routed Question Answering over DBpedia and Wikipedia for Multi-Hop QA},
-  author = {Anonymous},
-  year   = {2026},
-  note   = {Under review}
-}
-```
