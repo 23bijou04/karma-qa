@@ -46,17 +46,22 @@ python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-e
 # macOS: brew install ollama && brew services start ollama
 # Linux: curl -fsSL https://ollama.com/install.sh | sh && systemctl --user start ollama
 ollama pull gemma3:12b   # ~8 GB, one-time
+
+# Benchmark questions + corpora (bundled with the LogicRAG baseline)
+git clone https://github.com/chensyCN/LogicRAG.git baselines/LogicRAG
 ```
 
 ## Data
 
-Benchmark question files are gitignored (large). Download into `data/`:
+Eval scripts read questions + corpora from `baselines/LogicRAG/dataset/` (populated by the clone above):
 
-| Benchmark | Source | Expected path |
-|---|---|---|
-| 2WikiMultiHopQA | <https://github.com/Alab-NII/2wikimultihop> | `data/dev_full.json` |
-| HotPotQA | <http://hotpotqa.github.io/> | `data/cross_benchmark/hotpotqa/dev.json` |
-| MuSiQue | <https://github.com/StonyBrookNLP/musique> | `data/cross_benchmark/musique/dev.json` |
+| Benchmark | Questions | Corpus | Upstream source |
+|---|---|---|---|
+| 2WikiMultiHopQA | `baselines/LogicRAG/dataset/2wikimultihopqa.json` | `2wikimultihopqa_corpus.json` | <https://github.com/Alab-NII/2wikimultihop> |
+| HotPotQA | `baselines/LogicRAG/dataset/hotpotqa.json` | `hotpotqa_corpus.json` | <http://hotpotqa.github.io/> |
+| MuSiQue | `baselines/LogicRAG/dataset/musique.json` | `musique_corpus.json` | <https://github.com/StonyBrookNLP/musique> |
+
+The 1000-question subset manifest (`data/eval_1000q/ground-truth/coverage_analysis_1000.json`) is tracked in-repo and selects which question IDs to evaluate.
 
 ## Run
 
