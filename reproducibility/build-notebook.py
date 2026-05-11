@@ -273,7 +273,7 @@ md("""## §4.2 — Table 1: End-to-end accuracy run-1 (xp.tex L177-212)
 
 Cont. = recomputed substring containment via normalize_date logic.
 Acc.  = fraction with `judge_correct == True` (Gemma 3 12B judge).
-KARMA_KG (`\\sysnameKG`) is the SPARQL-only ablation: it counts a
+KARMA_KG is the SPARQL-only ablation: it counts a
 question correct only if Hybrid resolved every step via SPARQL AND the
 prediction was judged correct; otherwise it is counted incorrect (the
 paper's "all-or-nothing" protocol).
@@ -561,7 +561,7 @@ record("Figure 1 (routing distribution)", True)
 # ----- Section 8 inline numbers -----
 md("""## §4 — Inline prose numbers (xp.tex L222-286, L500-560)
 
-- Whole-question SPARQL engagement and on-engaged accuracy (\\sysnameKG)
+- Whole-question SPARQL engagement and on-engaged accuracy (KARMA_KG)
 - Any-SPARQL touch (Whole-Q): 70.0% / 17.4% / 42.6%
 - Decomposition triggered: 96.5% on MuSiQue
 - Direct SPARQL on MuSiQue: 2.4%
@@ -576,14 +576,14 @@ def show(label, computed, expected, tol=0.5):
     ok = delta <= tol
     lines.append((label, round(computed,2), expected, round(delta,2), "OK" if ok else "FAIL"))
 
-# Whole-question SPARQL engagement & on-engaged accuracy (sysnameKG)
+# Whole-question SPARQL engagement & on-engaged accuracy (KARMA_KG)
 for bench, eng_exp, acc_eng_exp in [("2Wiki",42.7,92.7),("HotpotQA",7.8,70.5),("MuSiQue",4.4,65.9)]:
     recs = load_jsonl(PATHS[bench]["hybrid"])
     so = [r for r in recs if is_sparql_only(r)]
     eng = 100*len(so)/len(recs)
     on_eng = 100*sum(1 for r in so if r.get("judge_correct"))/len(so) if so else 0
-    show(f"{bench} sysnameKG engagement", eng, eng_exp)
-    show(f"{bench} sysnameKG acc-on-engaged", on_eng, acc_eng_exp)
+    show(f"{bench} KARMA_KG engagement", eng, eng_exp)
+    show(f"{bench} KARMA_KG acc-on-engaged", on_eng, acc_eng_exp)
 
 # Any-SPARQL touch (whole-Q level: any of {Direct SPARQL, Decomp:all, Decomp:mixed})
 for bench, exp in [("2Wiki",70.0),("HotpotQA",17.4),("MuSiQue",42.6)]:
@@ -651,7 +651,7 @@ for sys_, key in sys_keys:
         rows.append({"system": sys_, "bench": bench,
                      "Cont_r1": round(c1,1), "Cont_r2": round(c2,1), "dCont": round(abs(c1-c2),1),
                      "Acc_r1":  round(a1,1), "Acc_r2":  round(a2,1), "dAcc":  round(abs(a1-a2),1)})
-# sysnameKG
+# KARMA_KG
 for bench in ["2Wiki","HotpotQA","MuSiQue"]:
     r1 = load_jsonl(PATHS[bench]["hybrid"])
     r2 = load_jsonl(PATHS[bench]["hybrid_run2"])

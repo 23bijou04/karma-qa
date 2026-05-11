@@ -52,7 +52,7 @@ from either the repo root or `reproducibility/` works.
   is recorded in `_run2_judge_logs/` files under each system folder.
 - LinearRAG MuSiQue run-2 jsonl drops `question_type`; the notebook
   reconstructs types via `question_id` → run-1 type lookup.
-- The KG-only system (`\sysnameKG`) numbers are derived from the Hybrid
+- The KG-only system (KARMA_KG) numbers are derived from the Hybrid
   jsonl: a question is "SPARQL-only" iff `method=="sparql"` OR
   (`sub_question_log` is non-empty AND every entry has
   `method=="sparql"`). The non-empty constraint avoids vacuous
