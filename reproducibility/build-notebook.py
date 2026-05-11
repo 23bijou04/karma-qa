@@ -273,7 +273,7 @@ md("""## §4.2 — Table 1: End-to-end accuracy run-1 (xp.tex L177-212)
 
 Cont. = recomputed substring containment via normalize_date logic.
 Acc.  = fraction with `judge_correct == True` (Gemma 3 12B judge).
-SchemaRAG_KG (`\\sysnameKG`) is the SPARQL-only ablation: it counts a
+KARMA_KG (`\\sysnameKG`) is the SPARQL-only ablation: it counts a
 question correct only if Hybrid resolved every step via SPARQL AND the
 prediction was judged correct; otherwise it is counted incorrect (the
 paper's "all-or-nothing" protocol).
@@ -290,15 +290,15 @@ code('''def is_sparql_only(rec):
 EXPECTED_TAB1 = {
     "LogicRAG":  {"2Wiki": (69.2, 74.5), "HotpotQA": (58.7, 78.8), "MuSiQue": (37.6, 50.6)},
     "LinearRAG": {"2Wiki": (76.3, 84.0), "HotpotQA": (65.9, 86.9), "MuSiQue": (37.2, 51.6)},
-    "SchemaRAG": {"2Wiki": (83.1, 89.4), "HotpotQA": (63.9, 86.1), "MuSiQue": (54.8, 65.6)},
-    "SchemaRAG_KG": {"2Wiki": (36.7, 39.6), "HotpotQA": (3.6, 5.5), "MuSiQue": (2.5, 2.9)},
+    "KARMA": {"2Wiki": (83.1, 89.4), "HotpotQA": (63.9, 86.1), "MuSiQue": (54.8, 65.6)},
+    "KARMA_KG": {"2Wiki": (36.7, 39.6), "HotpotQA": (3.6, 5.5), "MuSiQue": (2.5, 2.9)},
 }
-SYS_KEY = {"LogicRAG": "logicrag", "LinearRAG": "linearrag", "SchemaRAG": "hybrid"}
+SYS_KEY = {"LogicRAG": "logicrag", "LinearRAG": "linearrag", "KARMA": "hybrid"}
 
 rows = []
-for sys_name in ["LogicRAG", "LinearRAG", "SchemaRAG", "SchemaRAG_KG"]:
+for sys_name in ["LogicRAG", "LinearRAG", "KARMA", "KARMA_KG"]:
     for bench in ["2Wiki", "HotpotQA", "MuSiQue"]:
-        if sys_name == "SchemaRAG_KG":
+        if sys_name == "KARMA_KG":
             recs = load_jsonl(PATHS[bench]["hybrid"])
             # all-or-nothing: only sparql-only AND correct counts (denominator=1000)
             so = [r for r in recs if is_sparql_only(r)]
@@ -357,25 +357,25 @@ def per_type_acc(recs, bench, qtype_lookup=None):
 
 EXPECTED_TAB2 = {
     "2Wiki": {
-        "bridge_comparison": {"SchemaRAG": 93.4, "LogicRAG": 72.8, "LinearRAG": 93.8},
-        "comparison":        {"SchemaRAG": 95.5, "LogicRAG": 92.8, "LinearRAG": 96.7},
-        "compositional":     {"SchemaRAG": 83.4, "LogicRAG": 62.1, "LinearRAG": 71.2},
-        "inference":         {"SchemaRAG": 94.4, "LogicRAG": 85.6, "LinearRAG": 80.6},
+        "bridge_comparison": {"KARMA": 93.4, "LogicRAG": 72.8, "LinearRAG": 93.8},
+        "comparison":        {"KARMA": 95.5, "LogicRAG": 92.8, "LinearRAG": 96.7},
+        "compositional":     {"KARMA": 83.4, "LogicRAG": 62.1, "LinearRAG": 71.2},
+        "inference":         {"KARMA": 94.4, "LogicRAG": 85.6, "LinearRAG": 80.6},
     },
     "HotpotQA": {
-        "bridge":     {"SchemaRAG": 84.6, "LogicRAG": 77.1, "LinearRAG": 86.9},
-        "comparison": {"SchemaRAG": 90.2, "LogicRAG": 87.6, "LinearRAG": 88.1},
+        "bridge":     {"KARMA": 84.6, "LogicRAG": 77.1, "LinearRAG": 86.9},
+        "comparison": {"KARMA": 90.2, "LogicRAG": 87.6, "LinearRAG": 88.1},
     },
     "MuSiQue": {
-        "2-hop": {"SchemaRAG": 70.6, "LogicRAG": 61.9, "LinearRAG": 58.4},
-        "3-hop": {"SchemaRAG": 68.4, "LogicRAG": 47.2, "LinearRAG": 48.3},
-        "4-hop": {"SchemaRAG": 35.5, "LogicRAG": 26.2, "LinearRAG": 36.8},
+        "2-hop": {"KARMA": 70.6, "LogicRAG": 61.9, "LinearRAG": 58.4},
+        "3-hop": {"KARMA": 68.4, "LogicRAG": 47.2, "LinearRAG": 48.3},
+        "4-hop": {"KARMA": 35.5, "LogicRAG": 26.2, "LinearRAG": 36.8},
     },
 }
 
 rows = []
 for bench, type_exp in EXPECTED_TAB2.items():
-    for sys_, key in [("SchemaRAG", "hybrid"), ("LogicRAG", "logicrag"), ("LinearRAG", "linearrag")]:
+    for sys_, key in [("KARMA", "hybrid"), ("LogicRAG", "logicrag"), ("LinearRAG", "linearrag")]:
         r1_recs = load_jsonl(PATHS[bench][key])
         r2_recs = load_jsonl(PATHS[bench][key + "_run2"])
         # Build qtype lookup from run-1 (some run-2 jsonls drop question_type).
@@ -401,7 +401,7 @@ md("""## §4.5 — Table 3: Routing breakdown (xp.tex L393-431)
 
 Classifies hybrid run-1 questions by routing mode (Direct SPARQL,
 Decomp: all SPARQL, Decomp: SPARQL+text, Text only) using top-level
-`method` + `sub_question_log` methods. Reports SchemaRAG / LogicRAG /
+`method` + `sub_question_log` methods. Reports KARMA / LogicRAG /
 LinearRAG accuracy on each mode's question set.
 """)
 
@@ -421,19 +421,19 @@ code('''def classify_mode(r):
 EXPECTED_TAB3 = {
     "2Wiki": {
         "NB": {"Direct SPARQL": 295, "Decomp: all SPARQL": 132, "Decomp: SPARQL+text": 273, "Text only": 300, "All": 1000},
-        "SchemaRAG":  {"Direct SPARQL": 92.9, "Decomp: all SPARQL": 92.4, "Decomp: SPARQL+text": 86.8, "Text only": 87.0, "All": 89.4},
+        "KARMA":  {"Direct SPARQL": 92.9, "Decomp: all SPARQL": 92.4, "Decomp: SPARQL+text": 86.8, "Text only": 87.0, "All": 89.4},
         "LogicRAG":   {"Direct SPARQL": 70.2, "Decomp: all SPARQL": 81.1, "Decomp: SPARQL+text": 71.1, "Text only": 79.0, "All": 74.5},
         "LinearRAG":  {"Direct SPARQL": 86.8, "Decomp: all SPARQL": 83.3, "Decomp: SPARQL+text": 82.4, "Text only": 83.0, "All": 84.0},
     },
     "HotpotQA": {
         "NB": {"Direct SPARQL": 61, "Decomp: all SPARQL": 17, "Decomp: SPARQL+text": 95, "Text only": 827, "All": 1000},
-        "SchemaRAG":  {"Direct SPARQL": 62.3, "Decomp: all SPARQL": 100.0, "Decomp: SPARQL+text": 93.7, "Text only": 86.7, "All": 86.1},
+        "KARMA":  {"Direct SPARQL": 62.3, "Decomp: all SPARQL": 100.0, "Decomp: SPARQL+text": 93.7, "Text only": 86.7, "All": 86.1},
         "LogicRAG":   {"Direct SPARQL": 75.4, "Decomp: all SPARQL": 88.2,  "Decomp: SPARQL+text": 83.2, "Text only": 78.3, "All": 78.8},
         "LinearRAG":  {"Direct SPARQL": 83.6, "Decomp: all SPARQL": 88.2,  "Decomp: SPARQL+text": 88.4, "Text only": 86.9, "All": 86.9},
     },
     "MuSiQue": {
         "NB": {"Direct SPARQL": 24, "Decomp: all SPARQL": 20, "Decomp: SPARQL+text": 382, "Text only": 574, "All": 1000},
-        "SchemaRAG":  {"Direct SPARQL": 66.7, "Decomp: all SPARQL": 65.0, "Decomp: SPARQL+text": 69.4, "Text only": 63.1, "All": 65.6},
+        "KARMA":  {"Direct SPARQL": 66.7, "Decomp: all SPARQL": 65.0, "Decomp: SPARQL+text": 69.4, "Text only": 63.1, "All": 65.6},
         "LogicRAG":   {"Direct SPARQL": 66.7, "Decomp: all SPARQL": 70.0, "Decomp: SPARQL+text": 53.4, "Text only": 47.4, "All": 50.6},
         "LinearRAG":  {"Direct SPARQL": 54.2, "Decomp: all SPARQL": 70.0, "Decomp: SPARQL+text": 52.9, "Text only": 50.0, "All": 51.6},
     },
@@ -451,14 +451,14 @@ for bench in ["2Wiki", "HotpotQA", "MuSiQue"]:
     nb["All"] = len(h)
 
     sys_recs = {
-        "SchemaRAG":  {r["question_id"]: r for r in h},
+        "KARMA":  {r["question_id"]: r for r in h},
         "LogicRAG":   {r["question_id"]: r for r in load_jsonl(PATHS[bench]["logicrag"])},
         "LinearRAG":  {r["question_id"]: r for r in load_jsonl(PATHS[bench]["linearrag"])},
     }
 
     for mode in MODES:
         ids = [qid for qid, m in qid_mode.items() if (m == mode or mode == "All")]
-        for sys_ in ["SchemaRAG", "LogicRAG", "LinearRAG"]:
+        for sys_ in ["KARMA", "LogicRAG", "LinearRAG"]:
             recs = [sys_recs[sys_][qid] for qid in ids if qid in sys_recs[sys_]]
             acc = 100 * sum(1 for r in recs if r.get("judge_correct")) / len(recs) if recs else 0.0
             exp = EXPECTED_TAB3[bench][sys_][mode]
@@ -618,7 +618,7 @@ total_wrong = 0
 for bench in ["2Wiki","HotpotQA","MuSiQue"]:
     recs = load_jsonl(PATHS[bench]["hybrid"])
     total_wrong += sum(1 for r in recs if not r.get("judge_correct"))
-show("SchemaRAG total incorrect (3 benchmarks, run1)", total_wrong, 589, tol=2)
+show("KARMA total incorrect (3 benchmarks, run1)", total_wrong, 589, tol=2)
 
 df_inline = pd.DataFrame(lines, columns=["claim","computed","expected","|delta|","status"])
 print(df_inline.to_string(index=False))
@@ -640,7 +640,7 @@ md("""## Appendix tables
 
 code('''# === tab:per-run-breakdown ===
 print("=== Per-run breakdown (Cont./Acc., r1, r2, |delta|) ===")
-sys_keys = [("LogicRAG","logicrag"), ("LinearRAG","linearrag"), ("SchemaRAG","hybrid")]
+sys_keys = [("LogicRAG","logicrag"), ("LinearRAG","linearrag"), ("KARMA","hybrid")]
 rows = []
 for sys_, key in sys_keys:
     for bench in ["2Wiki","HotpotQA","MuSiQue"]:
@@ -667,7 +667,7 @@ for bench in ["2Wiki","HotpotQA","MuSiQue"]:
         acc = 100*sum(1 for r in so if r.get("judge_correct"))/len(recs)
         return cont, acc
     c1, a1 = kg_metrics(r1); c2, a2 = kg_metrics(r2)
-    rows.append({"system": "SchemaRAG_KG", "bench": bench,
+    rows.append({"system": "KARMA_KG", "bench": bench,
                  "Cont_r1": round(c1,1), "Cont_r2": round(c2,1), "dCont": round(abs(c1-c2),1),
                  "Acc_r1":  round(a1,1), "Acc_r2":  round(a2,1), "dAcc":  round(abs(a1-a2),1)})
 
@@ -678,8 +678,8 @@ print(df_per_run.to_string(index=False))
 checks = [
     ("LogicRAG","2Wiki",69.2,69.0,74.5,74.9),
     ("LinearRAG","HotpotQA",65.9,66.3,86.9,87.5),
-    ("SchemaRAG","MuSiQue",54.8,50.0,65.6,62.5),
-    ("SchemaRAG_KG","2Wiki",36.7,31.9,39.6,34.0),
+    ("KARMA","MuSiQue",54.8,50.0,65.6,62.5),
+    ("KARMA_KG","2Wiki",36.7,31.9,39.6,34.0),
 ]
 print("\\nSpot-checks vs appendix Table 6:")
 ok = True

@@ -1,5 +1,5 @@
 % =============================================================================
-% SchemaRAG paper -- supplementary appendix (extended)
+% KARMA paper -- supplementary appendix (extended)
 % =============================================================================
 % These sections were trimmed from the LNCS submission (input/appendix.tex in
 % the thirag-paper repo) to fit the page budget. They are preserved here in
@@ -462,3 +462,207 @@ FINAL ANSWER: <your answer>
 is determined entirely by schema coverage---no learned classifier.
 
 \fi % --- end deprecated Atomised block (replaced by app:trace-dotti) ---
+
+% =============================================================================
+% Error Analysis (moved from main paper input/error-analysis.tex)
+% =============================================================================
+% Trimmed from the LNCS submission (no main-text \ref to sec:error-analysis,
+% tab:error-clusters, or tab:hop-depth). Preserved here in the dbpedia_qa
+% codebase as supplementary material. Cross-references (Algorithm~\ref{alg:thirag},
+% Table~\ref{tab:trace}, citations) point into the main paper PDF.
+% =============================================================================
+
+% FACTCHECK STATUS: PASS (2026-04-29) — all numerical claims verified against
+% validated failure-analysis report (project_failure_analysis_run1.md), which
+% itself was factchecked PASS against raw judged JSONL traces (judge: gemma3:12b).
+% No discrepancies found. Safe to submit.
+\section{Error Analysis}
+\label{sec:error-analysis}
+
+To understand \emph{why} \sysname\ fails, we classify the $589$
+judged-incorrect questions across the three benchmarks
+($106$/$1000$ on 2Wiki, $139$/$1000$ on HotpotQA, $344$/$1000$ on
+MuSiQue; aggregate fail rate $19.6\%$) by inspecting their full
+pipeline traces (routing decisions, sub-question logs, retrieved
+chunks). All counts below are verified against the raw judged JSONL
+(judge: \textsc{gemma3:12b}). MuSiQue's failure rate ($34.4\%$) is
+$3.2\times$ the 2Wiki rate, consistent with its higher hop count
+and lower KG connectivity (Table~\ref{tab:hop-depth}); we do not
+attempt to fully decouple hop depth from other inter-benchmark
+construction differences.
+
+\smallskip\noindent\textbf{Failure taxonomy.} Table~\ref{tab:error-clusters}
+groups the $589$ failures into ten clusters. Six dominate ($\geq 5\%$
+of failures); we describe each below.
+
+\begin{table}[t]
+\centering
+\caption{Failure clusters across $589$ judged-incorrect questions;
+counts per benchmark and share of total.}
+\label{tab:error-clusters}
+\small
+\begin{tabular}{clrrrrr}
+\toprule
+\# & Cluster & 2Wiki & HPQA & MuSiQue & Total & \% \\
+\midrule
+I    & KG forces text, text fails       & 61 & 74 & 102 & 237 & 40.2 \\
+II   & Sub-question returns wrong fact  & 2  & 6  & 82  & 90  & 15.3 \\
+III  & Routing bypass on multi-hop      & 22 & 30 & 13  & 65  & 11.0 \\
+IV   & Under-decomposition              & 3  & 0  & 85  & 88  & 14.9 \\
+V    & Over-decomposition               & --- & --- & 38 & 38  & 6.5  \\
+VI   & Comparison-logic error           & 18 & 16 & --- & 34  & 5.8  \\
+VII  & Entity-link / null sub-Q         & 0  & 8  & --- & 8   & 1.4  \\
+VIII & Hedging / refusal                & 0  & 0  & 14  & 14  & 2.4  \\
+IX   & DBpedia--Wikipedia format gap    & 0  & 5  & --- & 5   & 0.8  \\
+X    & Chain-text-miss intermediate     & 0  & 0  & 10  & 10  & 1.7  \\
+\midrule
+     & \textbf{Total}                   & 106 & 139 & 344 & \textbf{589} & \textbf{100} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\smallskip\noindent\textbf{Cluster I: KG forces text, text fails
+($40.2\%$, the dominant mode).}
+The KG signals absence of a 2-hop path; the question falls back to
+text retrieval, which then fails for benchmark-specific reasons. The
+trigger is shared, but the downstream failure differs:
+\emph{(i)} on 2Wiki ($61$ cases), the system retrieves the right
+Wikipedia page but the predicted string refers to the same concept
+under a different label (e.g.\ ``Ottoman Empire'' vs.\ ``Turkey''),
+so EM/F1 string-match fails;
+\emph{(ii)} on HotpotQA ($74$ cases), the BM25 + reranker pipeline
+promotes a topically similar but wrong Wikipedia page (e.g.\
+the director's biography instead of the film page), all $74$
+exhibiting topically-related but incorrect retrieval;
+\emph{(iii)} on MuSiQue ($102$ cases), DBpedia connectivity collapses
+beyond two hops (Table~\ref{tab:hop-depth}), so text must traverse
+the entire chain unaided, which Wikipedia pages do not support.
+
+\smallskip\noindent\textbf{Cluster IV: under-decomposition
+($14.9\%$, almost entirely MuSiQue).}
+The decomposition LLM produces fewer sub-questions than the
+hop count: $46$ cases of $4\text{-hop}\!\to\!3$ sub-Qs, $30$ of
+$3\text{-hop}\!\to\!2$, $7$ of $4\text{-hop}\!\to\!2$, $2$ of
+$2\text{-hop}\!\to\!1$. About $80\%$ of these $88$ cases co-occur with all-text retrieval:
+when the KG cannot help, decomposition errors compound. We leave
+prompt revisions targeting this pattern to future work.
+
+\smallskip\noindent\textbf{Cluster II: sub-question returns wrong
+fact ($15.3\%$, dominant on MuSiQue).}
+A sub-question executes but retrieves the wrong answer. We focus
+on MuSiQue's $82$ cases, where the pattern is sharpest; the
+remaining $8$ ($2$ on 2Wiki, $6$ on HotpotQA) were not separately
+re-classified. On the $82$ MuSiQue cases, $91.5\%$ ($75$/$82$) have
+the gold entity \emph{absent from the entire retrieved chain}---only
+$7$/$82$ are genuine final-synthesis errors, suggesting the
+bottleneck is retrieval, not synthesis: improvements to
+the synthesis prompt will not help if the gold fact was never
+retrieved.
+
+\smallskip\noindent\textbf{Cluster III: routing bypass
+($11.0\%$, universal across benchmarks).}
+Multi-hop questions are answered by SPARQL alone because routing
+matches a surface predicate (e.g.\ ``director'' $\to$
+\texttt{dbo:director}) and returns early, skipping decomposition
+($22$/$30$/$13$ on the three benchmarks). A single guard---force
+decomposition consideration when the question is multi-hop---would,
+in principle, unblock decomposition for all $65$ cases; the recoverable subset is bounded
+by sub-question success rates and is not directly measured here.
+
+\smallskip\noindent\textbf{Cluster V: over-decomposition
+($6.5\%$, MuSiQue only).}
+The opposite failure of Cluster IV: $14$/$38$ cases follow a
+$2$-hop $\!\to\!3{+}$ sub-question pattern in which a phantom sub-question
+introduces retrieval noise that propagates into the final answer;
+a further $5$--$7$ cases are $4$-hop$3$ questions split into $5$--$6$
+sub-questions, and the remaining cases are over-decomposed by other
+patterns we do not separately enumerate. The fix points to
+bidirectional decomposition guidance (produce roughly $N$ sub-questions
+for an $N$-hop question), not just a stricter floor.
+
+\smallskip\noindent\textbf{Cluster VI: comparison logic
+($5.8\%$).}
+Apparent reasoning errors that on inspection are date/string-format
+or value-multiplicity mismatches---for example, a film with multiple
+listed release dates ($1948$, $1968$, $1991$) compared against a
+single-date counterpart ($1988$) causes the comparison prompt to
+flip the answer; nationality-equivalence cases (e.g.\ ``Greek and
+Italian'' vs.\ ``Greek'') exhibit a similar pattern. A canonical
+date and nationality mapper applied prior to comparison addresses
+these cases.
+
+\smallskip\noindent\textbf{Hop-depth as a structural ceiling.}
+Table~\ref{tab:hop-depth} shows the joint behaviour of failure rate
+and DBpedia chain connectivity on MuSiQue. Connectivity drops
+sharply with hop count and the failure rate climbs accordingly;
+at $4$-hop with intermediate bridge type ``$4$hop$2$'', connectivity
+reaches $0\%$ and the system fails on $92.6\%$ of questions
+($n=27$, small sample). Past two hops, DBpedia connectivity collapses
+on these benchmarks; prompt-level changes are unlikely to recover this
+regime without KG expansion or stronger external retrieval.
+
+\begin{table}[t]
+\centering
+\caption{MuSiQue failure rate vs.\ DBpedia chain connectivity by
+hop type. Connectivity = fraction of questions whose entity chain
+is fully traversable in DBpedia.}
+\label{tab:hop-depth}
+\small
+\begin{tabular}{lrr}
+\toprule
+Hop type & Fail \% & DBpedia connectivity \\
+\midrule
+2hop   & 28.6 & 32.8 \\
+3hop1  & 24.7 & 14.4 \\
+3hop2  & 45.2 &  1.4 \\
+4hop1  & 55.6 &  2.8 \\
+4hop2  & \textbf{92.6} &  0.0 \\
+4hop3  & 58.1 &  0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\smallskip\noindent\textbf{What is \emph{not} the bottleneck.}
+Two mechanisms are not the bottleneck---entity linking and final-synthesis
+reasoning---even though both could plausibly be.
+Of the $8$ HotpotQA Cluster~VII failures, none stem from entity
+linking; all are null sub-question outputs from downstream LLM
+failure. Entity linking is also absent from 2Wiki and MuSiQue top
+causes; the Spotlight + SPARQL fallback chain does not appear
+among the top failure causes.
+Final-synthesis reasoning is also a minor contributor: only $7$/$82$
+MuSiQue Cluster II cases are true synthesis errors.
+
+\smallskip\noindent\textbf{Caveats.}
+All counts use \textsc{gemma3:12b} as judge, which is more lenient
+than strict EM; a stricter judge would shift Cluster II and VI counts
+upward. The $4$hop$2$ regime ($n=27$) is small; we treat the $92.6\%$
+figure as indicative rather than conclusive. One untracked failure
+mode---final-synthesis hallucination overriding a literal
+``\texttt{Unknown}'' sub-question answer with parametric memory---is
+currently absorbed into Cluster~II ($\geq 1$ confirmed; up to $16$
+MuSiQue cases involve sub-questions returning literal
+``\texttt{Unknown}'' where override is plausible but unverified).
+
+% OLD (flat list, "headline" reads as boastful):
+% \smallskip\noindent\textit{In summary,} four findings drive future
+% work: (1) $40\%$ of failures arise when the KG forces a text
+% fallback that fails for label-, retrieval-, or chain-disconnect
+% reasons---the headline failure mode; (2) decomposition errors are
+% bidirectional, with both under- and over-decomposition observable;
+% (3) routing bypass on multi-hop questions is the cheapest universal
+% fix ($65$ cases, single guard); (4) on MuSiQue, hop depth dictates
+% outcome through DBpedia connectivity, defining a structural ceiling
+% that prompt-level changes alone cannot lift without KG expansion.
+\smallskip\noindent\textit{In summary,} four findings drive
+future work, paired by what they implicate. The KG draws a
+boundary: (1) $40\%$ of failures arise when the KG forces a
+text fallback that fails for label-, retrieval-, or
+chain-disconnect reasons; (4) on
+MuSiQue, hop depth dictates outcome through DBpedia
+connectivity, defining a ceiling that prompt-level changes
+alone cannot lift without KG expansion. Routing leaks inside
+that boundary: (2) decomposition errors are bidirectional,
+with both under- and over-decomposition observable; (3)
+routing bypass on multi-hop questions is the cheapest
+universal fix ($65$ cases, single guard).

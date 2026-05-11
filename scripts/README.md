@@ -4,9 +4,9 @@
 
 | Script | Purpose | Output |
 |---|---|---|
-| `hybrid_batch_eval.py` | Batch-run SchemaRAG pipeline on 1000q set (auto-resumes from JSONL) | `data/eval_1000q/hybrid/hybrid_eval_*.jsonl` |
-| `judge_hybrid_eval.py` | LLM-as-judge re-scoring of SchemaRAG eval results | `*_judged.jsonl` variants |
-| `run-hybrid-cross-benchmark.py` | Run SchemaRAG on HotPotQA / MuSiQue 1000q subsets | `data/cross_benchmark/<bench>/hybrid_<bench>_1000q.jsonl` |
+| `hybrid_batch_eval.py` | Batch-run KARMA pipeline on 1000q set (auto-resumes from JSONL) | `data/eval_1000q/hybrid/hybrid_eval_*.jsonl` |
+| `judge_hybrid_eval.py` | LLM-as-judge re-scoring of KARMA eval results | `*_judged.jsonl` variants |
+| `run-hybrid-cross-benchmark.py` | Run KARMA on HotPotQA / MuSiQue 1000q subsets | `data/cross_benchmark/<bench>/hybrid_<bench>_1000q.jsonl` |
 | `run-logicrag-1000q.py` | Run LogicRAG baseline on 2WikiMultiHopQA 1000q | `data/eval_1000q/logicrag/logicrag_1000q_traced.jsonl` |
 | `run-logicrag-cross-benchmark.py` | Run LogicRAG on HotPotQA / MuSiQue | `data/cross_benchmark/<bench>/logicrag_<bench>_1000q.jsonl` |
 | `convert-linearrag-predictions.py` | Convert LinearRAG predictions JSON → eval-compatible JSONL | `data/eval_1000q/linearrag/linearrag_1000q.jsonl` |
@@ -15,7 +15,7 @@
 
 | Script | Purpose | Output |
 |---|---|---|
-| `unified_comparison.py` | Cross-pipeline comparison tables (Schema-Guided SPARQL vs SchemaRAG vs LinearRAG) | stdout / markdown |
+| `unified_comparison.py` | Cross-pipeline comparison tables (Schema-Guided SPARQL vs KARMA vs LinearRAG) | stdout / markdown |
 | `compare_evals_statistical.py` | Statistical significance: McNemar, Wilson CI, Bonferroni | stdout |
 | `cross-benchmark-statistical-analysis.py` | Cross-benchmark significance tests | stdout |
 | `compute-cross-benchmark-metrics.py` | Aggregate metrics across benchmarks | `data/cross_benchmark/metrics_summary.json` |

@@ -1,6 +1,6 @@
-# DBpedia SchemaRAG
+# DBpedia KARMA
 
-SchemaRAG over DBpedia + Wikipedia for 2WikiMultiHopQA, HotPotQA, MuSiQue.
+KARMA over DBpedia + Wikipedia for 2WikiMultiHopQA, HotPotQA, MuSiQue.
 
 ## Key Results
 
@@ -10,7 +10,7 @@ Evaluated on 1000-question subsets (from [LinearRAG](https://github.com/Zly0523/
 
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
-| **SchemaRAG (ours)** | **89.4%** (894/1000) | [87.3%, 91.2%] |
+| **KARMA (ours)** | **89.4%** (894/1000) | [87.3%, 91.2%] |
 | LinearRAG | 84.0% (840/1000) | [81.6%, 86.1%] |
 | LogicRAG | 74.5% (745/1000) | [71.7%, 77.1%] |
 
@@ -20,7 +20,7 @@ Evaluated on 1000-question subsets (from [LinearRAG](https://github.com/Zly0523/
 
 | System | Judge EM | 95% CI |
 |--------|----------|--------|
-| **SchemaRAG (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
+| **KARMA (ours)** | **92.9%** (342/368) | [89.8%, 95.1%] |
 | LinearRAG | 88.0% (324/368) | [84.3%, 91.0%] |
 | LogicRAG | 73.9% (272/368) | [69.2%, 78.1%] |
 
@@ -28,7 +28,7 @@ Evaluated on 1000-question subsets (from [LinearRAG](https://github.com/Zly0523/
 
 | System    | 2WikiMultiHopQA | HotPotQA | MuSiQue |
 |-----------|:-:|:-:|:-:|
-| **SchemaRAG** | **89.4%** | 86.1% | **65.6%** |
+| **KARMA** | **89.4%** | 86.1% | **65.6%** |
 | LinearRAG | 84.0% | **86.9%** | 51.6% |
 | LogicRAG  | 74.5% | 78.8% | 50.6% |
 
@@ -36,7 +36,7 @@ Evaluated on 1000-question subsets (from [LinearRAG](https://github.com/Zly0523/
 
 | System | bridge_comparison | comparison | compositional | inference |
 |--------|:-:|:-:|:-:|:-:|
-| **SchemaRAG** | 91.9% (216/235) | 95.9% (234/244) | **82.6%** (341/413) | **95.4%** (103/108) |
+| **KARMA** | 91.9% (216/235) | 95.9% (234/244) | **82.6%** (341/413) | **95.4%** (103/108) |
 | LinearRAG | **93.6%** (220/235) | **96.7%** (236/244) | 71.9% (297/413) | 80.6% (87/108) |
 | LogicRAG | 72.8% (171/235) | 92.6% (226/244) | 61.7% (255/413) | 86.1% (93/108) |
 
@@ -73,6 +73,25 @@ ollama list              # verify gemma3:12b is present
 ```
 
 Key deps (declared in `pyproject.toml`): `groq`, `openai`, `sentence-transformers`, `faiss-cpu`, `spacy`, `tenacity`, `ddgs`, `websockets`, `huggingface_hub`.
+
+## Retrieval stack
+
+Each system uses a different retrieval pipeline. Important when comparing — the
+embedding model and the presence/absence of a reranker are confounders.
+
+| System | Bi-encoder (retrieval) | Cross-encoder (rerank) | Top-K | Source |
+|---|---|---|---|---|
+| **Hybrid (ours)** | `all-MiniLM-L6-v2` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 20 → 8 | `rag/vector_store.py`, `rag/reranker.py` |
+| **LogicRAG (baseline)** | `all-MiniLM-L6-v2` | none | 5 | `baselines/LogicRAG/config/config.py` |
+| **LinearRAG (baseline)** | `all-mpnet-base-v2` | none | per their config | `baselines/LinearRAG/src/config.py` |
+
+Notes:
+- Hybrid and LogicRAG share the same bi-encoder backbone; Hybrid adds a
+  cross-encoder rerank stage that LogicRAG does not have.
+- LinearRAG uses a stronger single-stage bi-encoder (mpnet, 768-dim) instead of
+  a two-stage stack — this is the LinearRAG paper's published default.
+- Hybrid retrieves Wikipedia pages on-the-fly per question; LinearRAG indexes
+  the corpus upfront.
 
 ## Data
 
@@ -135,19 +154,19 @@ LLM settings: `temperature=0`, exponential-backoff retry on 429s. Groq routes ac
 ## Result files
 
 Headline (canonical run = run 1, judge = gemma3:12b):
-- **SchemaRAG 89.4%** (894/1000) on 2WikiMultiHopQA
+- **KARMA 89.4%** (894/1000) on 2WikiMultiHopQA
 - **86.1%** (861/1000) on HotPotQA
 - **65.6%** (656/1000) on MuSiQue
 - **92.9%** (342/368) on the hop-verified KG-answerable subset
 
 | Result | JSONL |
 |---|---|
-| SchemaRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
-| SchemaRAG 2WikiMultiHopQA 368q hop-verified (judged) | `data/eval_1000q/hybrid/hybrid_hop368_judged.jsonl` |
+| KARMA 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/hybrid/hybrid_eval_1000_judged.jsonl` |
+| KARMA 2WikiMultiHopQA 368q hop-verified (judged) | `data/eval_1000q/hybrid/hybrid_hop368_judged.jsonl` |
 | LinearRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/linearrag/linearrag_1000q_judged.jsonl` |
 | LogicRAG 2WikiMultiHopQA 1000q (judged) | `data/eval_1000q/logicrag/logicrag_1000q_traced_judged.jsonl` |
-| SchemaRAG HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
-| SchemaRAG MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
+| KARMA HotPotQA | `data/cross_benchmark/hotpotqa/hybrid_hotpotqa_1000q_judged.jsonl` |
+| KARMA MuSiQue | `data/cross_benchmark/musique/hybrid_musique_1000q_judged.jsonl` |
 | LinearRAG HotPotQA | `data/cross_benchmark/hotpotqa/linearrag_hotpotqa_1000q_judged.jsonl` |
 | LinearRAG MuSiQue | `data/cross_benchmark/musique/linearrag_musique_1000q_judged.jsonl` |
 | LogicRAG HotPotQA | `data/cross_benchmark/hotpotqa/logicrag_hotpotqa_1000q_judged.jsonl` |
@@ -170,8 +189,8 @@ MIT — see [`LICENSE`](LICENSE).
 ## Citation
 
 ```bibtex
-@inproceedings{schemarag2026,
-  title  = {SchemaRAG: Schema-Routed Question Answering over DBpedia and Wikipedia for Multi-Hop QA},
+@inproceedings{karma2026,
+  title  = {KARMA: Schema-Routed Question Answering over DBpedia and Wikipedia for Multi-Hop QA},
   author = {Anonymous},
   year   = {2026},
   note   = {Under review}

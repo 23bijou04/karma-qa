@@ -22,7 +22,7 @@ Primary evaluation campaign on 1000-question subset (sourced from the LinearRAG 
 - `ground-truth/entity_qid_cache.json`, `benchmark_error_flags.json` — Caches/flags
 
 #### Per-system results (raw + LLM-judged)
-- `hybrid/hybrid_eval_1000{,_judged,_run2_judged}.jsonl` — SchemaRAG primary
+- `hybrid/hybrid_eval_1000{,_judged,_run2_judged}.jsonl` — KARMA primary
 - `hybrid/hybrid_hop368_judged.jsonl` — Hop-verified 368q subset
 - `hybrid/ablation/*.jsonl`, `mixed_route_cohort_ids.txt` — Ablation cohorts
 - `linearrag/linearrag_1000q{,_judged,_run2_judged}.jsonl` + `linearrag_hop368_judged.jsonl`

@@ -1,6 +1,6 @@
 # Documentation Index
 
-Paper-supporting documentation for the DBpedia SchemaRAG system.
+Paper-supporting documentation for the DBpedia KARMA system.
 
 ---
 
