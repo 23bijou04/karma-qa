@@ -25,7 +25,7 @@ Evaluated on 1000-question subsets (from the [LinearRAG](https://github.com/Zly0
 ## Requirements
 
 - Python 3.10+ on macOS or Linux
-- An LLM API key: `GROQ_API_KEY` ([free tier](https://console.groq.com)) or `GITHUB_TOKEN`
+- An LLM API key — set `GROQ_API_KEY` ([free tier](https://console.groq.com)) or `GITHUB_TOKEN`
 - [Ollama](https://ollama.com) (for the `gemma3:12b` judge — see Install step 3)
 
 ## Install
@@ -33,7 +33,7 @@ Evaluated on 1000-question subsets (from the [LinearRAG](https://github.com/Zly0
 ```bash
 # 1. Python deps
 python -m venv venv && source venv/bin/activate
-pip install -e ".[dev]" ".[rag]"
+pip install -e ".[dev,rag]"
 python -m spacy download en_core_web_sm
 
 # 2. Embedding models (~100 MB each, one-time download)
@@ -66,7 +66,7 @@ The 1000-question subset manifest (`data/eval_1000q/ground-truth/coverage_analys
 ```bash
 export GROQ_API_KEY="..."   # or set GITHUB_TOKEN and pass --provider github
 
-# Interactive demo: answer a single question
+# Quick check: answer a single question
 python hybrid_qa.py "Who directed Inception?" --verbose
 
 # Paper reproduction: 2WikiMultiHopQA 1000q batch eval
