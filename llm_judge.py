@@ -4,8 +4,8 @@ Uses a local Ollama model to judge semantic equivalence between
 predicted and gold answers, bypassing strict EM limitations.
 
 Usage:
-    python3 -m ablation_study_v3.llm_judge --input-dir data/ablation_v3 --levels 0 1
-    python3 -m ablation_study_v3.llm_judge --input-dir data/ablation_v3 --levels 0 1 --model qwen2.5:3b
+    python3 llm_judge.py --input-dir data/ablation_v3 --levels 0 1
+    python3 llm_judge.py --input-dir data/ablation_v3 --levels 0 1 --model qwen2.5:3b
 """
 
 import argparse
