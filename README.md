@@ -24,10 +24,9 @@ Evaluated on 1000-question subsets (from the [LinearRAG](https://github.com/Zly0
 
 ## Requirements
 
-- Python 3.10+
-- macOS or Linux (uses `signal.SIGALRM`)
-- [GROQ_API_KEY](https://console.groq.com) (free tier) **or** `GITHUB_TOKEN`
-- Ollama + `gemma3:12b` — required to reproduce headline Judge EM numbers
+- Python 3.10+ on macOS or Linux
+- An LLM API key: `GROQ_API_KEY` ([free tier](https://console.groq.com)) or `GITHUB_TOKEN`
+- [Ollama](https://ollama.com) (for the `gemma3:12b` judge — see Install step 3)
 
 ## Install
 
@@ -71,7 +70,7 @@ export GROQ_API_KEY="..."   # or set GITHUB_TOKEN and pass --provider github
 python hybrid_qa.py "Who directed Inception?" --verbose
 
 # Paper reproduction: 2WikiMultiHopQA 1000q batch eval
-# (~5 h on Groq free tier; auto-resumes on 429s)
+# (~2 h of LLM calls; longer with rate-limit waits — auto-resumes on 429s)
 python scripts/hybrid_batch_eval.py --api-key $GROQ_API_KEY
 
 # Paper reproduction: cross-benchmark
