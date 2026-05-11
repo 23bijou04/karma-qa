@@ -58,6 +58,25 @@ Benchmark question files are gitignored (large). Download into `data/`:
 | HotPotQA | <http://hotpotqa.github.io/> | `data/cross_benchmark/hotpotqa/dev.json` |
 | MuSiQue | <https://github.com/StonyBrookNLP/musique> | `data/cross_benchmark/musique/dev.json` |
 
+## Run
+
+```bash
+export GROQ_API_KEY="..."   # or GITHUB_TOKEN with --provider github
+
+# Single question (interactive)
+python hybrid_qa.py "Who directed Inception?" --verbose
+
+# 2WikiMultiHopQA 1000q batch eval (~5 h on Groq free tier; auto-resumes on 429s)
+python scripts/hybrid_batch_eval.py --api-key $GROQ_API_KEY
+
+# Cross-benchmark
+python scripts/run-hybrid-cross-benchmark.py --benchmark hotpotqa --api-key $GROQ_API_KEY
+python scripts/run-hybrid-cross-benchmark.py --benchmark musique  --api-key $GROQ_API_KEY
+
+# Score with the LLM judge (gemma3:12b via Ollama)
+python scripts/judge_hybrid_eval.py data/eval_1000q/hybrid/hybrid_eval_1000.jsonl
+```
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
