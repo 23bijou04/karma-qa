@@ -1,14 +1,842 @@
-% =============================================================================
-% KARMA supplementary appendix -- unique additional material
-% =============================================================================
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage[table]{xcolor}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{makecell}
+\usepackage{multirow}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{xspace}
+\usepackage[hidelinks]{hyperref}
+
+\setlength{\emergencystretch}{2em}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+
+\newcommand{\sysname}{\textsc{KARMA}\xspace}
+\newcommand{\sysnameKG}{\textsc{KARMA}$_{\text{KG}}$\xspace}
+\newtheorem{definition}{Definition}
+
+\title{\sysname Supplementary Appendix}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+
+\section{KARMA Operator Descriptions}
+\label{app:operator-examples}
+
+\begin{table}[H]
+\centering
+\caption{KARMA operator descriptions}
+\label{tab:operator-view}
+\scriptsize
+\setlength{\tabcolsep}{2.4pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.21\linewidth}
+                >{\raggedright\arraybackslash}p{0.31\linewidth}
+                >{\raggedright\arraybackslash}p{0.40\linewidth}@{}}
+\toprule
+\textbf{Operator} & \textbf{Output} & \textbf{Description} \\
+\midrule
+\makecell[l]{$\textsc{EntityLink}$\\$(q,\mathcal{G})$} &
+$E_q{=}\{e_1,\ldots,e_k\}$ &
+DBpedia Spotlight (confidence threshold $0.5$) with recovery linking returns
+DBpedia resource IRIs; these entities seed schema projection, SPARQL
+generation, and entity-centered text retrieval. \\
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_q,q)$} &
+$\mathcal{S}_q{=}\langle P_q,A_q\rangle$ &
+Builds the projected schema for $q$: $P_q$ contains instantiated $(e,p)$ pairs
+used as coverage evidence, while $A_q$ stores annotation metadata such as class,
+range, type, or datatype fields. Bridge candidates may be shown in traces, but
+coverage still depends on instantiated KG evidence, not on annotations alone. \\
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_q,q)$} &
+\makecell[l]{\textbf{true}/\textbf{false};\\ covered, uncovered;\\ next branch} &
+Checks whether each relation in $\mathrm{Rel}(q)$ has a coverage-compatible
+predicate in $P_q$ on the required linked entity. The reported covered and
+uncovered relations determine whether the algorithm continues with SPARQL,
+decomposition, or text retrieval. \\
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(q,\mathcal{S}_q,\mathcal{G})$} &
+SPARQL query, bindings $R$, answer $a$ or $\emptyset$ &
+A schema-grounded prompt asks the LLM to generate a SPARQL query from $q$ and
+$\mathcal{S}_q$; the KG returns bindings and any answer. Non-empty answers
+return or enter $M$; empty results leave the step unresolved. \\
+\makecell[l]{$\textsc{Decompose}$\\$(Q)$} &
+$D{=}(\{q_i\},\prec)$ &
+A decomposition prompt asks the LLM to return a dependency-ordered
+sub-question DAG. The order tells the system which sub-answers must be produced
+before later questions can be grounded. \\
+\makecell[l]{$\textsc{Ground}$\\$(q_i,M)$} &
+$\hat{q}_i$ &
+Deterministic substitution produces a concrete sub-question by replacing
+dependencies with answers already stored in $M$. \\
+\makecell[l]{$\textsc{TextRAG}$\\$(q,E_q,\mathcal{T})$} &
+relevant passages, answer $a$ or $a_i$ &
+Retrieval supplies entity-seeded passages when available; an answer prompt asks
+the LLM to answer $q$ using those passages after failed coverage, empty SPARQL
+results, or empty synthesis. \\
+\makecell[l]{$M$ and $\textsc{Synthesize}$\\$(Q,M)$} &
+$M[q_i]{\gets}a_i$; final answer $a$ &
+$M$ records sub-question answers. A synthesis prompt asks the LLM to combine
+$M$ into the final answer; if it returns $\emptyset$, the algorithm calls final
+$\textsc{TextRAG}$. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+{\raggedright
+As in Table~\ref{tab:trace}, $\textsc{SchemaProject}$ rows display
+$\mathcal{S}_q=\langle P_q,A_q\rangle$: $P_q$ contains coverage-bearing
+instantiated predicates, while $A_q$ contains annotations such as class
+metadata. Candidate bridge paths are shown only when retained for routing.
+$\textsc{Covers}$ rows show the Boolean result, covered and uncovered relation
+checks, and the resulting branch.\par}
+
+
+\section{End-to-end execution trace}
+\label{sec:end-to-end-trace}
+
+\begin{table}[t]
+\centering
+\caption{End-to-end trace of \sysname\ on $Q{=}$``What did the spouse of
+Andrea Dotti win a Tony for?''. $\textsc{SchemaProject}$ reports annotation
+metadata, such as class, and instantiated predicates; only instantiated
+predicates provide coverage evidence. The table reports the Boolean
+$\textsc{Covers}$ result and the branch subsequently taken by
+the \sysname algorithm. $\hat{q}$ denotes the instantiated form of a
+sub-question.}
+\label{tab:trace}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
+\resizebox{\linewidth}{!}{%
+\footnotesize
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{Step} & \textbf{Operator call} & \textbf{Output / state} \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Top level --- $\textsc{Covers}$ fails, fall through to decomposition}}\\
+1  & $\textsc{EntityLink}(Q)$ & $E{=}\{\texttt{dbr:Andrea\_Dotti\_(psychiatrist)}\}$ \\
+2  & $\textsc{SchemaProject}(E,Q)$ & $\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; $A_Q$: class=\texttt{dbo:Person}; $P_Q$: \{\texttt{dbo:spouse}, \texttt{dbo:birthDate}, \ldots\} \\
+3  & $\textsc{Covers}(\mathcal{S},Q)$ & \makecell[l]{\textbf{false}; covered=\{\emph{spouse} -> \texttt{dbo:spouse}\}\\ uncovered=\{\emph{win a Tony for} -> no coverage-compatible instantiated predicate\}\\ next branch=\textbf{DECOMPOSE}} \\
+4  & $\textsc{Decompose}(Q)$ & $D{=}\{q_1,q_2\},\ q_1{\to}q_2;\ M{\gets}\emptyset$ \\
+   &                         & $q_1{=}$``Who is the spouse of Andrea Dotti?'' \\
+   &                         & $q_2{=}$``What did $[q_1]$ win a Tony for?'' \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Iterate $q_1$ ($M{=}\emptyset$) $\Rightarrow$ \textbf{KG-only}}}\\
+5 & $\textsc{Ground}(q_1,M)$ & $\hat{q}_1{=}$``Who is the spouse of Andrea Dotti?'' \\
+6 & $\textsc{EntityLink}(\hat{q}_1)$ & $E_{q_1}{=}\{\texttt{dbr:Andrea\_Dotti\_(psychiatrist)}\}$ \\
+7 & $\textsc{SchemaProject}(E_{q_1},\hat{q}_1)$ & $\mathcal{S}_{q_1}=\langle P_{q_1},A_{q_1}\rangle$; $A_{q_1}$: class=\texttt{dbo:Person}; $P_{q_1}$: \{\texttt{dbo:spouse}, \texttt{dbo:birthDate}, \ldots\} \\
+8 & $\textsc{Covers}(\mathcal{S}_{q_1},\hat{q}_1)$ & \makecell[l]{\textbf{true}; covered=\{\emph{spouse} -> \texttt{dbo:spouse}\}\\ uncovered=$\emptyset$; next branch=\textbf{SPARQL}} \\
+9 & $\textsc{Text2SPARQL}$ & \texttt{SELECT ?s WHERE \{dbr:Andrea\_Dotti\_(psychiatrist) dbo:spouse ?s\}} \\
+   &                         & $\to a_{q_1}{=}$\,\emph{Audrey Hepburn};\ $M[q_1]{\gets}$\,\emph{Audrey Hepburn} \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Iterate $q_2$ $\Rightarrow$ \textbf{text} (coverage fails)}}\\
+10 & $\textsc{Ground}(q_2,M)$ & $\hat{q}_2{=}$``What did Audrey Hepburn win a Tony for?'' \\
+11 & $\textsc{EntityLink}(\hat{q}_2)$ & $E_{q_2}{=}\{\texttt{dbr:Audrey\_Hepburn}\}$ (\texttt{dbo:Person}) \\
+12 & $\textsc{SchemaProject}(E_{q_2},\hat{q}_2)$ & $\mathcal{S}_{q_2}=\langle P_{q_2},A_{q_2}\rangle$; $A_{q_2}$: class=\texttt{dbo:Person}; $P_{q_2}$: \{\texttt{dbo:spouse}, \texttt{dbo:occupation}, \ldots\} \\
+13 & $\textsc{Covers}(\mathcal{S}_{q_2},\hat{q}_2)$ & \makecell[l]{\textbf{false}; covered=$\emptyset$\\ uncovered=\{\emph{win a Tony for} -> no coverage-compatible instantiated predicate\}\\ next branch=\textbf{TEXT}} \\
+14 & $\textsc{TextRAG}(\hat{q}_2,E_{q_2},\mathcal{T})$ & lead passage: ``\emph{Best Performance by a Leading Actress in a Play in Ondine}'' \\
+   &                         & $\to a_{q_2}{=}$\,\emph{Best Performance by a Leading Actress in a Play in Ondine} \\
+\midrule
+15 & $\textsc{Synthesize}(Q,M)$ & \emph{for Best Performance by a Leading Actress in a Play in Ondine} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+
+\clearpage
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\setlength{\LTcapwidth}{\textwidth}
+\newcommand{\sparqlbody}[1]{\begin{minipage}[t]{\linewidth}\scriptsize\ttfamily #1\end{minipage}}
+\newcommand{\statecell}[1]{\begin{minipage}[t]{\linewidth}\raggedright #1\end{minipage}}
+\newcommand{\tracecase}[2]{%
+\multicolumn{3}{@{}p{0.95\textwidth}@{}}{%
+\begin{minipage}[t]{0.95\textwidth}
+\textbf{Route:} \textit{#1}\par
+\textbf{Question:} ``#2''
+\end{minipage}}\\[2pt]
+\cmidrule(lr){1-3}
+\addlinespace[1pt]}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.08\textwidth}
+                  >{\raggedright\arraybackslash}p{0.22\textwidth}
+                  >{\raggedright\arraybackslash}p{0.65\textwidth}@{}}
+\caption{Trace-style examples of \sysname\ execution regimes selected from
+judged evaluation traces. Each block follows the same presentation pattern as
+Table~\ref{tab:trace}: schema projection rows separate coverage-bearing
+predicates from annotations, and coverage rows report covered relations,
+uncovered relations, and the next branch. Text2SPARQL rows omit shared prefixes
+and abbreviate DBpedia IRIs with \texttt{dbr:}.}
+\label{tab:operator-examples}\\
+\toprule
+\textbf{Step} & \textbf{Operator call} & \textbf{Output / state} \\
+\midrule
+\endfirsthead
+\caption[]{Trace-style examples of \sysname\ execution regimes (continued).}\\
+\toprule
+\textbf{Step} & \textbf{Operator call} & \textbf{Output / state} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r@{}}{\emph{continued on next page}}\\
+\endfoot
+\bottomrule
+\endlastfoot
+\tracecase{Direct SPARQL}{Where was the director of film \emph{Thomas Jefferson (Film)} born?}
+1 &
+$\textsc{EntityLink}(Q)$ &
+$E_Q{=}\{e_0{=}\texttt{dbr:Thomas\_Jefferson\_(film)}\}$. \\
+2 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_Q,Q)$} &
+$\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; $A_Q$: class=\texttt{dbo:Film};
+$P_Q$: \{\texttt{dbo:director}, \ldots\};
+bridge path:
+\texttt{dbo:director}$\to$\texttt{dbo:birthPlace}. \\
+3 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_Q,Q)$} &
+\statecell{\textbf{true}; covered=\{\emph{director} -> \texttt{dbo:director}, \emph{born} -> \texttt{dbo:director} $\to$ \texttt{dbo:birthPlace}\}; uncovered=$\emptyset$; next branch=\textbf{SPARQL}.} \\
+4 &
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(Q,\mathcal{S}_Q,\mathcal{G})$} &
+\sparqlbody{SELECT ?birthPlace\\
+WHERE \{\\
+\quad dbr:Thomas\_Jefferson\_(film) dbo:director ?person .\\
+\quad ?person dbo:birthPlace ?birthPlace .\\
+\}\\
+LIMIT 100}\par
+$R{=}\{\texttt{dbr:Brooklyn}\}$.\newline
+$a{=}$\emph{Brooklyn}. \\
+\addlinespace[2pt]
+\midrule
+
+\tracecase{Direct SPARQL}{Which film has the director born later, \emph{House Of Blackmail} or
+\emph{Taxi Zum Klo}?}
+1 &
+$\textsc{EntityLink}(Q)$ &
+$E_Q{=}\{e_1,e_2\}$; $e_1{=}$\texttt{dbr:House\_of\_Blackmail};
+$e_2{=}$\texttt{dbr:Taxi\_zum\_Klo}. \\
+2 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_Q,Q)$} &
+$\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; for each $e\in E_Q$,
+$A_Q$: class=\texttt{dbo:Film}; $P_Q$: \{\texttt{dbo:director}, \ldots\};
+bridge path:
+\texttt{dbo:director}$\to$\texttt{dbo:birthDate}. \\
+3 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_Q,Q)$} &
+\statecell{\textbf{true}; covered=\{\emph{director} -> \texttt{dbo:director}, \emph{born later} -> \texttt{dbo:director} $\to$ \texttt{dbo:birthDate}\}; uncovered=$\emptyset$; next branch=\textbf{SPARQL}.} \\
+4 &
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(Q,\mathcal{S}_Q,\mathcal{G})$} &
+\sparqlbody{SELECT ?film\\
+WHERE \{\\
+\quad VALUES ?film \{ dbr:House\_of\_Blackmail dbr:Taxi\_zum\_Klo \}\\
+\quad ?film dbo:director ?director .\\
+\quad ?director dbo:birthDate ?birthDate .\\
+\}\\
+ORDER BY DESC(?birthDate)\\
+LIMIT 1}\par
+$a{=}$\emph{Taxi Zum Klo}. \\
+\addlinespace[2pt]
+\midrule
+
+\tracecase{Decomp: all SPARQL}{Who was born first out of Marco De Luigi and Fabio Maistro?}
+1 &
+$\textsc{EntityLink}(Q)$ &
+\makecell[l]{$E_Q{=}\{e_1,e_2\}$;\\
+$e_1{=}$\texttt{dbr:Marco\_de\_Luigi};\\
+$e_2{=}$\texttt{dbr:Fabio\_Maistro}.} \\
+2 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_Q,Q)$} &
+$\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; for each $e\in E_Q$,
+$A_Q$: class=\texttt{dbo:Person}; $P_Q$: \{\texttt{dbo:birthDate}, \ldots\}. \\
+3 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_Q,Q)$} &
+\statecell{covered=\{\emph{born} -> \texttt{dbo:birthDate} for both entities\}; uncovered=\{\emph{born first} -> no accepted whole-question comparison route\}; next branch=\textbf{DECOMPOSE}.} \\
+4 &
+$\textsc{Decompose}(Q)$ &
+LLM decomposition; $D{=}(\{q_1,q_2\},\emptyset)$, ordered as $q_1,q_2$;
+$q_1{=}$``When was Marco De Luigi born?'';
+$q_2{=}$``When was Fabio Maistro born?''; $M{\gets}\emptyset$. \\
+5 &
+$\textsc{Ground}(q_1,M)$ &
+$\hat{q}_1{=}$``When was Marco De Luigi born?''. \\
+6 &
+$\textsc{EntityLink}(\hat{q}_1)$ &
+$E_{q_1}{=}\{e_1{=}\texttt{dbr:Marco\_de\_Luigi}\}$. \\
+7 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_1},\hat{q}_1)$} &
+$\mathcal{S}_{q_1}=\langle P_{q_1},A_{q_1}\rangle$;
+$A_{q_1}$: class=\texttt{dbo:Person}; $P_{q_1}$: \{\texttt{dbo:birthDate}, \ldots\}. \\
+8 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_1},\hat{q}_1)$} &
+\statecell{\textbf{true}; covered=\{\emph{born} -> \texttt{dbo:birthDate}\}; uncovered=$\emptyset$; next branch=\textbf{SPARQL}.} \\
+9 &
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(\hat{q}_1,\mathcal{S}_{q_1},\mathcal{G})$} &
+\sparqlbody{SELECT ?birthDate\\
+WHERE \{\\
+\quad dbr:Marco\_de\_Luigi dbo:birthDate ?birthDate .\\
+\}\\
+LIMIT 100}\par
+$R{=}\{1978\text{-}03\text{-}21\}$;
+$M[q_1]{\gets}$\emph{March 21, 1978}. \\
+10 &
+$\textsc{Ground}(q_2,M)$ &
+$\hat{q}_2{=}$``When was Fabio Maistro born?''. \\
+11 &
+$\textsc{EntityLink}(\hat{q}_2)$ &
+$E_{q_2}{=}\{e_2{=}\texttt{dbr:Fabio\_Maistro}\}$. \\
+12 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_2},\hat{q}_2)$} &
+$\mathcal{S}_{q_2}=\langle P_{q_2},A_{q_2}\rangle$;
+$A_{q_2}$: class=\texttt{dbo:Person}; $P_{q_2}$: \{\texttt{dbo:birthDate}, \ldots\}. \\
+13 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_2},\hat{q}_2)$} &
+\statecell{\textbf{true}; covered=\{\emph{born} -> \texttt{dbo:birthDate}\}; uncovered=$\emptyset$; next branch=\textbf{SPARQL}.} \\
+14 &
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(\hat{q}_2,\mathcal{S}_{q_2},\mathcal{G})$} &
+\sparqlbody{SELECT ?birthDate\\
+WHERE \{\\
+\quad dbr:Fabio\_Maistro dbo:birthDate ?birthDate .\\
+\}\\
+LIMIT 100}\par
+$R{=}\{1998\text{-}04\text{-}05\}$;
+$M[q_2]{\gets}$\emph{April 5, 1998}. \\
+15 &
+$\textsc{Synthesize}(Q,M)$ &
+LLM synthesis compares $M[q_1]$ and $M[q_2]$; $a{=}$\emph{Marco De Luigi}. \\
+\addlinespace[2pt]
+\midrule
+
+\tracecase{Decomp: SPARQL+text}{Where was the director of film \emph{Age-Old Friends} born?}
+1 &
+$\textsc{EntityLink}(Q)$ &
+$E_Q{=}\{e_0{=}\texttt{dbr:Age-Old\_Friends}\}$. \\
+2 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_Q,Q)$} &
+$\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; $A_Q$: class=\texttt{dbo:Film};
+$P_Q$: \{\texttt{dbo:director}, \ldots\};
+candidate bridge path:
+\texttt{dbo:director}$\to$\texttt{dbo:birthPlace}. \\
+3 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_Q,Q)$} &
+\statecell{\textbf{false}; covered=\{\emph{director} -> \texttt{dbo:director}\}; uncovered=\{\emph{born} -> unavailable bridge \texttt{dbo:director} $\to$ \texttt{dbo:birthPlace}\}; next branch=\textbf{DECOMPOSE}.} \\
+4 &
+$\textsc{Decompose}(Q)$ &
+LLM decomposition; $D{=}(\{q_1,q_2\},q_1{\to}q_2)$;
+$q_1{=}$``Who directed Age-Old Friends?'';
+$q_2{=}$``Where was $[q_1]$ born?''; $M{\gets}\emptyset$. \\
+5 &
+$\textsc{Ground}(q_1,M)$ &
+$\hat{q}_1{=}$``Who directed Age-Old Friends?''. \\
+6 &
+$\textsc{EntityLink}(\hat{q}_1)$ &
+$E_{q_1}{=}\{e_0\}$. \\
+7 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_1},\hat{q}_1)$} &
+$\mathcal{S}_{q_1}=\langle P_{q_1},A_{q_1}\rangle$;
+$A_{q_1}$: class=\texttt{dbo:Film}; $P_{q_1}$: \{\texttt{dbo:director}, \ldots\}. \\
+8 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_1},\hat{q}_1)$} &
+\statecell{\textbf{true}; covered=\{\emph{directed} -> \texttt{dbo:director}\}; uncovered=$\emptyset$; next branch=\textbf{SPARQL}.} \\
+9 &
+\makecell[l]{$\textsc{Text2SPARQL}$\\$(\hat{q}_1,\mathcal{S}_{q_1},\mathcal{G})$} &
+\sparqlbody{SELECT ?director\\
+WHERE \{\\
+\quad dbr:Age-Old\_Friends dbo:director ?director .\\
+\}\\
+LIMIT 100}\par
+$R{=}\{\texttt{dbr:Allan\_Kroeker}\}$;
+$M[q_1]{\gets}$\emph{Allan Kroeker}. \\
+10 &
+$\textsc{Ground}(q_2,M)$ &
+$\hat{q}_2{=}$``Where was Allan Kroeker born?''. \\
+11 &
+$\textsc{EntityLink}(\hat{q}_2)$ &
+$E_{q_2}{=}\{e_1{=}\texttt{dbr:Allan\_Kroeker}\}$. \\
+12 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_2},\hat{q}_2)$} &
+$\mathcal{S}_{q_2}=\langle P_{q_2},A_{q_2}\rangle$;
+$A_{q_2}$: class=\texttt{dbo:Person};
+$P_{q_2}$ does not contain \texttt{dbo:birthPlace}. \\
+13 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_2},\hat{q}_2)$} &
+\statecell{\textbf{false}; covered=$\emptyset$; uncovered=\{\emph{born} -> no coverage-compatible \texttt{dbo:birthPlace}\}; next branch=\textbf{TEXT}.} \\
+14 &
+\makecell[l]{$\textsc{TextRAG}$\\$(\hat{q}_2,E_{q_2},\mathcal{T})$} &
+\statecell{retrieved text: ``Allan Kroeker (born February 29, 1960 in \textbf{\emph{Winnipeg, Manitoba}}) is a Canadian film and television director \ldots''\par
+$\to a_{q_2}{=}$\emph{Winnipeg, Manitoba};
+$M[q_2]{\gets}$\emph{Winnipeg, Manitoba}.} \\
+15 &
+$\textsc{Synthesize}(Q,M)$ &
+LLM synthesis; $a{=}$\emph{Winnipeg, Manitoba}. \\
+\addlinespace[2pt]
+\midrule
+\pagebreak[4]
+
+\tracecase{Text only}{Why did John Middleton Murry's wife die?}
+1 &
+$\textsc{EntityLink}(Q)$ &
+$E_Q{=}\{e_0{=}\texttt{dbr:John\_Middleton\_Murry}\}$. \\
+2 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_Q,Q)$} &
+$\mathcal{S}_Q=\langle P_Q,A_Q\rangle$; $A_Q$: class=\texttt{dbo:Person};
+$P_Q$ contains neither \texttt{dbo:spouse} nor \texttt{dbo:deathCause}. \\
+3 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_Q,Q)$} &
+\statecell{covered=$\emptyset$; uncovered=\{\emph{wife} -> no observed \texttt{dbo:spouse}, \emph{die} -> no observed \texttt{dbo:deathCause}\}; next branch=\textbf{DECOMPOSE}.} \\
+4 &
+$\textsc{Decompose}(Q)$ &
+LLM decomposition; $D{=}(\{q_1,q_2\},q_1{\to}q_2)$;
+$q_1{=}$``Who was John Middleton Murry's wife?'';
+$q_2{=}$``Why did $[q_1]$ die?''; $M{\gets}\emptyset$. \\
+5 &
+$\textsc{Ground}(q_1,M)$ &
+$\hat{q}_1{=}$``Who was John Middleton Murry's wife?''. \\
+6 &
+$\textsc{EntityLink}(\hat{q}_1)$ &
+$E_{q_1}{=}\{e_0\}$. \\
+7 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_1},\hat{q}_1)$} &
+$\mathcal{S}_{q_1}=\langle P_{q_1},A_{q_1}\rangle$;
+$A_{q_1}$: class=\texttt{dbo:Person};
+$P_{q_1}$ does not contain \texttt{dbo:spouse}. \\
+8 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_1},\hat{q}_1)$} &
+\statecell{\textbf{false}; covered=$\emptyset$; uncovered=\{\emph{wife} -> no coverage-compatible \texttt{dbo:spouse}\}; next branch=\textbf{TEXT}.} \\
+9 &
+\makecell[l]{$\textsc{TextRAG}$\\$(\hat{q}_1,E_{q_1},\mathcal{T})$} &
+\statecell{retrieved text: ``\ldots Murry is best remembered for his association with \textbf{\emph{Katherine Mansfield}}, whom he married in 1918 as her second husband \ldots''\par
+$\to a_{q_1}{=}$\emph{Katherine Mansfield};
+$M[q_1]{\gets}$\emph{Katherine Mansfield}.} \\
+10 &
+$\textsc{Ground}(q_2,M)$ &
+$\hat{q}_2{=}$``Why did Katherine Mansfield die?''. \\
+11 &
+$\textsc{EntityLink}(\hat{q}_2)$ &
+$E_{q_2}{=}\{e_1{=}\texttt{dbr:Katherine\_Mansfield}\}$. \\
+12 &
+\makecell[l]{$\textsc{SchemaProject}$\\$(E_{q_2},\hat{q}_2)$} &
+$\mathcal{S}_{q_2}=\langle P_{q_2},A_{q_2}\rangle$;
+$A_{q_2}$: class=\texttt{dbo:Person};
+$P_{q_2}$ does not contain \texttt{dbo:deathCause}. \\
+13 &
+\makecell[l]{$\textsc{Covers}$\\$(\mathcal{S}_{q_2},\hat{q}_2)$} &
+\statecell{\textbf{false}; covered=$\emptyset$; uncovered=\{\emph{die} -> no coverage-compatible \texttt{dbo:deathCause}\}; next branch=\textbf{TEXT}.} \\
+14 &
+\makecell[l]{$\textsc{TextRAG}$\\$(\hat{q}_2,E_{q_2},\mathcal{T})$} &
+\statecell{retrieved text: ``Mansfield was diagnosed with extrapulmonary \textbf{\emph{tuberculosis}} in 1917; the disease claimed her life at the age of 34.''\par
+$\to a_{q_2}{=}$\emph{tuberculosis};
+$M[q_2]{\gets}$\emph{tuberculosis}.} \\
+15 &
+$\textsc{Synthesize}(Q,M)$ &
+LLM synthesis; $a{=}$\emph{Tuberculosis}. \\
+\end{longtable}
+\endgroup
+
+\section{Prompt Catalogue}
+\label{app:prompts}
+
+\definecolor{PromptBlue}{HTML}{1F5A93}
+\definecolor{PromptBlueLight}{HTML}{F1F6FB}
+\definecolor{PromptPurple}{HTML}{6D4C8D}
+\definecolor{PromptPurpleLight}{HTML}{F6F1FA}
+\definecolor{PromptGreen}{HTML}{2F6F5E}
+\definecolor{PromptGreenLight}{HTML}{F2F8F5}
+\definecolor{PromptInk}{HTML}{243342}
+\definecolor{PromptHeader}{HTML}{E6EEF7}
+
+For each prompt, we report its identifier, execution stage, and condition of
+use. The boxes below render runtime templates with placeholders; dynamic values
+such as candidate lists and retrieved passages are inserted at execution time.
+
+\begingroup
+\scriptsize
+\sffamily
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.055\linewidth}
+                  >{\raggedright\arraybackslash}p{0.16\linewidth}
+                  >{\raggedright\arraybackslash}p{0.24\linewidth}
+                  >{\raggedright\arraybackslash}p{0.49\linewidth}@{}}
+\caption{Prompt catalogue summary.}
+\label{tab:prompt-catalog}\\
+\toprule
+\rowcolor{PromptHeader}
+\textbf{ID} & \textbf{Stage} & \textbf{Prompt} &
+\textbf{Condition of use} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{PromptHeader}
+\textbf{ID} & \textbf{Stage} & \textbf{Prompt} &
+\textbf{Condition of use} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r@{}}{\emph{continued on next page}}\\
+\endfoot
+\bottomrule
+\endlastfoot
+P1 & Entity linking & Entity candidate disambiguation &
+Only when fallback entity search returns multiple DBpedia candidates for an
+unlinked mention. \\
+P2 & Routing & Schema-constrained property extraction &
+Only when deterministic keyword/schema matching is inconclusive; candidate
+properties are passed back to deterministic routing and ASK checks. \\
+P3 & Decomp. & Question decomposition &
+Used after the direct symbolic shortcut fails and decomposition is needed. \\
+P4 & Decomp. & Early stopping / accumulated facts &
+Used during decomposition to decide whether accumulated facts already answer
+the original question. \\
+P5 & SPARQL & SPARQL generation &
+Used for direct SPARQL and routed sub-question SPARQL. \\
+P6 & SPARQL & SPARQL repair &
+Used once when a generated SPARQL query errors or returns empty results. \\
+P7 & SPARQL & SPARQL result verbalization &
+Used to convert SPARQL result rows into a concise final answer. \\
+P8 & Text fallback & Whole-question answer prompt &
+Used when a whole question is routed to text or symbolic execution cannot
+answer. \\
+P9 & Text fallback & Sub-question answer prompt &
+Used when an individual decomposed sub-question is routed to text. \\
+P10 & Synthesis & Final answer synthesis &
+Used to synthesize the final answer from resolved sub-question facts. \\
+J1 & Judge & LLM-as-judge system and user prompts &
+Used only for evaluation records not handled by deterministic empty-answer,
+exact-alias, or containment pre-checks. \\
+\end{longtable}
+\endgroup
+
+\tcbset{
+  promptbox/.style={
+    enhanced,
+    breakable,
+    colback=PromptBlueLight,
+    colframe=PromptBlue,
+    colbacktitle=PromptBlue,
+    boxrule=0.45pt,
+    arc=1mm,
+    leftrule=1.2pt,
+    left=3pt,
+    right=3pt,
+    top=3pt,
+    bottom=3pt,
+    fonttitle=\sffamily\bfseries\scriptsize,
+    coltitle=white,
+    listing only,
+    listing engine=listings,
+    listing file=\jobname.fprompt,
+    listing options={
+      basicstyle=\fontsize{6.7}{7.6}\selectfont\ttfamily\color{PromptInk},
+      breaklines=true,
+      breakatwhitespace=false,
+      columns=fullflexible,
+      keepspaces=true,
+      showstringspaces=false
+    }
+  },
+  judgeprompt/.style={
+    promptbox,
+    colback=PromptPurpleLight,
+    colframe=PromptPurple,
+    colbacktitle=PromptPurple
+  }
+}
+
+\subsection{Runtime \sysname prompts}
+
+The prompts below are the active LLM templates used by the reported \sysname\
+runtime. Prompt P2 is a fallback property-enrichment prompt: it proposes
+candidate DBpedia properties, but the route is still determined by schema
+matching and ASK verification.
+\begin{tcblisting}{promptbox,title={P1. Entity candidate disambiguation}}
+Given this question: "{question}"
+Which entity best matches the mention "{mention}"?
+
+{candidate_list}
+
+Reply with ONLY the number (1-{num_candidates}) of the best match, or "none" if no candidate fits.
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P2. Schema-constrained property extraction}}
+Given this question and DBpedia schema, which properties are needed to answer it?
+
+{schema}
+
+QUESTION: {question}
+
+Output a comma-separated list of property names (no dbo:/dbp: prefix).
+Only output properties listed above. For 2-hop paths (e.g., "director's birthdate"),
+list both: director, birthDate
+If no properties can help, output: NONE
+
+Properties:
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P3. Decomposition prompt}}
+Decompose this multi-hop question into independent sub-questions.
+
+QUESTION: {question}
+ENTITIES: {entity_names}
+SCHEMA SUMMARY: {schema_summary}
+{type_hint}
+Rules:
+- Each sub-question should ask for ONE fact
+- If a sub-question needs the answer from another, mark the dependency
+- For comparison questions: extract the same property for each entity (parallel, no dependencies)
+- For bridge questions: first find the intermediate entity, then ask about its property
+- If the question is simple (single fact lookup), return exactly 1 sub-question with no dependencies
+
+Return JSON:
+{
+  "sub_questions": ["sub-Q1 text", "sub-Q2 text", ...],
+  "dependencies": [[dependent_idx, dependency_idx], ...]
+}
+
+Example - Bridge: "When was the director of Inception born?"
+{
+  "sub_questions": ["Who directed Inception?", "When was [Q0] born?"],
+  "dependencies": [[1, 0]]
+}
+
+Example - Comparison: "Who was born first, the director of X or Y?"
+{
+  "sub_questions": ["Who directed X?", "Who directed Y?",
+    "When was [Q0] born?", "When was [Q1] born?"],
+  "dependencies": [[2, 0], [3, 1]]
+}
+
+Example - Simple: "Who directed Inception?"
+{
+  "sub_questions": ["Who directed Inception?"],
+  "dependencies": []
+}
+
+Example - Nested relative clause (3-hop): "When was the region north of where X is located created?"
+{
+  "sub_questions": ["Where is X located?", "What region is immediately north of [Q0]?", "When was [Q1] created?"],
+  "dependencies": [[1, 0], [2, 1]]
+}
+
+Example - Passive voice: "Who is played by the director of Film X in Film Y?"
+{
+  "sub_questions": ["Who directed Film X?", "What role did [Q0] play in Film Y?"],
+  "dependencies": [[1, 0]]
+}
+
+Example - Possessive chain: "What is the capital of the country where X's creator was born?"
+{
+  "sub_questions": ["Who created X?", "In which country was [Q0] born?", "What is the capital of [Q1]?"],
+  "dependencies": [[1, 0], [2, 1]]
+}
+
+Additional rules for complex questions:
+- Preserve active/passive voice direction: "played BY X" -> ask "What did [Q0] play?" NOT "Who played [Q0]?"
+- For possessive chains (X's Y's Z), decompose from innermost entity outward
+- Each sub-question MUST retain qualifying context (where/who/that clauses) from the original
+
+JSON only, no explanation:
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P4. Early stopping prompt}}
+We pre-parsed the question into a list of dependencies, and the dependencies are sorted in a topological order, below is the question, the information summary, and the decomposed dependencies:
+
+Question: {question}
+
+Available Information:
+{info_summary}
+
+Decomposed dependencies:
+{dependencies}
+
+Current dependency to be answered:
+{current_dependency}
+
+Please analyze the question and the information summary, and the decomposed dependencies, and answer the following questions:
+Please analyze:
+1. Can the question be answered completely with this information? (Yes/No)
+2. Summarize our current understanding based on available information.
+
+Please format your response as a JSON object with these keys:
+- "can_answer": boolean
+- "current_understanding": string
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P5. SPARQL generation prompt}}
+You are a SPARQL expert for DBpedia. Generate a query to answer the question.
+
+{schema}
+{known_facts_block}
+QUESTION: {question}
+
+RULES:
+1. Use the EXACT entity URIs provided in the schema
+2. For multi-hop queries, chain triple patterns using dbo: properties (they return URIs, not strings).
+   Use the "2-Hop chains" section in the schema to identify valid chains.
+   Example: if schema shows dbo:director -> Person: birthDate, write:
+   ?film dbo:director ?person . ?person dbo:birthDate ?date .
+3. Prefer dbo: properties for multi-hop joins; only use dbp: for single-hop leaf values
+4. Always add LIMIT 100
+5. For comparison questions (who/which was born first, etc.), return data for BOTH entities so results can be compared
+6. If an entity URI contains special characters (apostrophes, commas, parentheses), use full IRI syntax <http://dbpedia.org/resource/...> instead of dbr: prefix
+7. If known facts provide entity URIs, use those URIs directly in your query
+8. Generate ONLY the SPARQL query, no explanation
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P6. SPARQL repair prompt}}
+Your previous SPARQL query returned {problem}.
+
+Previous query:
+{sparql}
+
+Fix the query using the schema below.
+
+{schema}
+
+QUESTION: {question}
+
+Generate ONLY the corrected SPARQL query:
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P7. SPARQL result verbalization prompt}}
+Given the question and SPARQL query results from DBpedia, provide the answer.
+Base your answer ONLY on the SPARQL results shown below, not on your own knowledge.
+For comparison questions: if data is missing for one of the entities being compared, say "could not determine" instead of guessing.
+
+Question: {question}
+SPARQL Results:
+{results}
+
+End your response with FINAL ANSWER: <your answer>
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P8. Whole-question text fallback prompt}}
+Answer this question using the sources below.
+
+Question: {question}
+
+{kg_facts}Wikipedia text:
+{context}
+
+Instructions:
+- Knowledge graph facts (if present) are verified structured data -- trust them
+- Use Wikipedia text to fill gaps not covered by KG facts
+- Show brief step-by-step reasoning
+- End with exactly: FINAL ANSWER: <answer>
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P9. Sub-question text fallback prompt}}
+Answer this sub-question using the sources below.
+
+Sub-question: {question}
+
+{kg_facts}Wikipedia text:
+{context}
+
+Instructions:
+- Knowledge graph facts (if present) are verified structured data -- trust them
+- Use Wikipedia text to fill gaps not covered by KG facts
+- Give a brief, factual answer
+- End with exactly: FINAL ANSWER: <answer>
+\end{tcblisting}
+
+\begin{tcblisting}{promptbox,title={P10. Final answer synthesis prompt}}
+You must give ONLY the direct answer in the most concise way possible.
+DO NOT explain or provide any additional context.
+If the answer is a simple yes/no, just say "Yes." or "No."
+If the answer is a name, just give the name.
+If the answer is a date, just give the date.
+If the answer is a number, just give the number.
+If the answer requires a brief phrase, make it as concise as possible.
+
+IMPORTANT -- the sub-questions below form a reasoning chain:
+- Earlier sub-questions find intermediate entities; later ones use those entities.
+- The LAST sub-question's answer is usually what the original question asks for.
+- Do NOT return an intermediate entity when a later sub-question has resolved the final answer.
+- If a sub-question returns a list, pick the item that satisfies the condition in the original question.
+- For yes/no questions with multiple sub-questions, combine ALL sub-answers (both must be true for "yes").
+- If any sub-question is marked [UNKNOWN], the chain is incomplete. Do NOT fabricate
+  a final answer by skipping the gap -- respond with: FINAL ANSWER: unknown
+
+[Inserted only when is_comparison=True]
+When comparing countries or nationalities:
+- If answers contain city or state names, identify which country they belong to
+- Compare at the country level, not city/state level
+- Historical states (East Germany, Ottoman Empire) map to their modern successor
+
+Question: {question}
+
+Information Summary:
+{info_summary}
+
+End your response with exactly: FINAL ANSWER: <your answer>
+\end{tcblisting}
+
+\subsection{Evaluation judge prompt}
+
+Prompt J1 is not a \sysname\ runtime prompt. It is used only by the evaluation
+script after deterministic checks have failed to decide the record: empty
+predictions are false, exact gold-or-alias matches are true, and a normalized
+gold-in-prediction containment pre-check can return true before the LLM call.
+The LLM judge applies the benchmark-equivalence rules shown below, including
+alias, containment, and selected location-normalization cases; it is stricter
+than free-form semantic similarity, but it is not an exact-match metric.
+
+\begin{tcblisting}{judgeprompt,title={J1. LLM-as-judge prompt}}
+System:
+You are a strict evaluation judge for a QA benchmark. Determine if two answers refer to the exact same entity or fact. Precision matters more than recall -- when in doubt, answer no.
+
+User:
+Determine if the predicted answer is semantically equivalent to the gold answer.
+
+Question: {question}
+Gold answer: {gold}
+Predicted answer: {pred}
+
+Matching rules (answer YES):
+- Same entity/fact with different surface forms (e.g. "July 16, 2013" vs "2013-07-16")
+- Gold contained in a more specific predicted answer (e.g. "Munich" vs "Nymphenburg Palace, Munich")
+- Added title/honorific/disambiguator (e.g. "Henry III" vs "Henry III, Holy Roman Emperor")
+- Full formal name of same person (e.g. "Giovanni Mario" vs "Giovanni Mario de Candia")
+- Administrative region containing the exact gold location (e.g. gold "Theni" vs pred "Theni district")
+- Unambiguous well-known city with or without country (e.g. gold "Florence, Italy" vs pred "Florence")
+- Nationality adjective matching country name (e.g. gold "Italy" vs pred "Italian")
+
+Rejection rules (answer NO):
+- Wrong, empty, or completely different entity
+- Predicted is broader/vaguer than gold (e.g. gold "Taipei Medical University Hospital" vs pred "Taipei")
+- Year only when gold has full date (e.g. gold "December 25, 1757" vs pred "1757")
+- Related but distinct entities (e.g. gold "Hollywood" vs pred "Los Angeles")
+- Same first name but different person (e.g. gold "Paris" vs pred "Paris Hilton")
+- Predicted lists multiple answers and gold is NOT clearly among them
+- Completely different location even if in same region (e.g. gold "Theni" vs pred "Mallingapuram")
+
+First, explain in ONE sentence why the answers match or don't.
+Then write your verdict on a new line: VERDICT: yes or VERDICT: no
+\end{tcblisting}
 
 \section{Cross-benchmark routing breakdown}
 \label{sec:routing-breakdown}
 
-Figure~\ref{fig:routing-cross-benchmark} in the main text shows
-the Q-level and Sub-Q-level routing distributions;
-Table~\ref{tab:routing-cross-benchmark-appendix} gives the
-underlying routing counts.
+The main paper plots the Q-level and Sub-Q-level routing distributions.
+Table~\ref{tab:routing-cross-benchmark-appendix} gives the underlying
+routing counts.
 
 \begin{table}[!ht]
 \caption{Per-benchmark routing statistics over 1{,}000 questions each.
@@ -219,3 +1047,6 @@ that boundary: (2) decomposition errors are bidirectional,
 with both under- and over-decomposition observable; (3)
 routing bypass on multi-hop questions is the cheapest
 universal fix ($65$ cases, single guard).
+
+
+\end{document}
