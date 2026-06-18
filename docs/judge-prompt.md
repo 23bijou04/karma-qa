@@ -1,9 +1,5 @@
 # Judge Prompt
 
-This file contains only the evaluation judge prompt used after deterministic
-checks have failed. The broader evaluation procedure is documented in
-`docs/llm-as-judge.md`.
-
 Source: `scripts/judge_hybrid_eval.py`
 
 ## System Prompt

@@ -1,7 +1,27 @@
 # KARMA Runtime System Prompts
 
 This file collects the active LLM prompt templates used by the reported KARMA
-runtime. 
+runtime. These are current runtime templates, not historical prompt snapshots
+from earlier evaluation traces. Evaluation-only judge prompts are kept
+separately in `docs/judge-prompt.md`.
+
+## Source map
+
+All prompts below are sent through `llm_provider.call_llm()` as user messages
+unless noted otherwise.
+
+| ID | Source | Runtime use |
+|---|---|---|
+| P1 | `dbpedia/entity_linker.py`, `DBpediaEntityLinker._llm_rerank_candidates()` | Builds the candidate-disambiguation f-string after fallback entity search returns multiple DBpedia candidates. |
+| P2 | `routing.py`, `PROPERTY_EXTRACTION_PROMPT` | Used by `_extract_properties_llm()` after deterministic property matching is inconclusive. |
+| P3 | `logicrag_decomposition.py`, `DECOMPOSE_PROMPT` | Used by `_decompose_subquestions()` to produce sub-questions and dependencies. |
+| P4 | `logicrag_prompts.py`, `DEPENDENCY_RAG_PROMPT` | Used by `logicrag_decomposition._check_can_answer()` for early stopping during decomposition. |
+| P5 | `sparql_solver.py`, `UNIFIED_SPARQL_PROMPT` | Used by `sparql_solver.solve()` for direct and sub-question SPARQL generation. |
+| P6 | `sparql_evaluation.py`, `SPARQL_RETRY_PROMPT` | Imported by `sparql_solver.solve()` and used once after SPARQL errors or empty results. |
+| P7 | `sparql_evaluation.py`, `ANSWER_PROMPT` | Imported by `sparql_solver.solve()` to verbalize SPARQL result rows. |
+| P8 | `text_solver.py`, `TEXT_REASON_PROMPT` | Used by `text_solver.solve()` for whole-question text fallback. |
+| P9 | `text_solver.py`, `TEXT_SUBQ_PROMPT` | Used by `text_solver.solve()` for decomposed sub-question text fallback. |
+| P10 | `logicrag_prompts.py`, `get_final_answer_prompt()` | Used by `logicrag_decomposition._generate_final_answer()`; comparison instructions are conditionally inserted. |
 
 ## P1. Entity candidate disambiguation
 

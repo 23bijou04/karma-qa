@@ -1,4 +1,6 @@
-# Table 2 Trace Examples on more routing direction
+# Table 2 Normalized Operator Trace Examples
+
+These examples are normalized operator traces: they preserve the routed operator sequence used for explanation, but raw route metadata can differ across runs because entity linking and ASK verification are live service calls.
 
 ## Decomp: all SPARQL
 
@@ -8,7 +10,7 @@ Question: "Who was born first out of Marco De Luigi and Fabio Maistro?"
 |---:|---|---|
 | 1 | `EntityLink(Q)` | `E_Q = {dbr:Marco_de_Luigi, dbr:Fabio_Maistro}` |
 | 2 | `SchemaProject(E_Q,Q)` | For each entity, `A_Q`: class=`dbo:Person`; `P_Q`: `{dbo:birthDate, ...}` |
-| 3 | `Covers(S_Q,Q)` | `covered={born -> dbo:birthDate for both entities}`; `uncovered={born first -> no accepted whole-question comparison route}`; next branch=`DECOMPOSE` |
+| 3 | `Covers(S_Q,Q)` | normalized predicate evidence=`{born -> dbo:birthDate for Marco/Fabio}`; stored run branch=`DECOMPOSE` because noisy whole-question entity coverage prevented the direct comparison route; note that clean coverage can route this question directly as `rule:direct_date_comparison` |
 | 4 | `Decompose(Q)` | `D=({q_1,q_2}, empty)`, ordered as `q_1,q_2`; `q_1="When was Marco De Luigi born?"`; `q_2="When was Fabio Maistro born?"`; `M=empty` |
 | 5 | `Ground(q_1,M)` | `q_hat_1="When was Marco De Luigi born?"` |
 | 6 | `EntityLink(q_hat_1)` | `E_{q_1}={dbr:Marco_de_Luigi}` |
@@ -50,7 +52,7 @@ Question: "Where was the director of film Age-Old Friends born?"
 |---:|---|---|
 | 1 | `EntityLink(Q)` | `E_Q={dbr:Age-Old_Friends}` |
 | 2 | `SchemaProject(E_Q,Q)` | `A_Q`: class=`dbo:Film`; `P_Q`: `{dbo:director, ...}`; candidate bridge path: `dbo:director -> dbo:birthPlace` |
-| 3 | `Covers(S_Q,Q)` | `false`; `covered={director -> dbo:director}`; `uncovered={born -> unavailable bridge dbo:director -> dbo:birthPlace}`; next branch=`DECOMPOSE` |
+| 3 | `Covers(S_Q,Q)` | `false`; `covered={director -> dbo:director}`; recognized bridge candidate=`dbo:director -> dbo:birthPlace`; instance ASK result=`ask_missing`; next branch=`DECOMPOSE` |
 | 4 | `Decompose(Q)` | `D=({q_1,q_2}, q_1 -> q_2)`; `q_1="Who directed Age-Old Friends?"`; `q_2="Where was [q_1] born?"`; `M=empty` |
 | 5 | `Ground(q_1,M)` | `q_hat_1="Who directed Age-Old Friends?"` |
 | 6 | `EntityLink(q_hat_1)` | `E_{q_1}={dbr:Age-Old_Friends}` |
@@ -74,7 +76,7 @@ WHERE {
 LIMIT 100
 ```
 
-## Text only
+## Decomp: text-resolved sub-questions
 
 Question: "Why did John Middleton Murry's wife die?"
 
