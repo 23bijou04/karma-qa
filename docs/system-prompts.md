@@ -14,14 +14,14 @@ unless noted otherwise.
 |---|---|---|
 | P1 | `dbpedia/entity_linker.py`, `DBpediaEntityLinker._llm_rerank_candidates()` | Builds the candidate-disambiguation f-string after fallback entity search returns multiple DBpedia candidates. |
 | P2 | `routing.py`, `PROPERTY_EXTRACTION_PROMPT` | Used by `_extract_properties_llm()` after deterministic property matching is inconclusive. |
-| P3 | `logicrag_decomposition.py`, `DECOMPOSE_PROMPT` | Used by `_decompose_subquestions()` to produce sub-questions and dependencies. |
+| P3 | `logicrag_decomposition.py`, `DECOMPOSE_PROMPT` | Used by `_decompose_subquestions()` to produce KARMA sub-questions and dependencies. |
 | P4 | `logicrag_prompts.py`, `DEPENDENCY_RAG_PROMPT` | Used by `logicrag_decomposition._check_can_answer()` for early stopping during decomposition. |
 | P5 | `sparql_solver.py`, `UNIFIED_SPARQL_PROMPT` | Used by `sparql_solver.solve()` for direct, sub-question, and pre-check SPARQL generation. |
 | P6 | `sparql_evaluation.py`, `SPARQL_RETRY_PROMPT` | Imported by `sparql_solver.solve()` and used once after SPARQL errors or empty results. |
-| P7 | `sparql_evaluation.py`, `ANSWER_PROMPT` | Imported by `sparql_solver.solve()` to verbalize SPARQL result rows. |
+| P7 | `sparql_evaluation.py`, `ANSWER_PROMPT` | Imported by `sparql_solver.solve()` to verbalize direct SPARQL result rows; this is result extraction/verbalization, not KARMA synthesis. |
 | P8 | `text_solver.py`, `TEXT_REASON_PROMPT` | Used by `text_solver.solve()` for whole-question text fallback. |
 | P9 | `text_solver.py`, `TEXT_SUBQ_PROMPT` | Used by `text_solver.solve()` for decomposed sub-question text fallback. |
-| P10 | `logicrag_prompts.py`, `get_final_answer_prompt()` | Used by `logicrag_decomposition._generate_final_answer()`; comparison instructions are conditionally inserted. |
+| P10 | `logicrag_prompts.py`, `get_final_answer_prompt()` | KARMA final synthesis prompt: used by `logicrag_decomposition._generate_final_answer()` to synthesize one answer from resolved sub-question facts; comparison instructions are conditionally inserted. |
 
 ## P1. Entity candidate disambiguation
 
@@ -59,7 +59,7 @@ Properties:
 
 ## P3. Decomposition prompt
 
-Used whenever the orchestrator attempts LogicRAG decomposition after routing
+Used whenever the orchestrator attempts KARMA decomposition after routing
 and any direct SPARQL attempt. This includes explicit `DECOMPOSE` routes,
 failed direct-SPARQL routes, and `TEXT` routes before final whole-question text
 fallback.
@@ -205,7 +205,9 @@ Generate ONLY the corrected SPARQL query:
 
 ## P7. SPARQL result verbalization prompt
 
-Used to convert SPARQL result rows into a concise final answer.
+Used to convert direct SPARQL result rows into a concise answer. This is an
+answer extraction/verbalization step over one SPARQL result table; it is not
+the KARMA final synthesis prompt for decomposed questions.
 
 ```text
 Given the question and SPARQL query results from DBpedia, provide the answer.
@@ -258,9 +260,14 @@ Instructions:
 - End with exactly: FINAL ANSWER: <answer>
 ```
 
-## P10. Final answer synthesis prompt
+## P10. KARMA final answer synthesis prompt
 
-Used to synthesize the final answer from resolved sub-question facts.
+This is the final synthesis prompt for KARMA's decomposed execution.
+After the system resolves sub-questions, `logicrag_decomposition._generate_final_answer()`
+passes the accumulated `Information Summary` here to synthesize one final answer
+for the original question. This prompt combines resolved sub-question facts and
+refuses incomplete chains marked `[UNKNOWN]`; it is distinct from P7, which only
+verbalizes direct SPARQL result rows.
 
 ```text
 You must give ONLY the direct answer in the most concise way possible.
