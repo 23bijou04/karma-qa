@@ -2,7 +2,7 @@
 
 This file collects the active LLM prompt templates used by the reported KARMA
 runtime. These are current runtime templates, not historical prompt snapshots
-from earlier evaluation traces. Evaluation-only judge prompts are kept
+from earlier evaluation traces. The evaluation-only judge protocol is kept
 separately in `docs/judge-prompt.md`.
 
 ## Source map
@@ -16,7 +16,7 @@ unless noted otherwise.
 | P2 | `routing.py`, `PROPERTY_EXTRACTION_PROMPT` | Used by `_extract_properties_llm()` after deterministic property matching is inconclusive. |
 | P3 | `logicrag_decomposition.py`, `DECOMPOSE_PROMPT` | Used by `_decompose_subquestions()` to produce sub-questions and dependencies. |
 | P4 | `logicrag_prompts.py`, `DEPENDENCY_RAG_PROMPT` | Used by `logicrag_decomposition._check_can_answer()` for early stopping during decomposition. |
-| P5 | `sparql_solver.py`, `UNIFIED_SPARQL_PROMPT` | Used by `sparql_solver.solve()` for direct and sub-question SPARQL generation. |
+| P5 | `sparql_solver.py`, `UNIFIED_SPARQL_PROMPT` | Used by `sparql_solver.solve()` for direct, sub-question, and pre-check SPARQL generation. |
 | P6 | `sparql_evaluation.py`, `SPARQL_RETRY_PROMPT` | Imported by `sparql_solver.solve()` and used once after SPARQL errors or empty results. |
 | P7 | `sparql_evaluation.py`, `ANSWER_PROMPT` | Imported by `sparql_solver.solve()` to verbalize SPARQL result rows. |
 | P8 | `text_solver.py`, `TEXT_REASON_PROMPT` | Used by `text_solver.solve()` for whole-question text fallback. |
@@ -59,7 +59,10 @@ Properties:
 
 ## P3. Decomposition prompt
 
-Used after the direct symbolic shortcut fails and decomposition is needed.
+Used whenever the orchestrator attempts LogicRAG decomposition after routing
+and any direct SPARQL attempt. This includes explicit `DECOMPOSE` routes,
+failed direct-SPARQL routes, and `TEXT` routes before final whole-question text
+fallback.
 
 ```text
 Decompose this multi-hop question into independent sub-questions.
@@ -157,7 +160,8 @@ Please format your response as a JSON object with these keys:
 
 ## P5. SPARQL generation prompt
 
-Used for direct SPARQL and routed sub-question SPARQL.
+Used for direct SPARQL, routed sub-question SPARQL, and the direct-property
+pre-check path before final whole-question text fallback.
 
 ```text
 You are a SPARQL expert for DBpedia. Generate a query to answer the question.
