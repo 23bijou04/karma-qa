@@ -1,4 +1,4 @@
-# KARMA Runtime System Prompts
+# KARMA Prompts
 
 ## DECOMPOSE
 
@@ -115,7 +115,7 @@ IMPORTANT -- the sub-questions below form a reasoning chain:
 - For yes/no questions with multiple sub-questions, combine ALL sub-answers (both must be true for "yes").
 - If any sub-question is marked [UNKNOWN], the chain is incomplete. Do NOT fabricate
   a final answer by skipping the gap -- respond with: FINAL ANSWER: unknown
-{comparison_instructions}
+[Inserted only when is_comparison=True]
 When comparing countries or nationalities:
 - If answers contain city or state names, identify which country they belong to
 - Compare at the country level, not city/state level

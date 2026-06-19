@@ -2,6 +2,8 @@
 
 A hybrid multi-hop QA system combining DBpedia SPARQL retrieval, Wikipedia text retrieval, and LLM-driven sub-question decomposition. Evaluated on 2WikiMultiHopQA, HotPotQA, and MuSiQue.
 
+Prompt documentation is split into two reader-facing notes: [docs/system-prompts.md](docs/system-prompts.md) KARMA prompts, and [docs/judge-prompt.md](docs/judge-prompt.md) documents the LLM-as-judge protocol and judge prompt used for evaluation.
+
 ## Key Results
 
 Evaluated on 1000-question subsets (from the [LinearRAG](https://github.com/Zly0523/linear-rag) evaluation set). All systems judged with the same LLM judge (gemma3:12b) for fair comparison. **Bold = column maximum.**
