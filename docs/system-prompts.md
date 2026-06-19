@@ -126,5 +126,5 @@ Question: {question}
 Information Summary:
 {info_summary}
 
-End your response with exactly: FINAL ANSWER: <your answer>
+End your response with exactly: FINAL ANSWER: [answer]
 ```
