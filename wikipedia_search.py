@@ -12,16 +12,34 @@ API utilisée : MediaWiki Action API  ->  https://en.wikipedia.org/w/api.php
 Utilisation en console (depuis le dossier du projet) :
    python wikipedia_search.py        -> teste les 50 premières sous-questions 2Wiki
    python wikipedia_search.py 5      -> teste seulement les 5 premières (plus rapide)
+
+Avant de lancer, mets ton adresse mail (Wikipédia demande un contact) :
+   export WIKI_UA_CONTACT="prenom.nom@etu.univ-nantes.fr"
 """
 
 # ----------------------------------------------------------------------
 # Imports : les bibliothèques dont on a besoin
 # ----------------------------------------------------------------------
 import json        # lire le fichier de sous-questions (format JSON)
-import re          # remplacer les [Q0] dans les sous-questions
+import os          # lire la variable WIKI_UA_CONTACT
+import re          # nettoyer les sous-questions, remplacer les [Q0]
 import sys         # lire le nombre de sous-questions tapé dans la console
 import time        # faire des pauses entre les requêtes
 import requests    # envoyer les requêtes HTTP à Wikipédia (pip install requests)
+
+
+# ----------------------------------------------------------------------
+# Mots à retirer avant la recherche (mots interrogatifs et petits mots).
+# Ils ne servent pas à trouver la page et faussent les résultats :
+# "Why did Katherine Mansfield die?" trouvait l'album "Why Should the Fire Die?".
+# ----------------------------------------------------------------------
+STOPWORDS = {
+    "who", "whom", "whose", "what", "when", "where", "which", "why", "how",
+    "is", "are", "was", "were", "be", "been", "being", "am",
+    "do", "does", "did", "has", "have", "had",
+    "the", "a", "an", "of", "in", "on", "at", "to", "for", "with", "from", "by",
+    "and", "or", "that", "this", "it", "its", "as", "s",
+}
 
 
 # ======================================================================
@@ -32,17 +50,14 @@ class WikipediaSearch:
     """Envoie des requêtes à l'API Wikipédia et renvoie la liste des pages."""
 
     # Adresse de l'API Wikipédia en anglais (2WikiMultiHopQA est en anglais).
-    # C'est la partie avant le "?" des liens qu'on a testés dans le navigateur.
     API_URL = "https://en.wikipedia.org/w/api.php"
 
-    def __init__(self, top_k=5, delay=1.0, timeout=15, max_retries=3):
+    def __init__(self, top_k=5, delay=1.0, timeout=15, max_retries=4):
         """Prépare le chercheur. Appelé automatiquement quand on écrit WikipediaSearch().
 
         top_k       : nombre de pages à renvoyer par sous-question (5 d'après le sujet)
-        delay       : pause minimum (en secondes) entre deux requêtes,
-                      pour ne pas être bloqué par Wikipédia
-        timeout     : temps maximum (en secondes) d'attente d'une réponse,
-                      pour ne pas rester bloqué si Wikipédia ne répond pas
+        delay       : pause minimum (en secondes) entre deux requêtes
+        timeout     : temps maximum (en secondes) d'attente d'une réponse
         max_retries : nombre de tentatives si une requête échoue
         """
         self.top_k = top_k
@@ -50,16 +65,19 @@ class WikipediaSearch:
         self.timeout = timeout
         self.max_retries = max_retries
 
-        # Une "session" garde la connexion ouverte entre les requêtes (plus rapide)
-        # et permet de fixer des réglages communs à toutes les requêtes.
+        # Une "session" garde la connexion ouverte entre les requêtes (plus rapide).
         self.session = requests.Session()
 
-        # Wikipédia demande que chaque programme se présente (User-Agent).
-        # Sans ça, elle peut refuser les requêtes (erreur 403).
-        self.session.headers["User-Agent"] = "KarmaLive/1.0 (projet universitaire)"
+        # CORRECTION : Wikipédia demande un User-Agent avec un CONTACT (mail ou site).
+        # Sans contact, elle peut limiter ou refuser les requêtes (codes 403 / 429).
+        contact = os.getenv("WIKI_UA_CONTACT", "projet-karma-live")
+        self.session.headers["User-Agent"] = f"KarmaLive/1.0 ({contact}) python-requests"
 
-        # Heure de la dernière requête envoyée (0 = aucune pour l'instant).
-        self.last_request = 0
+        self.last_request = 0   # heure de la dernière requête envoyée
+
+        # Compteurs pour l'évaluation (le sujet demande les appels HTTP et les échecs)
+        self.n_requests = 0
+        self.n_failures = 0
 
     # ------------------------------------------------------------------
     # MÉTHODE PRINCIPALE : celle que le reste du programme appellera
@@ -68,153 +86,172 @@ class WikipediaSearch:
         """Renvoie la liste des top_k pages Wikipédia pour une sous-question.
 
         Étapes :
-          1. chercher les titres des pages (requête 1)
+          1. chercher les titres des pages (requête 1), avec des mots-clés
           2. pour chaque titre, lire la page (requête 2)
           3. garder les pages qui ont un texte, et noter leur rang
 
-        Renvoie une liste de dictionnaires, par exemple :
-          [{"title": "Ken Burns", "text": "...", "revid": 123, "rank": 1, ...}, ...]
-        Renvoie une liste vide [] si rien n'est trouvé ou si Wikipédia ne répond pas.
+        Renvoie une liste de dictionnaires, ou [] si rien n'est trouvé.
         """
+        titles, search_query = self.search_titles(sub_question)
+
         pages = []
-
-        # enumerate(..., start=1) donne le rang (1, 2, 3...) en même temps que le titre
-        for rank, title in enumerate(self.search_titles(sub_question), start=1):
+        for rank, title in enumerate(titles, start=1):
             page = self.get_page(title)
-
-            # On ignore la page si elle n'existe plus (None) ou si son texte est vide
-            if page and page["text"]:
-                page["rank"] = rank              # position dans les résultats de la recherche
-                page["query"] = sub_question     # provenance : quelle sous-question l'a trouvée
-                pages.append(page)
-
+            if page is None:
+                # CORRECTION : on affiche la page perdue au lieu de la cacher
+                print(f"   [page perdue] {title}")
+                continue
+            if not page["text"]:
+                print(f"   [page vide] {title}")
+                continue
+            page["rank"] = rank                    # position dans les résultats
+            page["query"] = sub_question           # provenance : la sous-question d'origine
+            page["search_query"] = search_query    # provenance : ce qu'on a vraiment cherché
+            pages.append(page)
         return pages
 
     # ------------------------------------------------------------------
     # REQUÊTE 1 : la recherche
     # ------------------------------------------------------------------
     def search_titles(self, sub_question):
-        """Recherche par mots-clés. Renvoie la liste des TITRES des pages trouvées.
+        """Recherche par mots-clés. Renvoie (liste des titres, requête utilisée).
 
-        Équivaut au lien testé dans le navigateur :
-        https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=...&srlimit=5&format=json
+        CORRECTION : on n'envoie plus la sous-question telle quelle.
+        On essaie plusieurs requêtes, de la plus précise à la plus large,
+        et on garde la première qui donne des résultats :
+          1. les mots-clés         "Who directed The Devil'S Hairpin?" -> "directed Devil Hairpin"
+          2. les noms propres      (mots qui commencent par une majuscule) -> "Devil Hairpin"
+          3. la phrase entière     (en dernier recours)
         """
-        # Sous-question vide -> inutile d'interroger Wikipédia
         if not sub_question.strip():
-            return []
+            return [], ""
 
-        # Les paramètres de l'URL, écrits sous forme de dictionnaire.
-        # requests construit l'adresse complète tout seul.
-        data = self._request({
-            "action": "query",          # on interroge Wikipédia
-            "list": "search",           # on fait une recherche
-            "srsearch": sub_question,   # ce qu'on cherche
-            "srlimit": self.top_k,      # combien de résultats (5)
-            "srnamespace": 0,           # 0 = articles seulement (pas les pages "Discussion:", etc.)
-        })
-
-        # La requête a échoué -> aucune page
-        if data is None:
-            return []
-
-        # La liste des résultats est dans  query -> search  (vu à l'étape 1).
-        # Chaque résultat contient ns, title, pageid, size, wordcount, snippet, timestamp :
-        # ici on ne garde que le titre.
-        return [result["title"] for result in data["query"]["search"]]
+        for query in candidate_queries(sub_question):
+            data = self._request({
+                "action": "query",
+                "list": "search",
+                "srsearch": query,        # ce qu'on cherche
+                "srlimit": self.top_k,    # combien de résultats (5)
+                "srnamespace": 0,         # 0 = articles seulement
+            })
+            if data is None:
+                continue                  # requête échouée -> on essaie la suivante
+            titles = [result["title"] for result in data["query"]["search"]]
+            if titles:
+                return titles, query
+        return [], ""
 
     # ------------------------------------------------------------------
     # REQUÊTE 2 : la lecture d'une page
     # ------------------------------------------------------------------
     def get_page(self, title):
-        """Lit une page à partir de son titre. Renvoie un dictionnaire, ou None si la page n'existe pas.
-
-        Équivaut au lien testé dans le navigateur :
-        https://en.wikipedia.org/w/api.php?action=query&prop=extracts|revisions&explaintext=1
-            &redirects=1&rvprop=ids|timestamp&titles=Ken Burns&format=json&formatversion=2
-        """
+        """Lit une page à partir de son titre. Renvoie un dictionnaire, ou None."""
         data = self._request({
             "action": "query",
             "titles": title,                  # la page à lire
-            "prop": "extracts|revisions",     # le texte ET les infos de version (le | sépare les deux)
+            "prop": "extracts|revisions",     # le texte ET les infos de version
             "explaintext": 1,                 # texte brut au lieu de HTML
-            "redirects": 1,                   # suivre les redirections ("Zzzzzz" -> vraie page)
-            "rvprop": "ids|timestamp",        # pour la version : son numéro et sa date
-            # Pas de "exintro" : on veut tout le texte.
-            # (Rappel : exintro=0 l'activerait quand même, il faut l'enlever complètement.)
+            "redirects": 1,                   # suivre les redirections
+            "rvprop": "ids|timestamp",        # numéro et date de la version
+            # Pas de "exintro" : on veut tout le texte (exintro=0 l'activerait quand même).
         })
-
-        # La requête a échoué
         if data is None:
             return None
 
-        # Avec formatversion=2, "pages" est une LISTE. On n'a demandé qu'une page -> la première.
+        # Avec formatversion=2, "pages" est une LISTE. On n'a demandé qu'une page.
         page = data["query"]["pages"][0]
 
-        # Page inexistante ("missing") ou titre interdit ("invalid") -> rien
+        # Page inexistante ou titre interdit
         if page.get("missing") or page.get("invalid"):
             return None
 
-        # Les infos de version sont dans une liste "revisions" ; on prend la première.
-        # [{}] = valeur par défaut si jamais "revisions" est absent (évite une erreur).
         revision = page.get("revisions", [{}])[0]
-
-        # On ne garde que les informations utiles (voir le tableau des champs)
         return {
             "title": page["title"],                   # vrai titre (après redirection)
             "pageid": page["pageid"],                 # numéro unique de la page
             "text": page.get("extract", ""),          # le texte -> pour le découpage en passages
             "revid": revision.get("revid"),           # numéro de version -> cache et provenance
-            "timestamp": revision.get("timestamp"),   # date de cette version -> provenance
+            "timestamp": revision.get("timestamp"),   # date de cette version
             "url": "https://en.wikipedia.org/wiki/" + page["title"].replace(" ", "_"),
         }
 
     # ------------------------------------------------------------------
     # ENVOI D'UNE REQUÊTE (utilisé par les deux requêtes ci-dessus)
-    # Le "_" au début du nom signifie : méthode interne, pas à appeler de l'extérieur.
     # ------------------------------------------------------------------
     def _request(self, params):
-        """Envoie une requête à l'API et renvoie la réponse JSON (un dictionnaire).
+        """Envoie une requête à l'API et renvoie la réponse JSON, ou None si tout échoue.
 
-        Protections (demandées dans le chantier 1 du sujet) :
-          - pause entre deux requêtes (limitation de débit)
-          - délai maximum d'attente (timeout)
-          - nouvelles tentatives en cas d'échec, avec une attente de plus en plus longue
-        Renvoie None si toutes les tentatives échouent : le programme ne plante pas.
+        Protections : pause entre les requêtes, délai maximum, nouvelles tentatives.
+        CORRECTION : chaque échec est affiché (avant, il était caché).
         """
-        # Paramètres communs à toutes les requêtes :
-        #   format=json       -> réponse en JSON
-        #   formatversion=2   -> JSON plus simple ("pages" est une liste, "missing": true)
-        params.update({"format": "json", "formatversion": 2})
+        params = {**params, "format": "json", "formatversion": 2}
+        what = params.get("titles") or params.get("srsearch")   # pour les messages
 
-        for attempt in range(self.max_retries):        # attempt = 0, 1, 2
+        for attempt in range(1, self.max_retries + 1):          # 1, 2, 3, 4
 
             # 1) Pause si la dernière requête est trop récente
             wait = self.delay - (time.time() - self.last_request)
             if wait > 0:
                 time.sleep(wait)
             self.last_request = time.time()
+            self.n_requests += 1
 
             # 2) Envoi de la requête
+            retry_after = None
             try:
                 response = self.session.get(self.API_URL, params=params, timeout=self.timeout)
+                if response.status_code == 200:
+                    data = response.json()
+                    if "error" not in data:
+                        return data                                   # succès
+                    problem = "erreur API : " + data["error"].get("info", "?")
+                else:
+                    # 429 = trop de requêtes, 403 = refusé, 5xx = panne de Wikipédia
+                    problem = f"code {response.status_code}"
+                    retry_after = response.headers.get("Retry-After")
+            except requests.RequestException as e:
+                problem = f"pas de réponse ({type(e).__name__})"   # réseau, délai dépassé...
+            except ValueError:
+                problem = "réponse illisible (pas du JSON)"
 
-                # 200 = réponse correcte. On vérifie aussi que Wikipédia ne signale pas
-                # d'erreur dans le JSON (paramètre mal écrit, par exemple).
-                if response.status_code == 200 and "error" not in response.json():
-                    return response.json()
+            print(f"   [échec {attempt}/{self.max_retries}] {what} -> {problem}")
 
-                # Sinon (429 = trop de requêtes, 403 = refusé, 500 = panne...) : on réessaie
+            # 3) Attente avant de réessayer : 2 s, 4 s, 8 s...
+            #    (ou la durée demandée par Wikipédia dans Retry-After)
+            if attempt < self.max_retries:
+                pause = 2 ** attempt
+                if retry_after and retry_after.isdigit():
+                    pause = max(pause, int(retry_after))
+                time.sleep(pause)
 
-            except (requests.RequestException, ValueError):
-                # RequestException : pas de réseau, délai dépassé...
-                # ValueError       : la réponse n'est pas du JSON
-                pass   # on ne fait rien ici : on passe à la tentative suivante
-
-            # 3) Attente avant de réessayer : 1 s, puis 2 s, puis 4 s
-            time.sleep(2 ** attempt)
-
-        # Toutes les tentatives ont échoué
+        self.n_failures += 1
         return None
+
+
+# ======================================================================
+# PRÉPARATION DE LA REQUÊTE DE RECHERCHE
+# ======================================================================
+
+def candidate_queries(sub_question):
+    """Renvoie les requêtes à essayer, de la plus précise à la plus large (sans doublon).
+
+    "Who directed The Devil'S Hairpin?" donne :
+       1. "directed Devil Hairpin"          (mots-clés)
+       2. "Devil Hairpin"                   (noms propres)
+       3. "Who directed The Devil'S Hairpin?" (phrase entière)
+    """
+    # Enlever les possessifs ('s) puis tout ce qui n'est pas une lettre, un chiffre ou un tiret
+    text = re.sub(r"['’][sS]\b", "", sub_question)
+    words = re.findall(r"[\w-]+", text)
+
+    keywords = [w for w in words if w.lower() not in STOPWORDS]
+    names = [w for w in keywords if w[0].isupper() or w[0].isdigit()]
+
+    queries = []
+    for q in (" ".join(keywords), " ".join(names), sub_question.strip()):
+        if q and q not in queries:
+            queries.append(q)
+    return queries
 
 
 # ======================================================================
@@ -224,12 +261,9 @@ class WikipediaSearch:
 def load_sub_questions(path, only_text=True):
     """Lit les sous-questions déjà générées par KARMA à partir des questions 2Wiki.
 
-    path      : chemin du fichier de résultats du dépôt
-    only_text : True = garder seulement les sous-questions résolues par le texte (le RAG),
-                c'est-à-dire celles qui passeront par notre classe
-
-    Dans le fichier, une sous-question peut contenir [Q0] = "la réponse de la sous-question 0".
-    On le remplace par cette réponse :  "Where was [Q0] born?" -> "Where was Ken Burns born?"
+    only_text=True : garder seulement celles résolues par le texte (le RAG).
+    Les [Q0] sont remplacés par la réponse de la sous-question 0 :
+       "Where was [Q0] born?" -> "Where was Ken Burns born?"
     """
     sub_questions = []
     with open(path) as f:
@@ -237,12 +271,9 @@ def load_sub_questions(path, only_text=True):
             question = json.loads(line)
             log = question.get("sub_question_log") or []   # ses sous-questions
             answers = [s.get("answer") or "" for s in log] # leurs réponses, dans l'ordre
-
             for s in log:
                 if only_text and s["method"] != "text":
                     continue                                # résolue par DBpedia -> on saute
-
-                # [Q0], [Q1]... -> réponse correspondante
                 text = re.sub(r"\[Q(\d+)\]",
                               lambda m: answers[int(m.group(1))],
                               s["sub_question"])
@@ -252,26 +283,29 @@ def load_sub_questions(path, only_text=True):
 
 def show(searcher, sub_question):
     """Cherche les pages d'une sous-question et les affiche."""
+    print(f"\n{sub_question}")
     pages = searcher.search_pages(sub_question)
-    print(f"\n{sub_question}  ->  {len(pages)} pages")
+    query = pages[0]["search_query"] if pages else "-"
+    print(f"   recherche : \"{query}\"  ->  {len(pages)} pages")
     for page in pages:
         print(f"   {page['rank']}. {page['title']}  (révision {page['revid']})  {page['url']}")
 
 
-# Ce bloc ne s'exécute que si on lance CE fichier directement (python wikipedia_search.py),
-# pas quand un autre fichier fait "from wikipedia_search import WikipediaSearch".
 if __name__ == "__main__":
     # Fichier du dépôt qui contient les questions 2Wiki déjà découpées en sous-questions
     PATH_2WIKI = "data/eval_1000q/hybrid/hybrid_eval_1000_run2_judged.jsonl"
 
-    # Nombre de sous-questions à tester : 50 par défaut.
-    # sys.argv = ce qu'on a tapé dans la console.
-    # Exemple : python wikipedia_search.py 5  ->  sys.argv = ["wikipedia_search.py", "5"]  ->  n = 5
+    # Nombre de sous-questions à tester : 50 par défaut (python wikipedia_search.py 5 -> 5)
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 50
 
     searcher = WikipediaSearch()
-    sub_questions = load_sub_questions(PATH_2WIKI)[:n]     # [:n] = les n premières
+    sub_questions = load_sub_questions(PATH_2WIKI)[:n]
     print(f"{len(sub_questions)} sous-questions 2Wiki")
 
+    start = time.time()
     for sub_question in sub_questions:
         show(searcher, sub_question)
+
+    # Bilan : utile pour le rapport (appels HTTP, échecs, durée)
+    print(f"\nBilan : {searcher.n_requests} requêtes, {searcher.n_failures} échecs, "
+          f"{time.time() - start:.0f} s")
