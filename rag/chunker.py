@@ -14,6 +14,12 @@ class WikiChunk:
     chunk_index: int
     char_offset: int
 
+    pageid: int | None = None
+    revid: int | None = None
+    url: str = ""
+    chunk_id: str = ""
+    page_rank: int | None = None
+
 
 def _split_sentences(text: str) -> list[str]:
     """Split text into sentences. Avoids splitting on abbreviations like 'Dr.' or 'U.S.'."""
