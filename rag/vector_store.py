@@ -51,7 +51,6 @@ class RAGIndex:
             self._empty = True
             return
 
-        try:python hybrid_qa.py "Who directed Inception?" --verbose --model openai/gpt-oss-120b
             import faiss
         except ImportError:
             raise ImportError(
