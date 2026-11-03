@@ -51,6 +51,7 @@ class RAGIndex:
             self._empty = True
             return
 
+        try:
             import faiss
         except ImportError:
             raise ImportError(
