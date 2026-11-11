@@ -1,6 +1,7 @@
 """Source de documents Wikipédia pour le RAG (implémente DocumentSource).
 
-Lancement : python -m rag.wikipedia_search "Who was John Middleton Murry's wife?"
+Lancement : python -m rag.wikipedia_search2 "Who was John Middleton Murry's wife?"
+
 """
 import re
 import sys
