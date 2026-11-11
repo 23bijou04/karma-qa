@@ -1,6 +1,6 @@
 from typing import Protocol
+from rag.chunker import WikiChunk
 
-from chunker import WikiChunk
 class DocumentSource(Protocol):
     def search_pages(self, question: str, limit: int) -> list[str]:
         """Retourne les URL des pages pertinentes."""
@@ -23,7 +23,7 @@ class EncoderManager(Protocol):
     def get_encoder():
         ...
 
-class Reranker(protoco):
+class Reranker(Protocol):
     def re_rank(self,
             query: str,
             chunks: list[tuple[WikiChunk, float]],
