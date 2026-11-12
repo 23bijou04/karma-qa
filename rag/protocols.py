@@ -11,7 +11,7 @@ class DocumentSource(Protocol):
         ...  
 
 class Chunker(Protocol): 
-    def chunk_page(self , page: str) -> list[WikiChunk]:
+    def chunk_page(self, title: str, text: str, url: str = "", revid: int | None = None) -> list[WikiChunk]:
         """Retourne le contenu textuel d’une page découpée."""
         ...
 
