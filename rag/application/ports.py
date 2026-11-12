@@ -18,17 +18,22 @@ class Chunker(Protocol):
         """Découpe le document en conservant ses informations de source."""
         ...
 
+class VectorStore(Protocol):
+    def index(self, chunks: list[Chunk]) -> None:
+        """Remplace le contenu de l’index par les chunks fournis.
 
-class Embedder(Protocol):
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Retourne un vecteur par texte, dans le même ordre."""
+        Calcule et stocke leurs embeddings.
+        """
         ...
 
-    def embed_query(self, query: str) -> list[float]:
-        """Retourne un vecteur compatible avec ceux des documents."""
+    def search(self, query: str, top_k: int) -> list[Chunk]:
+        """Retourne au maximum `top_k` chunks par similarité.
+
+        Calcule l’embedding de la question avec un modèle
+        compatible avec celui des chunks indexés.
+        """
         ...
-
-
+        
 class Reranker(Protocol):
     def rerank(
         self,
@@ -40,14 +45,6 @@ class Reranker(Protocol):
         ...
 
 
-class Retriever(Protocol):
-    def retrieve(
-        self,
-        query: str,
-        top_k: int,
-    ) -> list[Chunk]:
-        """Retourne au maximum `top_k` passages pertinents."""
-        ...
 
 
 class LLMProvider(Protocol):
