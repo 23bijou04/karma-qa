@@ -20,8 +20,8 @@ class Chunk:
     chunk_index: int
     char_offset: int
 
+    pageid: int | None = None
+    revid: int | None = None
     url: str = ""
     chunk_id: str = ""
-    page_id: int | None = None
-    revision_id: int | None = None
     page_rank: int | None = None
