@@ -35,7 +35,7 @@ class RAGService:
             question,
             limit=self._max_pages,
         )
-        print("URL trouvées :", urls)
+        
         documents = [
             self._document_source.fetch_page(url)
             for url in urls
@@ -74,7 +74,5 @@ class RAGService:
             for index, chunk in enumerate(passages, start=1)
         )
 
-        print("\nQUESTION :", question)
-        print("\nNOMBRE DE PASSAGES :", len(passages))
-        print("\nCONTEXTE ENVOYÉ AU LLM :\n", context)
+       
         return self._llm_provider.generate(question, context)

@@ -1,7 +1,7 @@
 """Performe une recherche RAG sur 50 sous questtions de 2wiki."""
 from rag import build_chunks
 from rag.chunker import WikiChunk
-from rag.infrastructure.vector_store import RAGIndex
+from rag.vector_store import RAGIndex
 import json
 from pathlib import Path
 from langchain_core.prompts import ChatPromptTemplate

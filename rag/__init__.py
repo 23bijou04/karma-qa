@@ -16,7 +16,7 @@ __all__ = [
 # Conditionally export vector store and reranker (need sentence-transformers + faiss)
 try:
     from rag.reranker import Reranker
-    from rag.infrastructure.vector_store import RAGIndex
+    from rag.vector_store import RAGIndex
 
     __all__ += ["RAGIndex", "Reranker"]
 except ImportError:
