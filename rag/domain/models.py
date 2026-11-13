@@ -7,8 +7,8 @@ class Document:
     url: str
     page_title: str
     text: str
-    source_id: str | None = None
-    revision_id: str | None = None
+    page_id: int | None = None
+    revision_id: int | None = None
     page_rank: int | None = None
 
 
@@ -22,6 +22,6 @@ class Chunk:
 
     url: str = ""
     chunk_id: str = ""
-    source_id: str | None = None
-    revision_id: str | None = None
+    page_id: int | None = None
+    revision_id: int | None = None
     page_rank: int | None = None
