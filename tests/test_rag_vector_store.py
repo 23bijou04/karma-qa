@@ -8,7 +8,7 @@ from rag.chunker import WikiChunk
 faiss = pytest.importorskip("faiss")
 st = pytest.importorskip("sentence_transformers")
 
-from rag.infrastructure.vector_store import RAGIndex
+from rag.vector_store import RAGIndex
 
 
 def _make_chunks() -> list[WikiChunk]:
