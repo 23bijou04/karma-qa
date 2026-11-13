@@ -14,8 +14,13 @@ class DocumentSource(Protocol):
 
 
 class Chunker(Protocol):
-    def chunk_document(self, document: Document) -> list[Chunk]:
-        """Découpe le document en conservant ses informations de source."""
+    def chunk_page(
+        self,
+        title: str,
+        text: str,
+        url: str = "",
+        revid: int | None = None,
+    ) -> list[Chunk]:
         ...
 
 class VectorStore(Protocol):

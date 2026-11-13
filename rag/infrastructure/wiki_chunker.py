@@ -17,9 +17,10 @@ puis phrases, sans couper une phrase). Ce fichier-ci ajoute la provenance.
 import sys
 from dataclasses import replace   # copie un chunk en changeant seulement certains champs
 
-from rag.chunker import WikiChunk, chunk_wikipedia_page
+from rag.chunker import chunk_wikipedia_page
 from rag.config import CHUNK_OVERLAP, CHUNK_SIZE
-from rag.protocols import Chunker
+from rag.application.ports import Chunker
+from rag.domain.models import Chunk
 
 
 class WikiChunker(Chunker):
@@ -29,7 +30,7 @@ class WikiChunker(Chunker):
         self.chunk_size = chunk_size    # taille visée d'un chunk, en caractères
         self.overlap = overlap          # caractères répétés entre deux chunks qui se suivent
 
-    def chunk_page(self, title: str, text: str, url: str = "", revid: int | None = None) -> list[WikiChunk]:
+    def chunk_page(self, title: str, text: str, url: str = "", revid: int | None = None) -> list[Chunk]:
         """Renvoie les chunks de la page ([] si le titre ou le texte est vide)."""
         if not title or not text:
             return []
@@ -53,19 +54,4 @@ class WikiChunker(Chunker):
         rev = revid if revid is not None else "norev"
         return f"{title}:{rev}:{self.chunk_size}/{self.overlap}:{chunk_index}"
 
-
-if __name__ == "__main__":
-    # Chaîne complète : question -> pages -> texte -> chunks
-    from rag.wikipedia_search2 import WikipediaSearch
-
-    question = " ".join(sys.argv[1:]) or input("Question : ")
-    source = WikipediaSearch()
-    chunker = WikiChunker()
-
-    for url in source.search_pages(question):
-        text = source.fetch_page(url)
-        v = source.revisions.get(url, {})                    # titre réel et version lue
-        chunks = chunker.chunk_page(v.get("title", ""), text, url, v.get("revid"))
-        print(f"\n{v.get('title', url)} : {len(text)} caractères -> {len(chunks)} chunks")
-        for c in chunks[:2]:                                 # aperçu des 2 premiers
-            print(f"   [{c.chunk_id}] {c.section_header} | {c.text[:70]!r}")
+    

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 try:
     from rag.cache import WikiRAGCache
     from rag.reranker import Reranker
-    from rag.vector_store import RAGIndex
+    from rag.infrastructure.vector_store import RAGIndex
 
     _RAG_AVAILABLE = True
 except ImportError:

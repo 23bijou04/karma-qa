@@ -1,16 +1,16 @@
-# config.py
+# rag/config.py
 
-# Modèles
-LLM_MODEL = "nom-du-modele"
-EMBEDDING_MODEL = "nom-du-modele"
+MAX_PAGES = 20
 
-# Récupération des pages
-MAX_PAGES = 10
-
-# Découpage — tailles en tokens
+# Unité à aligner avec ton implémentation de TextChunker.
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
-# Recherche et contexte
-RETRIEVAL_TOP_K = 20
-CONTEXT_TOP_K = 5
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RETRIEVAL_TOP_K = 25
+CONTEXT_TOP_K = 20
+
+LLM_MODEL = "gemma3:4b"
+LLM_TEMPERATURE = 0
+OLLAMA_BASE_URL = "http://localhost:11434"
